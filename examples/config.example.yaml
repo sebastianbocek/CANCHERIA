@@ -1,0 +1,17 @@
+business:
+  name: "Demo Sports Complex"
+  agent_name: "Cancheria"
+  address: "Configure me"
+  timezone: "America/Argentina/Cordoba"
+resources:
+  - name: "Court 1"
+    type: "Football 5"
+    price_per_hour: 20000
+  - name: "Court 2"
+    type: "Padel"
+    price_per_hour: 20000
+payments:
+  requires_deposit: true
+  deposit_mode: "percentage"
+  deposit_percentage: 50
+  payment_alias: "ALIAS.TO.CONFIGURE"

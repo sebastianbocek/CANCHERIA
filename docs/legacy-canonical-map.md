@@ -1,0 +1,167 @@
+# Legacy CANONICAL override map
+
+Generated from the pre-refactor `WPSetter.py`. Repeated names are intentionally documented before consolidation.
+
+- `run_agent_v2_invariant_evals` — definitions at lines: 71914, 108116, 108768, 109156, 109696, 110513, 110919, 111251, 111454, 113902, 114648, 114776, 115739, 116261, 117309, 117403, 117704, 118243, 118855, 118974, 119537, 120045, 120813, 121458, 121791, 122461, 122914, 123313, 123765, 124071, 124437, 124962, 125742, 127145, 127558, 127761, 128080, 128812, 129243, 129651, 130007, 130657, 131711, 132530, 132908, 133685, 135222, 135851, 136023, 137099, 146457. Effective Python binding after module import: line 146457 (subject to later explicit rebinding/wrapping).
+- `percibir_turno_agent_v2` — definitions at lines: 45173, 62252, 107932, 110402, 110879, 111169, 113534, 115285, 115967, 116877, 118714, 119336, 119870, 120530, 121393, 122840, 123273, 123708, 124031, 126882, 128773, 130541, 131482, 133228, 133986, 136004, 137082, 137882. Effective Python binding after module import: line 137882 (subject to later explicit rebinding/wrapping).
+- `planificar_agent_v2` — definitions at lines: 48496, 62419, 113735, 115409, 116089, 117287, 120570, 122198, 122809, 129952, 133296, 135168, 135593, 137654. Effective Python binding after module import: line 137654 (subject to later explicit rebinding/wrapping).
+- `ejecutar_agente_real_v2_turno` — definitions at lines: 70597, 124268, 124787, 125233, 132475, 132877, 134648, 137515, 138948, 143000. Effective Python binding after module import: line 143000 (subject to later explicit rebinding/wrapping).
+- `ejecutar_tool_agent_v2` — definitions at lines: 51310, 62678, 105287, 115482, 120744, 121766, 133373. Effective Python binding after module import: line 133373 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_booking_hour_has_user_grounding` — definitions at lines: 50406, 127487, 130570, 134867, 135524, 136574. Effective Python binding after module import: line 136574 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_verify_semantic_effects` — definitions at lines: 41505, 62231, 107550, 114254, 123245, 123658. Effective Python binding after module import: line 123658 (subject to later explicit rebinding/wrapping).
+- `aplicar_regla_universal_salida_segura_agent_v2` — definitions at lines: 70250, 113816, 114587, 122878, 134610, 137482. Effective Python binding after module import: line 137482 (subject to later explicit rebinding/wrapping).
+- `validar_tool_agent_v2` — definitions at lines: 50576, 62611, 116201, 121156, 129980, 135763. Effective Python binding after module import: line 135763 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_apply_court_catalog_perception_authority` — definitions at lines: 35488, 105853, 109084, 110483, 113696. Effective Python binding after module import: line 113696 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_context_authorization` — definitions at lines: 23394, 107279, 112945, 119746, 120234. Effective Python binding after module import: line 120234 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_nba_candidates` — definitions at lines: 63123, 64306, 104912, 116236, 132051. Effective Python binding after module import: line 132051 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_resolve_context_reference` — definitions at lines: 43578, 105684, 107325, 108662, 112898. Effective Python binding after module import: line 112898 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_resolve_current_turn_date_with_ai` — definitions at lines: 46024, 107953, 110417, 113645, 133137. Effective Python binding after module import: line 133137 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v103_build_objective` — definitions at lines: 115037, 118151, 118584, 127342, 127985. Effective Python binding after module import: line 127985 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v126r2_can_auto_assign_equivalent_court` — definitions at lines: 127503, 128012, 134030, 136279, 137690. Effective Python binding after module import: line 137690 (subject to later explicit rebinding/wrapping).
+- `agent_v2_reduce` — definitions at lines: 22022, 113299, 114449, 115653, 119431. Effective Python binding after module import: line 119431 (subject to later explicit rebinding/wrapping).
+- `componer_respuesta_agent_v2` — definitions at lines: 63069, 66836, 107058, 108082, 122369. Effective Python binding after module import: line 122369 (subject to later explicit rebinding/wrapping).
+- `inferir_goals_agent_v2` — definitions at lines: 47310, 116003, 117000, 118781, 137618. Effective Python binding after module import: line 137618 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_apply_fresh_availability_perception_authority` — definitions at lines: 33877, 106007, 110441, 113708. Effective Python binding after module import: line 113708 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_plan_current_resource_mutation` — definitions at lines: 32334, 119910, 121091, 131685. Effective Python binding after module import: line 131685 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_recover_missing_availability_day` — definitions at lines: 48069, 108000, 110460, 113659. Effective Python binding after module import: line 113659 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_repair_current_court_resource_scope_with_ai` — definitions at lines: 105582, 107979, 109651, 113652. Effective Python binding after module import: line 113652 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v126_resolve_dialogue_context_before_perception` — definitions at lines: 126140, 132778, 133551, 134201. Effective Python binding after module import: line 134201 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v82_specific_court_catalog_bundle` — definitions at lines: 106424, 109109, 109677, 110500. Effective Python binding after module import: line 110500 (subject to later explicit rebinding/wrapping).
+- `aplicar_next_best_action_agent_v2` — definitions at lines: 66063, 103142, 132146, 132806. Effective Python binding after module import: line 132806 (subject to later explicit rebinding/wrapping).
+- `aplicar_observation_agent_v2` — definitions at lines: 55933, 62859, 104978, 133421. Effective Python binding after module import: line 133421 (subject to later explicit rebinding/wrapping).
+- `construir_world_state_agent_v2` — definitions at lines: 24093, 61749, 113317, 115716. Effective Python binding after module import: line 115716 (subject to later explicit rebinding/wrapping).
+- `elegir_next_best_action_agent_v2` — definitions at lines: 65524, 108049, 114486, 132111. Effective Python binding after module import: line 132111 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_apply_parallel_courts_policy_authority` — definitions at lines: 39261, 102156, 113690. Effective Python binding after module import: line 113690 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_build_execution_contract` — definitions at lines: 30936, 119250, 119834. Effective Python binding after module import: line 119834 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_tool_first_read_plan` — definitions at lines: 48240, 106179, 106527. Effective Python binding after module import: line 106527 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v126r5_resolve_resource_continuity` — definitions at lines: 128540, 129074, 129506. Effective Python binding after module import: line 129506 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v140_internal_failure_signal` — definitions at lines: 134410, 135812, 137414. Effective Python binding after module import: line 137414 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_verify_coverage_additions` — definitions at lines: 39706, 123124, 123964. Effective Python binding after module import: line 123964 (subject to later explicit rebinding/wrapping).
+- `_canonical_v184_execute_decision` — definitions at lines: 142907, 143342, 146391. Effective Python binding after module import: line 146391 (subject to later explicit rebinding/wrapping).
+- `_canonical_v184_orchestrate` — definitions at lines: 140892, 144218, 144769. Effective Python binding after module import: line 144769 (subject to later explicit rebinding/wrapping).
+- `build_agent_v2_quincho_change_message` — definitions at lines: 60973, 119489, 121430. Effective Python binding after module import: line 121430 (subject to later explicit rebinding/wrapping).
+- `detectar_multiples_intenciones` — definitions at lines: 16127, 128380, 132411. Effective Python binding after module import: line 132411 (subject to later explicit rebinding/wrapping).
+- `manejar_respuesta_post_turno_followup` — definitions at lines: 97346, 143497, 144476. Effective Python binding after module import: line 144476 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_apply_duration_policy_question_authority` — definitions at lines: 40161, 113666. Effective Python binding after module import: line 113666 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_apply_recent_released_booking_reference_authority` — definitions at lines: 34744, 113678. Effective Python binding after module import: line 113678 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_apply_slotless_booking_availability_authority` — definitions at lines: 33721, 113672. Effective Python binding after module import: line 113672 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_apply_special_event_perception_authority` — definitions at lines: 35603, 113684. Effective Python binding after module import: line 113684 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_apply_time_only_today_default` — definitions at lines: 26384, 133214. Effective Python binding after module import: line 133214 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_build_response_obligations` — definitions at lines: 126935, 129178. Effective Python binding after module import: line 129178 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_context_inventory` — definitions at lines: 23220, 105502. Effective Python binding after module import: line 105502 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_deterministic_response_kind` — definitions at lines: 68222, 107089. Effective Python binding after module import: line 107089 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_execution_contract_freezes_meaning` — definitions at lines: 45865, 116038. Effective Python binding after module import: line 116038 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_fallback_response` — definitions at lines: 63088, 66224. Effective Python binding after module import: line 66224 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_force_exact_availability_current_turn_authority` — definitions at lines: 33392, 113702. Effective Python binding after module import: line 113702 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_normalize_perception` — definitions at lines: 37048, 113714. Effective Python binding after module import: line 113714 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_open_question_is_fresh` — definitions at lines: 21667, 112915. Effective Python binding after module import: line 112915 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_payment_continuation_target` — definitions at lines: 22608, 22810. Effective Python binding after module import: line 22810 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_pending_answer_is_structurally_compatible` — definitions at lines: 28458, 104457. Effective Python binding after module import: line 104457 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_recent_resource_scope_focus` — definitions at lines: 105452, 106314. Effective Python binding after module import: line 106314 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_reconcile_booking_phase_semantics` — definitions at lines: 27792, 103296. Effective Python binding after module import: line 103296 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_reconcile_existing_reservation_correction` — definitions at lines: 27398, 117679. Effective Python binding after module import: line 117679 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_render_open_question` — definitions at lines: 63746, 114572. Effective Python binding after module import: line 114572 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_resource_mutation_from_semantics` — definitions at lines: 32235, 121048. Effective Python binding after module import: line 121048 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v100_active_interactions_from_world` — definitions at lines: 111940, 117962. Effective Python binding after module import: line 117962 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v100_apply_structural_preconditions` — definitions at lines: 113471, 115266. Effective Python binding after module import: line 115266 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v100_context_needed` — definitions at lines: 112049, 122720. Effective Python binding after module import: line 122720 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v100_project_focus_delta` — definitions at lines: 112449, 114082. Effective Python binding after module import: line 114082 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v100_question_to_interaction` — definitions at lines: 111841, 115534. Effective Python binding after module import: line 115534 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v100_resolve_conversation_context` — definitions at lines: 112654, 122756. Effective Python binding after module import: line 122756 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v102_context_is_already_grounded` — definitions at lines: 112621, 122738. Effective Python binding after module import: line 122738 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v103_interaction_for_relation` — definitions at lines: 114935, 118449. Effective Python binding after module import: line 118449 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v103_unique_booking_interaction` — definitions at lines: 114948, 118462. Effective Python binding after module import: line 118462 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v105_ready_booking_plan` — definitions at lines: 117068, 118186. Effective Python binding after module import: line 118186 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v108_booking_interaction_is_adjacent` — definitions at lines: 117914, 125933. Effective Python binding after module import: line 125933 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v126r5_audit_subintent_coverage` — definitions at lines: 128237, 132757. Effective Python binding after module import: line 132757 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v126r5_inject_resource_context` — definitions at lines: 128642, 129565. Effective Python binding after module import: line 129565 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v126r5_previous_user_turn` — definitions at lines: 128426, 128935. Effective Python binding after module import: line 128935 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v126r5_recent_dialogue` — definitions at lines: 128459, 128967. Effective Python binding after module import: line 128967 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v126r8_repair_mutation_tool_authority` — definitions at lines: 129871, 130205. Effective Python binding after module import: line 130205 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v128_router_booking_intent` — definitions at lines: 131841, 132432. Effective Python binding after module import: line 132432 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v133_promote_partial_booking_intent` — definitions at lines: 133735, 135066. Effective Python binding after module import: line 135066 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v181_reasks_verified_objective_field` — definitions at lines: 137389, 138915. Effective Python binding after module import: line 138915 (subject to later explicit rebinding/wrapping).
+- `_agent_v2_v84_authorize_specific_court_catalog_bundle_contract` — definitions at lines: 106809, 109126. Effective Python binding after module import: line 109126 (subject to later explicit rebinding/wrapping).
+
+## Late CANONICAL markers
+
+- L140060: `"   ⚠️ [CANONICAL V208 CURRENT TURN QUINCHO] "`
+- L140086: `"   🛡️ [CANONICAL V218 QUINCHO FALSE-REMOVAL GUARD] "`
+- L140100: `"   ♻️ [CANONICAL V214 QUINCHO SEMANTIC RECHECK] "`
+- L140260: `"   🔥 [CANONICAL V208 CURRENT TURN QUINCHO AUTHORITY] "`
+- L140337: `"   ⚠️ [CANONICAL V215 CURRENT TURN COURT TIME] "`
+- L140412: `"   🧷 [CANONICAL V218 QUINCHO INHERITANCE] "`
+- L140455: `"   🕒 [CANONICAL V215 CURRENT TURN COURT TIME AUTHORITY] "`
+- L140599: `"   ⚠️ [CANONICAL V204 EXPIRED HOLD RECOVERY] "`
+- L140619: `"   ♻️ [CANONICAL V204 EXPIRED HOLD RECOVERY] "`
+- L140653: `"   ✅ [CANONICAL V204 EXPIRED HOLD RECOVERY] "`
+- L140813: `"   🧠 [CANONICAL V201 SEMANTIC CONTINUATION] "`
+- L140886: `"   🧷 [CANONICAL V218 VERIFIED DURATION AUTHORITY] "`
+- L141140: `"   ♻️ [CANONICAL V202 ORCHESTRATOR JSON RETRY] "`
+- L141150: `"   🤫 [CANONICAL V202 ORCHESTRATOR INTERNAL FAILURE] "`
+- L141216: `"   📚 [CANONICAL V190 BUSINESS INFO AUTHORITY] "`
+- L141245: `"   🔁 [CANONICAL V194 RECURRENCE AUTHORITY] "`
+- L141418: `"   🧹 [CANONICAL V187 DEFAULT TIME PURGE] "`
+- L141581: `"   🧩 [CANONICAL V188 SUB-INTENTS] "`
+- L141860: `"   ⚠️ [CANONICAL V190 ADMIN ALERT] "`
+- L141867: `"   🤫 [CANONICAL V190 SILENT HANDOFF TERMINAL] "`
+- L141937: `"   👁️ [CANONICAL V184 TOOL] "`
+- L142101: `"   📋 [CANONICAL V186 AVAILABILITY RENDERER] "`
+- L142111: `"   ✅ [CANONICAL V186 EXACT SLOT RENDERER] "`
+- L142206: `"   🕐 [CANONICAL V186 TEMPORAL] "`
+- L142394: `print(f"   👁️ [CANONICAL V184 TOOL] crear_reserva+quincho ok={obs2.get('ok')} status={obs2.get('status')}")`
+- L142613: `"   🔗 [CANONICAL V187 RESCHEDULE PATCH] "`
+- L142805: `"   🧰 [CANONICAL V193 BUSINESS_SERVICES GROUNDING] "`
+- L142819: `"   ⚠️ [CANONICAL V193 BUSINESS_SERVICES GROUNDING] "`
+- L142827: `"   🤫 [CANONICAL V193 BUSINESS FACT MISSING] "`
+- L142871: `"   ⚠️ [CANONICAL V194 RECURRENCE CLEANUP] "`
+- L142897: `"   🧹 [CANONICAL V194 RECURRENCE CLEANUP] "`
+- L142902: `"   ⚠️ [CANONICAL V194 RECURRENCE CLEANUP] "`
+- L142936: `"   🤫 [CANONICAL V194 RECURRING BOOKING] "`
+- L142974: `"   🛡️ [CANONICAL V194 VISIBLE HANDOFF GUARD] "`
+- L143028: `"   🧠 [CANONICAL V184 STATE] "`
+- L143045: `"   🎯 [CANONICAL V184 ORCHESTRATOR] "`
+- L143063: `print("   ↩️ [CANONICAL V184 FALLBACK] capacidad no migrada → Agent V2 legacy")`
+- L143066: `"   🧊 [CANONICAL V184 DECISION FROZEN] "`
+- L143083: `"   ↩️ [CANONICAL V184 LOW CONFIDENCE] "`
+- L143100: `"   ⚠️ [CANONICAL V184] read/orchestrator failure → legacy: "`
+- L143123: `print(f"   ⚠️ [CANONICAL V184 SYNC] no fatal: {type(exc).__name__}: {exc}")`
+- L143242: `"   🧹 [CANONICAL V189 ACTION COALESCE] "`
+- L143356: `"   🧊 [CANONICAL V189 TERMINAL WRITE] "`
+- L143384: `"   ↩️ [CANONICAL V188 SUB-INTENTS] al menos una sub-intención "`
+- L143399: `"   🧩 [CANONICAL V188 EXEC SUB-INTENT] "`
+- L143435: `"   ✅ [CANONICAL V188 MULTI-INTENT COMPLETE] "`
+- L143464: `"   📌 [CANONICAL V188 POST-TURNO PENDING] "`
+- L143468: `print(f"   ⚠️ [CANONICAL V188 POST-TURNO PENDING] no fatal: {type(exc).__name__}: {exc}")`
+- L143491: `print(f"   ⚠️ [CANONICAL V188 POST-TURNO CLEAR] no fatal: {type(exc).__name__}: {exc}")`
+- L143521: `print(f"   ⚠️ [CANONICAL V188 POST-TURNO SYNC] no fatal: {type(exc).__name__}: {exc}")`
+- L143963: `"   📌 [CANONICAL V195 RECURRING PENDING] "`
+- L144067: `"   🤫 [CANONICAL V195 RECURRING POLICY] "`
+- L144095: `"   🤫 [CANONICAL V195 RECURRING POLICY] "`
+- L144205: `"   🔁 [CANONICAL V195 RECURRING PLAN CREATED] "`
+- L144296: `"   🔁 [CANONICAL V195 RECURRING CONTINUATION] "`
+- L144555: `"   📌 [CANONICAL V195 RECURRING RENEWAL PENDING] "`
+- L144560: `print(f"   ⚠️ [CANONICAL V195 RECURRING RENEWAL PENDING] no fatal: {type(exc).__name__}: {exc}")`
+- L144623: `print(f"   🧹 [CANONICAL V195 RECURRING RECONCILE] suspended={changed}")`
+- L144736: `"   💵 [CANONICAL V196 EVENT CASH TARGET] "`
+- L144783: `"   🏆 [CANONICAL V196 EVENT PAYMENT PIN] "`
+- L144839: `"   💰 [CANONICAL V196 EVENT BALANCE] "`
+- L144991: `"   💵 [CANONICAL V197 GENERAL COURT HOURS PRICE] "`
+- L145182: `"   ⚠️ [CANONICAL V200 DAY AUTHORITY] adjudicador temporal falló: "`
+- L145221: `"   📅 [CANONICAL V200 DAY AUTHORITY] "`
+- L145312: `"   🥇 [CANONICAL V213 PRE-CONTINUATION DAY AUTHORITY] "`
+- L145349: `"   🔐 [CANONICAL V213 DAY RECEIPT REUSED] "`
+- L145397: `"   ↩️ [CANONICAL V201 INHERITED DAY AUTHORITY] "`
+- L145440: `"   🥇 [CANONICAL V200 CURRENT TURN DAY] "`
+- L145457: `"   ↩️ [CANONICAL V200 PREVIOUS DAY REFERENCE] "`
+- L145482: `"   ⚠️ [CANONICAL V200 DAY AUTHORITY] audit no disponible; "`
+- L145502: `"   🧹 [CANONICAL V200 STALE DAY PURGE] "`
+- L145681: `"   ♻️ [CANONICAL V204 HOLD VANISHED BEFORE EXECUTION] "`
+- L145736: `"   🤫 [CANONICAL V214 EMPTY HOLD MUTATION] "`
+- L145885: `"   🔥 [CANONICAL V216 TERCER TIEMPO] "`
+- L146018: `"   ✅ [CANONICAL V211 OLD HOLD CLEANUP VERIFIED] "`
+- L146039: `"   ⏳ [CANONICAL V215 HOLD LEASE PRESERVED] "`
+- L146114: `"   🔁 [CANONICAL V203 HOLD RESOURCE SWAP] "`
+- L146128: `"   🧾 [CANONICAL V206 PENDING HOLD SWAP RENDERER] "`
+- L146438: `"   🤝 [CANONICAL V212 INFORMATION → BOOKING] "`
+- L146445: `# CANONICAL V218 — QUINCHO FINANCIAL + PARTIAL-MUTATION INTEGRITY`

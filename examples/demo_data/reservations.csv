@@ -1,0 +1,2 @@
+reservation_id,phone,day,start_time,court,status
+DEMO-001,+15550000001,01/01/2030,20:00,Court 1,pending
