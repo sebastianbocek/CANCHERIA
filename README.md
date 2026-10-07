@@ -6,6 +6,12 @@
 <h3 align="center">El primer Agente IA de reservas para complejos deportivos totalmente gratuito</h3>
 
 <p align="center">
+  <strong>Contacto y soporte · Sebastián Bocek</strong><br>
+  Email: <a href="mailto:sebastianbocek.marketing@gmail.com">sebastianbocek.marketing@gmail.com</a><br>
+  WhatsApp: <a href="https://wa.me/5493513441882">+54 9 351 344-1882</a>
+</p>
+
+<p align="center">
   Atiende consultas por WhatsApp, informa disponibilidad, crea reservas, controla señas y pagos,<br>
   administra canchas y deriva casos complejos a una persona.
 </p>
