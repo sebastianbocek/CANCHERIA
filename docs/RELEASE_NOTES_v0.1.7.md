@@ -19,6 +19,7 @@ Primera publicación pública de CANCHERIA, el agente IA gratuito de reservas pa
 
 - `InstaladorCancheria.exe`: Windows 10/11.
 - `InstaladorCancheriaLinux.run`: Debian 12 o posterior con escritorio gráfico.
+- `DEMO-CANCHERIA-CHAT.mp4`: demostración de una interacción básica.
 - `SHA256SUMS.txt`: hashes para comprobar las descargas.
 
 ## SHA-256

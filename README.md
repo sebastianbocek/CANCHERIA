@@ -54,6 +54,20 @@ El software de CANCHERIA se distribuye sin costo de licencia. Para responder con
 
 ## Capturas del programa
 
+### Demo de una interacción básica
+
+La siguiente demostración muestra una conversación real de reserva con CANCHERIA. La vista previa se reproduce directamente en el README; hacé clic sobre ella para abrir el video completo con audio.
+
+<p align="center">
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.7/DEMO-CANCHERIA-CHAT.mp4">
+    <img src="docs/images/cancheria-demo.webp" alt="Demo de una conversación de reserva con CANCHERIA" width="420">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.7/DEMO-CANCHERIA-CHAT.mp4"><strong>▶ Ver demo completa con audio</strong></a>
+</p>
+
 ### Panel principal
 
 Desde aquí se enciende o pausa el agente, se administra la sesión de WhatsApp y se abren la configuración, la administración y el manual.
