@@ -2,7 +2,7 @@
 set -eu
 
 APP_NAME="CANCHERIA"
-APP_VERSION="0.1.8"
+APP_VERSION="0.1.9"
 PAYLOAD_MARKER="__CANCHERIA_PAYLOAD_BELOW__"
 
 say() {
@@ -133,9 +133,13 @@ fi
 cp -a "$TEMP_DIR/payload/." "$INSTALL_DIR/"
 if [ -f "$PRESERVED_CONFIG" ]; then
     cp -a "$PRESERVED_CONFIG" "$INSTALL_DIR/$CONFIG_REL"
+    cmp -s "$PRESERVED_CONFIG" "$INSTALL_DIR/$CONFIG_REL" || \
+        fail "No se pudo verificar la restauración de la configuración anterior."
 fi
 if [ -f "$PRESERVED_ROOT_CONFIG" ]; then
     cp -a "$PRESERVED_ROOT_CONFIG" "$INSTALL_DIR/config.py"
+    cmp -s "$PRESERVED_ROOT_CONFIG" "$INSTALL_DIR/config.py" || \
+        fail "No se pudo verificar la restauración del config.py anterior."
 fi
 mkdir -p "$INSTALL_DIR/runtime" "$INSTALL_DIR/wa_profile" "$INSTALL_DIR/sessions" "$BACKUP_DIR"
 

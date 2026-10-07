@@ -12,6 +12,8 @@ def test_inno_installer_is_per_user_and_creates_shortcuts():
     assert 'Name: "{autodesktop}\\CANCHERIA"' in text
     assert "onlyifdoesntexist" in text
     assert "OutputBaseFilename=InstaladorCancheria" in text
+    assert "AppId={#MyAppId}" in text
+    assert "DefaultDirName={#MyAppDefaultDir}" in text
     assert "Configurar mi negocio ahora (recomendado)" in text
 
 
@@ -39,4 +41,20 @@ def test_installer_creates_zip_backup_before_an_update():
     assert '"runtime"' in backup_script
     assert '"wa_profile"' in backup_script
     assert "legacy_config.py" in backup_script
+
+
+def test_windows_update_explicitly_restores_both_configuration_files():
+    installer = (ROOT / "installer" / "cancheria.iss").read_text(encoding="utf-8")
+    assert '#define MyAppVersion "0.1.9"' in installer
+    assert "uninsneveruninstall" in installer
+    assert "PreservedLegacyConfig" in installer
+    assert "PreservedRootConfig" in installer
+    assert "HasPreservedLegacyConfig" in installer
+    assert "HasPreservedRootConfig" in installer
+    assert "CopyFile(InstalledLegacyConfig, PreservedLegacyConfig, False)" in installer
+    assert "CopyFile(InstalledRootConfig, PreservedRootConfig, False)" in installer
+    assert "procedure CurStepChanged(CurStep: TSetupStep)" in installer
+    assert "CopyFile(PreservedLegacyConfig, DestinationLegacyConfig, False)" in installer
+    assert "CopyFile(PreservedRootConfig, DestinationRootConfig, False)" in installer
+    assert installer.index("CopyFile(InstalledLegacyConfig") < installer.index("Exec(PowerShellExe")
 

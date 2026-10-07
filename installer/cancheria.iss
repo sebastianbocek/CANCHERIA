@@ -1,14 +1,20 @@
 #define MyAppName "CANCHERIA"
-#define MyAppVersion "0.1.8"
+#define MyAppVersion "0.1.9"
 #define MyAppPublisher "CANCHERIA"
 #define PayloadDir "..\build\installer\payload"
+#ifndef MyAppId
+  #define MyAppId "{{9970E2DD-6EF1-49D3-AF8A-475BE7D988D5}"
+#endif
+#ifndef MyAppDefaultDir
+  #define MyAppDefaultDir "{localappdata}\Programs\CANCHERIA"
+#endif
 
 [Setup]
-AppId={{9970E2DD-6EF1-49D3-AF8A-475BE7D988D5}
+AppId={#MyAppId}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={localappdata}\Programs\CANCHERIA
+DefaultDirName={#MyAppDefaultDir}
 DefaultGroupName=CANCHERIA
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
@@ -41,9 +47,9 @@ Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; Gr
 Source: "..\scripts\backup_before_update.ps1"; DestDir: "{tmp}"; Flags: dontcopy
 ; La configuración editable se instala solo la primera vez. Una actualización
 ; futura del instalador no pisa los datos que cargó el dueño del complejo.
-Source: "{#PayloadDir}\src\cancheria\config\legacy_config.py"; DestDir: "{app}\src\cancheria\config"; Flags: ignoreversion onlyifdoesntexist
+Source: "{#PayloadDir}\src\cancheria\config\legacy_config.py"; DestDir: "{app}\src\cancheria\config"; Flags: ignoreversion onlyifdoesntexist uninsneveruninstall
 ; config.py contiene la API key del cliente desde v0.1.8 y tampoco se pisa.
-Source: "{#PayloadDir}\config.py"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
+Source: "{#PayloadDir}\config.py"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist uninsneveruninstall
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Excludes: "config.py,src\cancheria\config\legacy_config.py,build\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Dirs]
@@ -67,6 +73,10 @@ Filename: "{app}\cancheria.exe"; Description: "Abrir CANCHERIA sin configurar"; 
 [Code]
 var
   UpdateBackupPath: String;
+  PreservedLegacyConfig: String;
+  PreservedRootConfig: String;
+  HasPreservedLegacyConfig: Boolean;
+  HasPreservedRootConfig: Boolean;
 
 function ChromeInstalled(): Boolean;
 begin
@@ -94,11 +104,52 @@ var
   Params: String;
   ResultCode: Integer;
   ResultLines: TArrayOfString;
+  PreserveDir: String;
+  InstalledLegacyConfig: String;
+  InstalledRootConfig: String;
 begin
   Result := '';
   UpdateBackupPath := '';
+  HasPreservedLegacyConfig := False;
+  HasPreservedRootConfig := False;
   if not ExistingCancheriaInstallation() then
     exit;
+
+  { Copia explícita fuera de la carpeta instalada. No dependemos sólo de }
+  { reemplazo de [Files]: al finalizar restauramos exactamente los archivos }
+  { que configuró el cliente. }
+  PreserveDir := ExpandConstant('{tmp}\cancheria-preserved-config');
+  if DirExists(PreserveDir) then
+    DelTree(PreserveDir, True, True, True);
+  if not ForceDirectories(PreserveDir) then
+  begin
+    Result := 'No se pudo preparar el área temporal para conservar la configuración. La actualización fue cancelada.';
+    exit;
+  end;
+
+  InstalledLegacyConfig := ExpandConstant('{app}\src\cancheria\config\legacy_config.py');
+  InstalledRootConfig := ExpandConstant('{app}\config.py');
+  PreservedLegacyConfig := PreserveDir + '\legacy_config.py';
+  PreservedRootConfig := PreserveDir + '\config.py';
+
+  if FileExists(InstalledLegacyConfig) then
+  begin
+    if not CopyFile(InstalledLegacyConfig, PreservedLegacyConfig, False) then
+    begin
+      Result := 'No se pudo conservar la configuración existente del negocio. La actualización fue cancelada.';
+      exit;
+    end;
+    HasPreservedLegacyConfig := True;
+  end;
+  if FileExists(InstalledRootConfig) then
+  begin
+    if not CopyFile(InstalledRootConfig, PreservedRootConfig, False) then
+    begin
+      Result := 'No se pudo conservar el config.py existente. La actualización fue cancelada.';
+      exit;
+    end;
+    HasPreservedRootConfig := True;
+  end;
 
   ExtractTemporaryFile('backup_before_update.ps1');
   PowerShellExe := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
@@ -137,6 +188,32 @@ begin
       MB_OK,
       IDOK
     );
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  DestinationLegacyConfig: String;
+  DestinationRootConfig: String;
+begin
+  if CurStep <> ssPostInstall then
+    exit;
+
+  DestinationLegacyConfig := ExpandConstant('{app}\src\cancheria\config\legacy_config.py');
+  DestinationRootConfig := ExpandConstant('{app}\config.py');
+
+  if HasPreservedLegacyConfig then
+  begin
+    if not ForceDirectories(ExtractFileDir(DestinationLegacyConfig)) then
+      RaiseException('No se pudo recrear la carpeta de configuración de CANCHERIA.');
+    if not CopyFile(PreservedLegacyConfig, DestinationLegacyConfig, False) then
+      RaiseException('No se pudo restaurar la configuración anterior del negocio.');
+  end;
+
+  if HasPreservedRootConfig then
+  begin
+    if not CopyFile(PreservedRootConfig, DestinationRootConfig, False) then
+      RaiseException('No se pudo restaurar el config.py anterior.');
+  end;
 end;
 
 function InitializeSetup(): Boolean;

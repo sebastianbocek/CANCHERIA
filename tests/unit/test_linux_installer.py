@@ -28,6 +28,15 @@ def test_linux_updates_create_a_zip_and_preserve_private_data():
     assert "legacy_config.py" in text
     assert "runtime wa_profile sessions" in text
     assert 'cp -a "$PRESERVED_CONFIG" "$INSTALL_DIR/$CONFIG_REL"' in text
+    assert 'cp -a "$PRESERVED_ROOT_CONFIG" "$INSTALL_DIR/config.py"' in text
+    assert 'cmp -s "$PRESERVED_CONFIG" "$INSTALL_DIR/$CONFIG_REL"' in text
+    assert 'cmp -s "$PRESERVED_ROOT_CONFIG" "$INSTALL_DIR/config.py"' in text
+    assert text.index('cp -a "$INSTALL_DIR/$CONFIG_REL" "$PRESERVED_CONFIG"') < text.index(
+        'cp -a "$TEMP_DIR/payload/." "$INSTALL_DIR/"'
+    )
+    assert text.index('cp -a "$INSTALL_DIR/config.py" "$PRESERVED_ROOT_CONFIG"') < text.index(
+        'cp -a "$TEMP_DIR/payload/." "$INSTALL_DIR/"'
+    )
     assert "La actualización fue cancelada sin modificar CANCHERIA" in text
 
 

@@ -11,13 +11,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.8/InstaladorCancheria.exe"><strong>⬇️ Descargar para Windows</strong></a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.9/InstaladorCancheria.exe"><strong>⬇️ Descargar para Windows</strong></a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.8/InstaladorCancheriaLinux.run"><strong>⬇️ Descargar para Debian</strong></a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.9/InstaladorCancheriaLinux.run"><strong>⬇️ Descargar para Debian</strong></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/tag/v0.1.8">Ver versión v0.1.8</a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/tag/v0.1.9">Ver versión v0.1.9</a>
   ·
   <a href="docs/MANUAL_DE_USO_CANCHERIA_DUENOS_ENCARGADOS.pdf">Manual completo</a>
 </p>
@@ -59,13 +59,13 @@ El software de CANCHERIA se distribuye sin costo de licencia. Para responder con
 La siguiente demostración muestra una conversación real de reserva con CANCHERIA. La vista previa se reproduce directamente en el README; hacé clic sobre ella para abrir el video completo con audio.
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.8/DEMO-CANCHERIA-CHAT.mp4">
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.9/DEMO-CANCHERIA-CHAT.mp4">
     <img src="docs/images/cancheria-demo.webp" alt="Demo de una conversación de reserva con CANCHERIA" width="420">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.8/DEMO-CANCHERIA-CHAT.mp4"><strong>▶ Ver demo completa con audio</strong></a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.9/DEMO-CANCHERIA-CHAT.mp4"><strong>▶ Ver demo completa con audio</strong></a>
 </p>
 
 ### Panel principal
@@ -86,7 +86,7 @@ La pestaña **Horas** muestra cada horario y cancha en una grilla: verde cuando 
 
 ### Windows 10 y Windows 11
 
-1. Descargá **[InstaladorCancheria.exe](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.8/InstaladorCancheria.exe)**.
+1. Descargá **[InstaladorCancheria.exe](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.9/InstaladorCancheria.exe)**.
 2. Cerrá una instalación anterior de CANCHERIA si estuviera abierta.
 3. Ejecutá `InstaladorCancheria.exe` y seguí el asistente.
 4. Dejá marcada la opción **Configurar mi negocio ahora**.
@@ -105,7 +105,7 @@ Requisitos:
 - Usuario normal con acceso a `sudo`.
 - Conexión a Internet.
 
-1. Descargá **[InstaladorCancheriaLinux.run](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.8/InstaladorCancheriaLinux.run)**.
+1. Descargá **[InstaladorCancheriaLinux.run](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.9/InstaladorCancheriaLinux.run)**.
 2. Abrí una terminal en la carpeta de descarga.
 3. Ejecutá el instalador con tu usuario normal, sin anteponer `sudo`:
 
@@ -190,9 +190,14 @@ La fecha de la pestaña **Horas** comienza siempre en el día actual y puede cam
 
 ## Actualizaciones y respaldos
 
-Para actualizar, descargá el instalador más reciente y ejecutalo sobre la instalación existente.
+Para actualizar, descargá el instalador más reciente y ejecutalo directamente
+sobre la instalación existente. **No desinstales la versión anterior.**
 
 Antes de reemplazar archivos, tanto Windows como Debian crean un ZIP con la configuración y los datos privados del cliente dentro de la carpeta `Backups` de la instalación. Se conservan configuración, reservas, calendario, sesión de WhatsApp, casos humanos, memoria operativa, comprobantes, eventos y torneos.
+
+Además del ZIP, el actualizador conserva temporalmente los dos archivos de
+configuración y los restaura al finalizar. Así permanecen el nombre del negocio,
+el agente IA, la API key, las canchas, precios, horarios y demás preferencias.
 
 La actualización no debe realizarse mientras CANCHERIA o su navegador estén procesando mensajes.
 
@@ -280,7 +285,7 @@ Los resultados se guardan en `release/`. Los generadores usan una configuración
 
 ## Estado de licencia
 
-CANCHERIA `v0.1.8` se ofrece para descarga y uso sin costo de licencia. La licencia jurídica definitiva del código fuente continúa pendiente de selección por AI BROTHERS; consultá [docs/licensing.md](docs/licensing.md). Esto no afecta la descarga gratuita de los instaladores publicados.
+CANCHERIA `v0.1.9` se ofrece para descarga y uso sin costo de licencia. La licencia jurídica definitiva del código fuente continúa pendiente de selección por AI BROTHERS; consultá [docs/licensing.md](docs/licensing.md). Esto no afecta la descarga gratuita de los instaladores publicados.
 
 ---
 

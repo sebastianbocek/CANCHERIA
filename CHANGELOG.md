@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.9 - 2026-10-07
+
+- Las actualizaciones de Windows copian `config.py` y `legacy_config.py` a un
+  área temporal antes de instalar y los restauran explícitamente al finalizar.
+- Los dos archivos de configuración quedan excluidos de la desinstalación.
+- Debian conserva ambos archivos antes de copiar la versión nueva y verifica
+  byte por byte que hayan sido restaurados correctamente.
+- La actualización continúa creando el ZIP de respaldo completo antes de tocar
+  la instalación y se cancela si no puede proteger los datos del cliente.
+
 ## 0.1.8 - 2026-10-07
 
 - La API key configurada desde la GUI vuelve a guardarse en el `config.py`
