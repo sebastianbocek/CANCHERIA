@@ -6,8 +6,13 @@ import sys
 from pathlib import Path
 
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+
 def test_desktop_configure_paths_exposes_external_cancheria_tree(monkeypatch):
-    root = Path(__file__).resolve().parents[2]
+    root = ROOT
     import cancheria
     import cancheria_desktop
 
