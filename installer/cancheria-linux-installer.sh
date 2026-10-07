@@ -2,7 +2,7 @@
 set -eu
 
 APP_NAME="CANCHERIA"
-APP_VERSION="0.1.7"
+APP_VERSION="0.1.8"
 PAYLOAD_MARKER="__CANCHERIA_PAYLOAD_BELOW__"
 
 say() {
@@ -81,6 +81,8 @@ if [ "$IS_UPDATE" -eq 1 ]; then
     }
 
     for item in \
+        "config.py" \
+        "config_backups" \
         "$CONFIG_REL" \
         "src/cancheria/config/config_backups" \
         runtime wa_profile sessions audios comprobantes torneos agent_learning \
@@ -121,12 +123,19 @@ fi
 say "[4/7] Instalando los archivos de CANCHERIA..."
 mkdir -p "$INSTALL_DIR" "$BACKUP_DIR"
 PRESERVED_CONFIG="$TEMP_DIR/legacy_config.py"
+PRESERVED_ROOT_CONFIG="$TEMP_DIR/config.py"
 if [ -f "$INSTALL_DIR/$CONFIG_REL" ]; then
     cp -a "$INSTALL_DIR/$CONFIG_REL" "$PRESERVED_CONFIG"
+fi
+if [ -f "$INSTALL_DIR/config.py" ]; then
+    cp -a "$INSTALL_DIR/config.py" "$PRESERVED_ROOT_CONFIG"
 fi
 cp -a "$TEMP_DIR/payload/." "$INSTALL_DIR/"
 if [ -f "$PRESERVED_CONFIG" ]; then
     cp -a "$PRESERVED_CONFIG" "$INSTALL_DIR/$CONFIG_REL"
+fi
+if [ -f "$PRESERVED_ROOT_CONFIG" ]; then
+    cp -a "$PRESERVED_ROOT_CONFIG" "$INSTALL_DIR/config.py"
 fi
 mkdir -p "$INSTALL_DIR/runtime" "$INSTALL_DIR/wa_profile" "$INSTALL_DIR/sessions" "$BACKUP_DIR"
 

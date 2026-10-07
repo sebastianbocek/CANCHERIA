@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Tuple
 
-from cancheria.paths import runtime_dir
+from cancheria.paths import PROJECT_ROOT, runtime_dir
+from cancheria.config.openai_credentials import (
+    normalize_openai_api_key,
+    read_openai_api_key_assignment,
+)
 
 
 def _csv_env(name: str) -> Tuple[str, ...]:
@@ -35,12 +39,15 @@ class AppSettings:
         # desktop configurator stores the user's key in legacy_config.py.
         from cancheria.config import legacy_config
 
+        root_key_found, root_key = read_openai_api_key_assignment(PROJECT_ROOT / "config.py")
+        configured_key = root_key if root_key_found else (
+            os.getenv("OPENAI_API_KEY", "").strip()
+            or str(getattr(legacy_config, "OPENAI_API_KEY", "")).strip()
+        )
+
         return cls(
             runtime_dir=runtime_dir(),
-            openai_api_key=(
-                os.getenv("OPENAI_API_KEY", "").strip()
-                or str(getattr(legacy_config, "OPENAI_API_KEY", "")).strip()
-            ),
+            openai_api_key=normalize_openai_api_key(configured_key),
             openai_model=(
                 os.getenv("OPENAI_MODEL", "").strip()
                 or str(getattr(legacy_config, "OPENAI_MODEL", "gpt-4.1-mini")).strip()

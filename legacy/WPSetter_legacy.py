@@ -13,8 +13,9 @@ if str(_CANCHERIA_SRC) not in _cancheria_bootstrap_sys.path:
 
 
 from typing import List, Dict, Any, Optional, Tuple
+from config import OPENAI_API_KEY
 from cancheria.config.legacy_config import (
-    OPENAI_API_KEY, CSV_FILENAME, CSV_FIELDS,
+    CSV_FILENAME, CSV_FIELDS,
     AUTHORIZED_NUMBER, PROMPT_SETTER,
     AUTHORIZED_NUMBERS,        
     AUTHORIZED_NAMES,         

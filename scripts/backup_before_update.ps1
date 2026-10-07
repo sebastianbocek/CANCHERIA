@@ -41,6 +41,8 @@ try {
     New-Item -ItemType Directory -Path $StageRoot -Force | Out-Null
 
     $backupItems = @(
+        "config.py",
+        "config_backups",
         "src\cancheria\config\legacy_config.py",
         "src\cancheria\config\config_backups",
         "runtime",

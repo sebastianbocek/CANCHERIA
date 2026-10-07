@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.8 - 2026-10-07
+
+- La API key configurada desde la GUI vuelve a guardarse en el `config.py`
+  principal y tiene prioridad sobre variables de entorno antiguas.
+- El configurador normaliza y verifica la clave directamente con OpenAI antes
+  de guardarla; un 401 ya no permite iniciar el agente.
+- El panel principal vuelve a comprobar la credencial antes de abrir WhatsApp,
+  evitando falsos casos de atención humana por errores de autenticación.
+- Los instaladores de Windows y Debian respaldan y conservan `config.py` al
+  actualizar, además de mantener la migración desde la configuración anterior.
+
 ## Backup fresco para clientes
 
 - Se agregó `Crear_Backup_Fresco_CANCHERIA.exe`, un generador reutilizable de

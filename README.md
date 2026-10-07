@@ -11,13 +11,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.7/InstaladorCancheria.exe"><strong>⬇️ Descargar para Windows</strong></a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.8/InstaladorCancheria.exe"><strong>⬇️ Descargar para Windows</strong></a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.7/InstaladorCancheriaLinux.run"><strong>⬇️ Descargar para Debian</strong></a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.8/InstaladorCancheriaLinux.run"><strong>⬇️ Descargar para Debian</strong></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/tag/v0.1.7">Ver versión v0.1.7</a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/tag/v0.1.8">Ver versión v0.1.8</a>
   ·
   <a href="docs/MANUAL_DE_USO_CANCHERIA_DUENOS_ENCARGADOS.pdf">Manual completo</a>
 </p>
@@ -59,13 +59,13 @@ El software de CANCHERIA se distribuye sin costo de licencia. Para responder con
 La siguiente demostración muestra una conversación real de reserva con CANCHERIA. La vista previa se reproduce directamente en el README; hacé clic sobre ella para abrir el video completo con audio.
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.7/DEMO-CANCHERIA-CHAT.mp4">
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.8/DEMO-CANCHERIA-CHAT.mp4">
     <img src="docs/images/cancheria-demo.webp" alt="Demo de una conversación de reserva con CANCHERIA" width="420">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.7/DEMO-CANCHERIA-CHAT.mp4"><strong>▶ Ver demo completa con audio</strong></a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.8/DEMO-CANCHERIA-CHAT.mp4"><strong>▶ Ver demo completa con audio</strong></a>
 </p>
 
 ### Panel principal
@@ -86,7 +86,7 @@ La pestaña **Horas** muestra cada horario y cancha en una grilla: verde cuando 
 
 ### Windows 10 y Windows 11
 
-1. Descargá **[InstaladorCancheria.exe](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.7/InstaladorCancheria.exe)**.
+1. Descargá **[InstaladorCancheria.exe](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.8/InstaladorCancheria.exe)**.
 2. Cerrá una instalación anterior de CANCHERIA si estuviera abierta.
 3. Ejecutá `InstaladorCancheria.exe` y seguí el asistente.
 4. Dejá marcada la opción **Configurar mi negocio ahora**.
@@ -105,7 +105,7 @@ Requisitos:
 - Usuario normal con acceso a `sudo`.
 - Conexión a Internet.
 
-1. Descargá **[InstaladorCancheriaLinux.run](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.7/InstaladorCancheriaLinux.run)**.
+1. Descargá **[InstaladorCancheriaLinux.run](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.1.8/InstaladorCancheriaLinux.run)**.
 2. Abrí una terminal en la carpeta de descarga.
 3. Ejecutá el instalador con tu usuario normal, sin anteponer `sudo`:
 
@@ -146,6 +146,11 @@ El configurador visual permite cargar los datos sin editar código:
 - Seña fija o porcentual.
 - Quinchos, parrillas y servicios.
 - Datos de contacto para atención humana.
+
+Al guardar, CANCHERIA coloca la API key en el `config.py` operativo y la comprueba
+directamente con OpenAI. Si la clave
+es inválida, está incompleta o el proyecto no puede usar la API, la configuración
+no se guarda y se muestra una explicación. La clave nunca se publica en GitHub.
 
 Después de guardar una modificación, reiniciá el agente si ya estaba encendido para que toda la configuración vuelva a cargarse.
 
@@ -275,7 +280,7 @@ Los resultados se guardan en `release/`. Los generadores usan una configuración
 
 ## Estado de licencia
 
-CANCHERIA `v0.1.7` se ofrece para descarga y uso sin costo de licencia. La licencia jurídica definitiva del código fuente continúa pendiente de selección por AI BROTHERS; consultá [docs/licensing.md](docs/licensing.md). Esto no afecta la descarga gratuita de los instaladores publicados.
+CANCHERIA `v0.1.8` se ofrece para descarga y uso sin costo de licencia. La licencia jurídica definitiva del código fuente continúa pendiente de selección por AI BROTHERS; consultá [docs/licensing.md](docs/licensing.md). Esto no afecta la descarga gratuita de los instaladores publicados.
 
 ---
 

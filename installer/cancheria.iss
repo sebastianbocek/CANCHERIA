@@ -1,5 +1,5 @@
 #define MyAppName "CANCHERIA"
-#define MyAppVersion "0.1.7"
+#define MyAppVersion "0.1.8"
 #define MyAppPublisher "CANCHERIA"
 #define PayloadDir "..\build\installer\payload"
 
@@ -42,7 +42,9 @@ Source: "..\scripts\backup_before_update.ps1"; DestDir: "{tmp}"; Flags: dontcopy
 ; La configuración editable se instala solo la primera vez. Una actualización
 ; futura del instalador no pisa los datos que cargó el dueño del complejo.
 Source: "{#PayloadDir}\src\cancheria\config\legacy_config.py"; DestDir: "{app}\src\cancheria\config"; Flags: ignoreversion onlyifdoesntexist
-Source: "{#PayloadDir}\*"; DestDir: "{app}"; Excludes: "src\cancheria\config\legacy_config.py,build\*"; Flags: ignoreversion recursesubdirs createallsubdirs
+; config.py contiene la API key del cliente desde v0.1.8 y tampoco se pisa.
+Source: "{#PayloadDir}\config.py"; DestDir: "{app}"; Flags: ignoreversion onlyifdoesntexist
+Source: "{#PayloadDir}\*"; DestDir: "{app}"; Excludes: "config.py,src\cancheria\config\legacy_config.py,build\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Dirs]
 Name: "{app}\runtime"

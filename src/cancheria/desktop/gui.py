@@ -13,6 +13,8 @@ import tkinter as tk
 from tkinter import messagebox
 
 from cancheria.desktop.session_manager import ensure_profile, reset_profile, SessionResetError
+from cancheria.config.openai_credentials import CredentialStatus, verify_openai_api_key
+from cancheria.config.settings import AppSettings
 
 
 def _is_install_root(path: Path) -> bool:
@@ -277,6 +279,20 @@ class CancheriaDesktop(tk.Tk):
         wp = self.root_dir / "WPSetter.py"
         if not wp.exists():
             messagebox.showerror("CANCHERIA", f"No encontré WPSetter.py en:\n{self.root_dir}")
+            return
+
+        self._set_status("Verificando API key...", self.ORANGE)
+        self.update_idletasks()
+        credential_check = verify_openai_api_key(AppSettings.from_env().openai_api_key)
+        if credential_check.status != CredentialStatus.VALID:
+            self._set_status("Configuración requerida", self.RED)
+            self._append_log(f"⚠ No se inició: {credential_check.message}")
+            messagebox.showerror(
+                "CANCHERIA · API key",
+                f"{credential_check.message}\n\n"
+                "Abrí CONFIGURACIÓN, pegá una clave válida y guardá nuevamente.\n\n"
+                "https://platform.openai.com/api-keys",
+            )
             return
 
         ensure_profile(self.profile_dir)

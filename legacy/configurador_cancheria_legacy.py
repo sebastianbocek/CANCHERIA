@@ -33,6 +33,14 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
+from cancheria.config.openai_credentials import (
+    CredentialStatus,
+    normalize_openai_api_key,
+    read_openai_api_key_assignment,
+    validate_openai_api_key_format,
+    verify_openai_api_key,
+)
+
 APP_TITLE = "CANCHERIA - Configurador de Cliente"
 SCRIPT_DIR = Path(__file__).resolve().parent
 _INSTALL_ROOT = os.getenv("CANCHERIA_INSTALL_ROOT", "").strip()
@@ -43,6 +51,7 @@ elif getattr(sys, "frozen", False):
 else:
     PROJECT_ROOT = SCRIPT_DIR.parent
 DEFAULT_CONFIG = PROJECT_ROOT / "src" / "cancheria" / "config" / "legacy_config.py"
+ROOT_CONFIG = PROJECT_ROOT / "config.py"
 
 DAY_NAMES = [
     ("Lunes", 0),
@@ -140,6 +149,51 @@ class ConfigSource:
         os.replace(temp, self.path)
         self.load()
         return backup
+
+
+def render_root_api_key(path: Path, api_key: str) -> str:
+    """Render the historical root config.py with an explicit API key."""
+    source = ConfigSource(path)
+    if "OPENAI_API_KEY" in source.assignments:
+        return source.render_with_updates({"OPENAI_API_KEY": api_key})
+    rendered = source.text.rstrip() + (
+        "\n\n# Credencial operativa guardada por el configurador de CANCHERIA.\n"
+        f"OPENAI_API_KEY = {api_key!r}\n"
+    )
+    ast.parse(rendered, filename=str(path))
+    compile(rendered, str(path), "exec")
+    return rendered
+
+
+def save_config_and_root_key(source: ConfigSource, updates: dict, api_key: str) -> tuple[Path, Path]:
+    """Save business settings and config.py credential with rollback protection."""
+    nested_updates = dict(updates)
+    nested_updates["OPENAI_API_KEY"] = ""
+    nested_rendered = source.render_with_updates(nested_updates)
+    root_rendered = render_root_api_key(ROOT_CONFIG, api_key)
+
+    nested_backup = source.create_backup()
+    root_source = ConfigSource(ROOT_CONFIG)
+    root_backup = root_source.create_backup()
+    nested_temp = source.path.with_name(source.path.name + ".tmp")
+    root_temp = ROOT_CONFIG.with_name(ROOT_CONFIG.name + ".tmp")
+    try:
+        nested_temp.write_text(nested_rendered, encoding="utf-8")
+        root_temp.write_text(root_rendered, encoding="utf-8")
+        for temp in (nested_temp, root_temp):
+            checked = temp.read_text(encoding="utf-8")
+            ast.parse(checked, filename=str(temp))
+            compile(checked, str(temp), "exec")
+        os.replace(root_temp, ROOT_CONFIG)
+        os.replace(nested_temp, source.path)
+    except Exception:
+        nested_temp.unlink(missing_ok=True)
+        root_temp.unlink(missing_ok=True)
+        shutil.copy2(root_backup, ROOT_CONFIG)
+        shutil.copy2(nested_backup, source.path)
+        raise
+    source.load()
+    return nested_backup, root_backup
 
 
 class ScrollableFrame(ttk.Frame):
@@ -702,7 +756,8 @@ class CancheriaConfigurator(tk.Tk):
             self.bot_threshold.set(str(lit("BOT_DETECTION_THRESHOLD", 3)))
             self.bot_quarantine.set(str(lit("BOT_QUARANTINE_SECONDS", 3600)))
 
-            self.openai_key.set(str(lit("OPENAI_API_KEY", "")))
+            root_key_found, root_key = read_openai_api_key_assignment(ROOT_CONFIG)
+            self.openai_key.set(root_key if root_key_found else str(lit("OPENAI_API_KEY", "")))
             self.email_sender.set(str(lit("EMAIL_SENDER", "")))
             self.email_password.set(str(lit("EMAIL_PASSWORD", "")))
             self.email_receiver.set(str(lit("EMAIL_RECEIVER", "")))
@@ -858,8 +913,10 @@ class CancheriaConfigurator(tk.Tk):
         if not openai_model:
             raise ValueError("Modelo OpenAI obligatorio (por ejemplo: gpt-4o-mini)")
 
+        openai_key = validate_openai_api_key_format(self.openai_key.get())
+
         updates = {
-            "OPENAI_API_KEY": self.openai_key.get().strip(),
+            "OPENAI_API_KEY": openai_key,
             "EMAIL_SENDER": self.email_sender.get().strip(),
             "EMAIL_PASSWORD": self.email_password.get().strip(),
             "EMAIL_RECEIVER": self.email_receiver.get().strip(),
@@ -926,9 +983,12 @@ class CancheriaConfigurator(tk.Tk):
     def validate_only(self):
         try:
             updates = self.collect_updates()
-            rendered = self.source.render_with_updates(updates)
+            nested_updates = dict(updates)
+            nested_updates["OPENAI_API_KEY"] = ""
+            rendered = self.source.render_with_updates(nested_updates)
             ast.parse(rendered)
             compile(rendered, str(self.source.path), "exec")
+            render_root_api_key(ROOT_CONFIG, updates["OPENAI_API_KEY"])
             self.status.set("Validación OK")
             messagebox.showinfo(
                 APP_TITLE,
@@ -941,6 +1001,20 @@ class CancheriaConfigurator(tk.Tk):
     def save(self):
         try:
             updates = self.collect_updates()
+            self.status.set("Verificando API key con OpenAI...")
+            self.update_idletasks()
+            credential_check = verify_openai_api_key(updates["OPENAI_API_KEY"])
+            if credential_check.status != CredentialStatus.VALID:
+                self.status.set("API key rechazada")
+                messagebox.showerror(
+                    APP_TITLE,
+                    "❌ No se guardó la configuración.\n\n"
+                    f"{credential_check.message}\n\n"
+                    "Creá o revisá la clave en:\n"
+                    "https://platform.openai.com/api-keys",
+                )
+                return
+            self.openai_key.set(normalize_openai_api_key(updates["OPENAI_API_KEY"]))
             if not messagebox.askyesno(
                 APP_TITLE,
                 f"Se modificará:\n\n{self.source.path}\n\n"
@@ -948,12 +1022,17 @@ class CancheriaConfigurator(tk.Tk):
             ):
                 return
 
-            backup = self.source.save_updates(updates)
-            self.status.set(f"Guardado OK · backup {backup.name}")
+            backup, root_backup = save_config_and_root_key(
+                self.source,
+                updates,
+                updates["OPENAI_API_KEY"],
+            )
+            self.status.set(f"Guardado OK · API en config.py · backup {backup.name}")
             messagebox.showinfo(
                 APP_TITLE,
-                "✅ config.py actualizado correctamente.\n\n"
-                f"Backup:\n{backup}\n\n"
+                "✅ Configuración actualizada correctamente.\n\n"
+                f"API key guardada en:\n{ROOT_CONFIG}\n\n"
+                f"Backups:\n{backup}\n{root_backup}\n\n"
                 "Reiniciá WPSetter para aplicar todos los cambios."
             )
         except Exception as exc:
