@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.9 - 2026-10-08
+
+- Agrega la pestaña `Torneos` junto a `Atención humana` en el panel de administración.
+- Permite crear, editar y borrar torneos desde la GUI con fecha, inscripción, premio, capacidad y alias de pago.
+- Permite crear y editar inscripciones, confirmar seña o pago total y liberar/cancelar cupos.
+- Muestra confirmados, holds y lugares disponibles por torneo, además de pagos y saldos por inscripción.
+- Conserva el ID administrativo de una inscripción después de editarla o registrar pagos.
+- La pestaña `Torneos` recibe una insignia roja cuando existen inscripciones pendientes de pago.
+- `Comandos y configuración` ahora utiliza el catálogo completo de ayuda del administrador de WhatsApp, ordenado visualmente y con desplazamiento.
+
 ## 0.2.8 - 2026-10-08
 
 - Renombra el acceso principal `AJUSTES` como `ACTUALIZACIÓN` para que su función sea evidente.

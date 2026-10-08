@@ -36,6 +36,7 @@ EVENT_REGISTRATION_HOLD_MINUTES = max(
 
 EVENT_REGISTRATION_FIELDS = [
     "registration_id",
+    "admin_id",
     "event_id",
     "event_name",
     "event_date",
@@ -688,6 +689,71 @@ def cancel_event_registration(
         if target.get("status") != "cancelled":
             stamp = _now(now).isoformat()
             target.update(status="cancelled", cancelled_at=stamp, updated_at=stamp)
+        _atomic_csv_write(csv_path, rows)
+        return {
+            "ok": True,
+            "registration": dict(target),
+            "event": dict(event),
+            "capacity_state": _capacity_from_rows(event, rows),
+        }
+
+
+def update_event_registration_contact(
+    event: Dict[str, Any],
+    registration_id: Any,
+    *,
+    team_name: Any,
+    contact_name: Any,
+    phone: Any,
+    now: Optional[dt.datetime] = None,
+) -> Dict[str, Any]:
+    """Edita únicamente los datos de contacto de una inscripción existente.
+
+    Estados, importes e identidad transaccional permanecen intactos. La misma
+    validación de equipo único usada al crear el hold evita duplicados activos.
+    """
+    target_id = str(registration_id or "").strip()
+    clean_team = re.sub(r"\s+", " ", str(team_name or "")).strip()
+    clean_contact = re.sub(r"\s+", " ", str(contact_name or "")).strip()
+    clean_phone = str(phone or "").strip()
+    if not clean_team:
+        raise EventRegistrationError("missing_team_name", "Falta el nombre del equipo.")
+    if not clean_phone:
+        raise EventRegistrationError("missing_contact_phone", "Falta el teléfono del contacto.")
+
+    csv_path = _event_csv_path(event)
+    with _exclusive_file_lock(csv_path):
+        rows = read_event_registrations(event)
+        _expire_rows(rows, _now(now))
+        target = next(
+            (row for row in rows if str(row.get("registration_id") or "") == target_id),
+            None,
+        )
+        if target is None:
+            raise EventRegistrationError("registration_not_found", "No existe la inscripción indicada.")
+        normalized_team = _normalize_identity(clean_team)
+        duplicate = next(
+            (
+                row for row in rows
+                if str(row.get("registration_id") or "") != target_id
+                and row.get("status") in {"pending_payment", "confirmed"}
+                and _normalize_identity(row.get("team_name")) == normalized_team
+            ),
+            None,
+        )
+        if duplicate is not None:
+            raise EventRegistrationError(
+                "duplicate_active_team",
+                "Ya existe una inscripción activa para ese equipo.",
+            )
+        target.update(
+            team_name=clean_team,
+            contact_name=clean_contact,
+            phone=clean_phone,
+            event_name=event.get("name"),
+            event_date=event.get("date"),
+            updated_at=_now(now).isoformat(),
+        )
         _atomic_csv_write(csv_path, rows)
         return {
             "ok": True,

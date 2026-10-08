@@ -7,7 +7,7 @@ from typing import Callable
 from cancheria.admin.desktop_service import DesktopAdminService
 
 
-COMMAND_REFERENCE = """CONTROL DEL AGENTE
+COMMAND_REFERENCE_FALLBACK = """CONTROL DEL AGENTE
 pausar agente · reanudar agente · estado agente · casos pendientes · resolver caso ID 3
 
 RESERVAS Y PAGOS
@@ -93,17 +93,20 @@ class AdminPanel(tk.Toplevel):
         self.hours_tab = tk.Frame(self.notebook, bg="white")
         self.operation_tab = tk.Frame(self.notebook, bg="white")
         self.cases_tab = tk.Frame(self.notebook, bg="white")
+        self.tournaments_tab = tk.Frame(self.notebook, bg="white")
         self.commands_tab = tk.Frame(self.notebook, bg="white")
         self.notebook.add(self.bookings_tab, text="Reservas y pagos")
         self.notebook.add(self.hours_tab, text="Horas")
         self.notebook.add(self.operation_tab, text="Operación")
         self.notebook.add(self.cases_tab, text="Atención humana")
+        self.notebook.add(self.tournaments_tab, text="Torneos")
         self.notebook.add(self.commands_tab, text="Comandos y configuración")
         self._tab_titles = {
             self.bookings_tab: "Reservas y pagos",
             self.hours_tab: "Horas",
             self.operation_tab: "Operación",
             self.cases_tab: "Atención humana",
+            self.tournaments_tab: "Torneos",
             self.commands_tab: "Comandos y configuración",
         }
         self._tab_notification_keys = {
@@ -111,6 +114,7 @@ class AdminPanel(tk.Toplevel):
             self.hours_tab: "hours",
             self.operation_tab: "operation",
             self.cases_tab: "cases",
+            self.tournaments_tab: "tournaments",
             self.commands_tab: "commands",
         }
         self._tab_badge_images: dict[tk.Widget, tk.PhotoImage] = {}
@@ -118,6 +122,7 @@ class AdminPanel(tk.Toplevel):
         self._build_hours()
         self._build_operation()
         self._build_cases()
+        self._build_tournaments()
         self._build_commands()
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
@@ -196,6 +201,8 @@ class AdminPanel(tk.Toplevel):
     def _on_tab_changed(self, _event=None) -> None:
         if self.notebook.select() == str(self.hours_tab):
             self._refresh_hours()
+        elif self.notebook.select() == str(self.tournaments_tab):
+            self._refresh_tournaments()
 
     def _build_operation(self) -> None:
         form = tk.Frame(self.operation_tab, bg="white")
@@ -224,15 +231,165 @@ class AdminPanel(tk.Toplevel):
             self.case_tree.column(key, width=width, anchor="w")
         self.case_tree.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
+    def _build_tournaments(self) -> None:
+        tournament_actions = tk.Frame(self.tournaments_tab, bg="white")
+        tournament_actions.pack(fill="x", padx=10, pady=(10, 6))
+        self._action_button(
+            tournament_actions, "Nuevo torneo", self._new_tournament_dialog, self.BLUE
+        ).pack(side="left", padx=3)
+        self._action_button(
+            tournament_actions, "Editar torneo", self._edit_tournament_dialog, self.ORANGE
+        ).pack(side="left", padx=3)
+        self._action_button(
+            tournament_actions, "Borrar torneo", self._delete_tournament, self.RED
+        ).pack(side="left", padx=3)
+        self._action_button(
+            tournament_actions, "Actualizar", self._refresh_tournaments, self.NAVY
+        ).pack(side="left", padx=3)
+
+        tournament_columns = (
+            "id", "name", "date", "price", "prize", "confirmed", "holds", "available"
+        )
+        self.tournament_tree = ttk.Treeview(
+            self.tournaments_tab,
+            columns=tournament_columns,
+            show="headings",
+            selectmode="browse",
+            height=7,
+        )
+        tournament_labels = (
+            "ID", "Torneo", "Fecha", "Inscripción", "Premio",
+            "Confirmados", "Holds", "Disponibles",
+        )
+        tournament_widths = (115, 220, 95, 105, 105, 90, 70, 90)
+        for key, label, width in zip(tournament_columns, tournament_labels, tournament_widths):
+            self.tournament_tree.heading(key, text=label)
+            self.tournament_tree.column(
+                key,
+                width=width,
+                anchor="w" if key == "name" else "center",
+            )
+        self.tournament_tree.pack(fill="x", padx=10, pady=(0, 8))
+        self.tournament_tree.bind(
+            "<<TreeviewSelect>>", lambda _event: self._refresh_tournament_registrations()
+        )
+
+        separator = ttk.Separator(self.tournaments_tab, orient="horizontal")
+        separator.pack(fill="x", padx=10, pady=(0, 7))
+        registrations_header = tk.Frame(self.tournaments_tab, bg="white")
+        registrations_header.pack(fill="x", padx=10, pady=(0, 6))
+        tk.Label(
+            registrations_header,
+            text="Inscripciones del torneo seleccionado",
+            font=("Segoe UI", 11, "bold"),
+            fg=self.NAVY,
+            bg="white",
+        ).pack(side="left", padx=(3, 14))
+        self._action_button(
+            registrations_header,
+            "Nueva inscripción",
+            lambda: self._registration_dialog(edit=False),
+            self.BLUE,
+        ).pack(side="left", padx=3)
+        self._action_button(
+            registrations_header,
+            "Editar datos",
+            lambda: self._registration_dialog(edit=True),
+            self.ORANGE,
+        ).pack(side="left", padx=3)
+        self._action_button(
+            registrations_header,
+            "Confirmar seña",
+            lambda: self._registration_payment(total=False),
+            self.GREEN,
+        ).pack(side="left", padx=3)
+        self._action_button(
+            registrations_header,
+            "Confirmar total",
+            lambda: self._registration_payment(total=True),
+            self.GREEN,
+        ).pack(side="left", padx=3)
+        self._action_button(
+            registrations_header,
+            "Liberar / cancelar",
+            self._cancel_registration,
+            self.RED,
+        ).pack(side="left", padx=3)
+
+        registration_columns = (
+            "id", "team", "contact", "phone", "status", "paid", "pending", "method"
+        )
+        self.registration_tree = ttk.Treeview(
+            self.tournaments_tab,
+            columns=registration_columns,
+            show="headings",
+            selectmode="browse",
+        )
+        registration_labels = (
+            "ID", "Equipo", "Responsable", "Teléfono", "Estado",
+            "Pagado", "Pendiente", "Método",
+        )
+        registration_widths = (75, 165, 145, 125, 115, 90, 90, 125)
+        for key, label, width in zip(
+            registration_columns, registration_labels, registration_widths
+        ):
+            self.registration_tree.heading(key, text=label)
+            self.registration_tree.column(
+                key,
+                width=width,
+                anchor="w" if key in {"team", "contact", "phone"} else "center",
+            )
+        registration_scroll = ttk.Scrollbar(
+            self.tournaments_tab,
+            orient="vertical",
+            command=self.registration_tree.yview,
+        )
+        self.registration_tree.configure(yscrollcommand=registration_scroll.set)
+        registration_scroll.pack(side="right", fill="y", pady=(0, 10))
+        self.registration_tree.pack(fill="both", expand=True, padx=(10, 0), pady=(0, 10))
+
     def _build_commands(self) -> None:
         bar = tk.Frame(self.commands_tab, bg="white")
         bar.pack(fill="x", padx=14, pady=12)
         self._action_button(bar, "Abrir configuración", self.open_configurator_callback, self.BLUE).pack(side="left")
         tk.Label(bar, text="Referencia de las mismas funciones disponibles por WhatsApp", bg="white", fg=self.MUTED).pack(side="left", padx=14)
-        text = tk.Text(self.commands_tab, wrap="word", font=("Consolas", 10), bg="#f8fafc", fg=self.NAVY, relief="flat", padx=14, pady=14)
-        text.insert("1.0", COMMAND_REFERENCE)
+        body = tk.Frame(self.commands_tab, bg="white")
+        body.pack(fill="both", expand=True, padx=14, pady=(0, 14))
+        text = tk.Text(
+            body,
+            wrap="word",
+            font=("Segoe UI", 10),
+            bg="#f8fafc",
+            fg=self.NAVY,
+            relief="flat",
+            padx=16,
+            pady=14,
+        )
+        scrollbar = ttk.Scrollbar(body, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=scrollbar.set)
+        text.tag_configure(
+            "title", font=("Segoe UI", 14, "bold"), foreground=self.NAVY, spacing3=10
+        )
+        text.tag_configure(
+            "heading", font=("Segoe UI", 11, "bold"), foreground=self.BLUE, spacing1=12, spacing3=4
+        )
+        text.tag_configure("command", font=("Consolas", 9), lmargin1=12, lmargin2=24, spacing1=2)
+        reference_method = getattr(self.service, "command_reference", None)
+        reference = reference_method() if callable(reference_method) else COMMAND_REFERENCE_FALLBACK
+        for index, raw_line in enumerate(str(reference).splitlines()):
+            line = raw_line.replace("*", "").replace("`", "")
+            if index == 0:
+                tag = "title"
+            elif raw_line.strip().startswith("•"):
+                tag = "command"
+            elif raw_line.strip() and "*" in raw_line:
+                tag = "heading"
+            else:
+                tag = None
+            text.insert("end", line + "\n", tag)
         text.configure(state="disabled")
-        text.pack(fill="both", expand=True, padx=14, pady=(0, 14))
+        scrollbar.pack(side="right", fill="y")
+        text.pack(side="left", fill="both", expand=True)
 
     def refresh_all(self) -> None:
         try:
@@ -243,6 +400,7 @@ class AdminPanel(tk.Toplevel):
             self._apply_notification_counts(self._notification_counts_for_stats(stats))
             self._refresh_bookings()
             self._refresh_cases()
+            self._refresh_tournaments()
             self._refresh_hours()
         except Exception as exc:
             messagebox.showerror("Administración", f"No pude actualizar el panel:\n{exc}", parent=self)
@@ -250,7 +408,7 @@ class AdminPanel(tk.Toplevel):
     def _apply_notification_counts(self, counts: dict[str, int]) -> None:
         normalized = {
             key: max(0, int(counts.get(key, 0) or 0))
-            for key in ("bookings", "hours", "operation", "cases", "commands")
+            for key in ("bookings", "hours", "operation", "cases", "tournaments", "commands")
         }
         normalized["total"] = sum(normalized.values())
         self._last_notification_counts = normalized
@@ -287,6 +445,7 @@ class AdminPanel(tk.Toplevel):
             "hours": 0,
             "operation": 0,
             "cases": cases,
+            "tournaments": 0,
             "commands": 0,
             "total": bookings + cases,
         }
@@ -349,6 +508,7 @@ class AdminPanel(tk.Toplevel):
             if previous != self._last_notification_counts:
                 self._refresh_bookings()
                 self._refresh_cases()
+                self._refresh_tournaments()
         except Exception:
             # A transient file write must not interrupt the administrator.
             pass
@@ -646,6 +806,291 @@ class AdminPanel(tk.Toplevel):
             self.refresh_all()
         except Exception as exc:
             messagebox.showerror("Administración", str(exc), parent=self)
+
+    @staticmethod
+    def _money(value) -> str:
+        try:
+            amount = int(float(value or 0))
+        except (TypeError, ValueError):
+            amount = 0
+        return "$" + f"{amount:,}".replace(",", ".")
+
+    def _refresh_tournaments(self) -> None:
+        if not hasattr(self, "tournament_tree"):
+            return
+        method = getattr(self.service, "tournaments", None)
+        if not callable(method):
+            return
+        previous = ""
+        selection = self.tournament_tree.selection()
+        if selection:
+            previous = str(self.tournament_tree.item(selection[0], "values")[0])
+        self.tournament_tree.delete(*self.tournament_tree.get_children())
+        self._tournament_rows = {}
+        for index, event in enumerate(method()):
+            event_id = str(event.get("event_id") or "")
+            self._tournament_rows[event_id] = dict(event)
+            iid = f"tournament:{event_id}:{index}"
+            self.tournament_tree.insert(
+                "",
+                "end",
+                iid=iid,
+                values=(
+                    event_id,
+                    event.get("name", ""),
+                    event.get("date", ""),
+                    self._money(event.get("registration_price")),
+                    self._money(event.get("prize")),
+                    f"{event.get('confirmed', 0)}/{event.get('capacity', 0)}",
+                    event.get("active_holds", 0),
+                    event.get("available", 0),
+                ),
+            )
+            if event_id == previous:
+                self.tournament_tree.selection_set(iid)
+        if not self.tournament_tree.selection() and self.tournament_tree.get_children():
+            first = self.tournament_tree.get_children()[0]
+            self.tournament_tree.selection_set(first)
+        self._refresh_tournament_registrations()
+
+    def _selected_tournament_id(self) -> str:
+        selection = self.tournament_tree.selection()
+        if not selection:
+            raise ValueError("Seleccioná un torneo de la tabla.")
+        return str(self.tournament_tree.item(selection[0], "values")[0])
+
+    def _selected_registration_id(self) -> str:
+        selection = self.registration_tree.selection()
+        if not selection:
+            raise ValueError("Seleccioná una inscripción de la tabla.")
+        iid = selection[0]
+        row = getattr(self, "_registration_rows", {}).get(iid) or {}
+        registration_id = str(row.get("registration_id") or "")
+        if not registration_id:
+            raise ValueError("La inscripción seleccionada ya no existe.")
+        return registration_id
+
+    def _refresh_tournament_registrations(self) -> None:
+        if not hasattr(self, "registration_tree"):
+            return
+        self.registration_tree.delete(*self.registration_tree.get_children())
+        self._registration_rows = {}
+        method = getattr(self.service, "tournament_registrations", None)
+        if not callable(method):
+            return
+        try:
+            event_id = self._selected_tournament_id()
+        except ValueError:
+            return
+        statuses = {
+            "pending_payment": "Pendiente",
+            "confirmed": "Confirmada",
+            "expired": "Vencida",
+            "cancelled": "Cancelada",
+        }
+        for index, row in enumerate(method(event_id)):
+            iid = f"registration:{row.get('registration_id')}:{index}"
+            self._registration_rows[iid] = dict(row)
+            self.registration_tree.insert(
+                "",
+                "end",
+                iid=iid,
+                values=(
+                    row.get("display_id") or row.get("registration_id", ""),
+                    row.get("team_name", ""),
+                    row.get("contact_name", ""),
+                    row.get("phone", ""),
+                    statuses.get(str(row.get("status") or ""), row.get("status", "")),
+                    self._money(row.get("paid_amount")),
+                    self._money(row.get("remaining_amount")),
+                    row.get("payment_method", ""),
+                ),
+            )
+
+    def _new_tournament_dialog(self) -> None:
+        self._tournament_dialog(None)
+
+    def _edit_tournament_dialog(self) -> None:
+        try:
+            event_id = self._selected_tournament_id()
+            event = dict(getattr(self, "_tournament_rows", {}).get(event_id) or {})
+            if not event:
+                raise ValueError("El torneo seleccionado ya no existe.")
+            self._tournament_dialog(event)
+        except Exception as exc:
+            messagebox.showerror("Torneos", str(exc), parent=self)
+
+    def _tournament_dialog(self, event: dict | None) -> None:
+        editing = bool(event)
+        dialog = tk.Toplevel(self)
+        dialog.title("Editar torneo" if editing else "Nuevo torneo")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        values = {
+            "name": tk.StringVar(value=str((event or {}).get("name") or "")),
+            "date": tk.StringVar(value=str((event or {}).get("date") or dt_today())),
+            "price": tk.StringVar(value=str((event or {}).get("registration_price") or "")),
+            "prize": tk.StringVar(value=str((event or {}).get("prize") or "")),
+            "capacity": tk.StringVar(value=str((event or {}).get("capacity") or "")),
+            "alias": tk.StringVar(value=str((event or {}).get("payment_alias") or "")),
+        }
+        fields = (
+            ("Nombre", "name"),
+            ("Fecha (AAAA-MM-DD)", "date"),
+            ("Precio de inscripción", "price"),
+            ("Premio", "prize"),
+            ("Máximo de equipos", "capacity"),
+        )
+        for row_index, (label, key) in enumerate(fields):
+            tk.Label(dialog, text=label).grid(row=row_index, column=0, sticky="w", padx=14, pady=7)
+            tk.Entry(dialog, textvariable=values[key], width=34).grid(
+                row=row_index, column=1, padx=14, pady=7
+            )
+        next_row = len(fields)
+        if not editing:
+            tk.Label(dialog, text="Alias de pago (opcional)").grid(
+                row=next_row, column=0, sticky="w", padx=14, pady=7
+            )
+            tk.Entry(dialog, textvariable=values["alias"], width=34).grid(
+                row=next_row, column=1, padx=14, pady=7
+            )
+            next_row += 1
+
+        def save() -> None:
+            try:
+                if editing:
+                    result = self.service.update_tournament(
+                        str(event.get("event_id")),
+                        name=values["name"].get(),
+                        date=values["date"].get(),
+                        price=values["price"].get(),
+                        prize=values["prize"].get(),
+                        capacity=values["capacity"].get(),
+                    )
+                else:
+                    result = self.service.create_tournament(
+                        name=values["name"].get(),
+                        date=values["date"].get(),
+                        price=values["price"].get(),
+                        prize=values["prize"].get(),
+                        capacity=values["capacity"].get(),
+                        payment_alias=values["alias"].get(),
+                    )
+                messagebox.showinfo("Torneos", result, parent=dialog)
+                dialog.destroy()
+                self.refresh_all()
+            except Exception as exc:
+                messagebox.showerror("Torneos", str(exc), parent=dialog)
+
+        self._action_button(
+            dialog, "Guardar cambios" if editing else "Crear torneo", save, self.BLUE
+        ).grid(row=next_row, column=0, columnspan=2, pady=14)
+
+    def _delete_tournament(self) -> None:
+        try:
+            event_id = self._selected_tournament_id()
+            event = getattr(self, "_tournament_rows", {}).get(event_id) or {}
+            if not messagebox.askyesno(
+                "Borrar torneo",
+                f"¿Borrar {event.get('name') or event_id}?\n\n"
+                "También se eliminará su archivo de inscripciones. Esta acción no se puede deshacer.",
+                parent=self,
+            ):
+                return
+            result = self.service.delete_tournament(event_id)
+            messagebox.showinfo("Torneos", result, parent=self)
+            self.refresh_all()
+        except Exception as exc:
+            messagebox.showerror("Torneos", str(exc), parent=self)
+
+    def _registration_dialog(self, *, edit: bool) -> None:
+        try:
+            event_id = self._selected_tournament_id()
+            current = {}
+            registration_id = ""
+            if edit:
+                registration_id = self._selected_registration_id()
+                selection = self.registration_tree.selection()[0]
+                current = dict(self._registration_rows.get(selection) or {})
+        except Exception as exc:
+            messagebox.showerror("Inscripciones", str(exc), parent=self)
+            return
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Editar inscripción" if edit else "Nueva inscripción")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        fields = (
+            ("Equipo", tk.StringVar(value=str(current.get("team_name") or ""))),
+            ("Responsable", tk.StringVar(value=str(current.get("contact_name") or ""))),
+            ("Teléfono", tk.StringVar(value=str(current.get("phone") or ""))),
+        )
+        for row_index, (label, variable) in enumerate(fields):
+            tk.Label(dialog, text=label).grid(row=row_index, column=0, sticky="w", padx=14, pady=8)
+            tk.Entry(dialog, textvariable=variable, width=34).grid(
+                row=row_index, column=1, padx=14, pady=8
+            )
+
+        def save() -> None:
+            try:
+                if edit:
+                    result = self.service.update_tournament_registration(
+                        event_id,
+                        registration_id,
+                        team_name=fields[0][1].get(),
+                        contact_name=fields[1][1].get(),
+                        phone=fields[2][1].get(),
+                    )
+                else:
+                    result = self.service.create_tournament_registration(
+                        event_id,
+                        team_name=fields[0][1].get(),
+                        contact_name=fields[1][1].get(),
+                        phone=fields[2][1].get(),
+                    )
+                messagebox.showinfo("Inscripciones", result, parent=dialog)
+                dialog.destroy()
+                self.refresh_all()
+            except Exception as exc:
+                messagebox.showerror("Inscripciones", str(exc), parent=dialog)
+
+        self._action_button(
+            dialog, "Guardar cambios" if edit else "Crear inscripción", save, self.BLUE
+        ).grid(row=len(fields), column=0, columnspan=2, pady=14)
+
+    def _registration_payment(self, *, total: bool) -> None:
+        try:
+            registration_id = self._selected_registration_id()
+            label = "el pago total" if total else "la seña"
+            if not messagebox.askyesno(
+                "Inscripciones",
+                f"¿Confirmar {label} de la inscripción seleccionada?",
+                parent=self,
+            ):
+                return
+            result = self.service.confirm_tournament_registration(
+                registration_id, total=total
+            )
+            messagebox.showinfo("Inscripciones", result, parent=self)
+            self.refresh_all()
+        except Exception as exc:
+            messagebox.showerror("Inscripciones", str(exc), parent=self)
+
+    def _cancel_registration(self) -> None:
+        try:
+            registration_id = self._selected_registration_id()
+            if not messagebox.askyesno(
+                "Liberar inscripción",
+                "¿Cancelar esta inscripción y liberar el cupo?\n\n"
+                "Los pagos registrados se conservarán como historial.",
+                parent=self,
+            ):
+                return
+            result = self.service.cancel_tournament_registration(registration_id)
+            messagebox.showinfo("Inscripciones", result, parent=self)
+            self.refresh_all()
+        except Exception as exc:
+            messagebox.showerror("Inscripciones", str(exc), parent=self)
 
     def _refresh_cases(self) -> None:
         self.case_tree.delete(*self.case_tree.get_children())

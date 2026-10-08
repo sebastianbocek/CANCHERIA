@@ -9,6 +9,7 @@ from typing import Any
 
 from cancheria.config import legacy_config as cfg
 from cancheria.domain.reservations.calendar import CalendarioLlamadas
+from cancheria.domain.events import registration as event_registration
 from cancheria.legacy_bridge import legacy_callable
 
 
@@ -58,6 +59,7 @@ class DesktopAdminService:
             "pending": len(pending_reservations),
             "today": today_count,
             "cases": len(self.human_cases()),
+            "tournaments": self.pending_tournament_registrations(),
         }
 
     def notification_counts(self, stats: dict[str, int] | None = None) -> dict[str, int]:
@@ -70,14 +72,178 @@ class DesktopAdminService:
         current = stats or self.stats()
         bookings = max(0, int(current.get("pending", 0) or 0))
         cases = max(0, int(current.get("cases", 0) or 0))
+        tournaments = max(0, int(current.get("tournaments", 0) or 0))
         return {
             "bookings": bookings,
             "hours": 0,
             "operation": 0,
             "cases": cases,
+            "tournaments": tournaments,
             "commands": 0,
-            "total": bookings + cases,
+            "total": bookings + cases + tournaments,
         }
+
+    def command_reference(self) -> str:
+        """Use the exact help catalog exposed by the WhatsApp admin command."""
+        return str(legacy_callable("build_mensaje_ayuda_admin")("todos") or "")
+
+    def tournaments(self) -> list[dict[str, Any]]:
+        result = []
+        for event in event_registration.list_business_events(active_only=False):
+            row = dict(event)
+            state = event_registration.get_event_capacity_state(row)
+            row.update(state)
+            result.append(row)
+        return result
+
+    def pending_tournament_registrations(self) -> int:
+        total = 0
+        for event in event_registration.list_business_events(active_only=False):
+            event_registration.get_event_capacity_state(event)
+            total += sum(
+                1 for row in event_registration.read_event_registrations(event)
+                if str(row.get("status") or "") == "pending_payment"
+            )
+        return total
+
+    def create_tournament(
+        self,
+        *,
+        name: str,
+        date: str,
+        price: str,
+        prize: str,
+        capacity: str,
+        payment_alias: str = "",
+    ) -> str:
+        result = event_registration.configure_business_event(
+            name,
+            price,
+            capacity,
+            date,
+            prize=prize,
+            payment_alias=payment_alias or None,
+        )
+        event = result["event"]
+        return (
+            f"Torneo {event.get('name')} creado para el "
+            f"{event_registration.format_event_date(event.get('date'))}."
+        )
+
+    def update_tournament(
+        self,
+        event_id: str,
+        *,
+        name: str,
+        date: str,
+        price: str,
+        prize: str,
+        capacity: str,
+    ) -> str:
+        result = legacy_callable("editar_torneo_admin")({
+            "torneo_event_id": str(event_id),
+            "nuevo_nombre_torneo": name,
+            "fecha_torneo": date,
+            "precio_monto": price,
+            "premio_monto": prize,
+            "cantidad_maxima_equipos": capacity,
+        })
+        if not result.get("ok"):
+            raise RuntimeError(self._result_message(result, "No se pudo editar el torneo."))
+        return self._result_message(result, "Torneo actualizado.")
+
+    def delete_tournament(self, event_id: str) -> str:
+        result = legacy_callable("borrar_torneo_admin")({
+            "torneo_event_id": str(event_id),
+        })
+        if not result.get("ok"):
+            raise RuntimeError(self._result_message(result, "No se pudo borrar el torneo."))
+        return self._result_message(result, "Torneo borrado.")
+
+    @staticmethod
+    def _event(event_id: str) -> dict[str, Any]:
+        event = event_registration.get_business_event(
+            event_id=str(event_id), active_only=False
+        )
+        if not event:
+            raise ValueError("El torneo ya no existe. Actualizá la lista.")
+        return dict(event)
+
+    def tournament_registrations(self, event_id: str) -> list[dict[str, Any]]:
+        event = self._event(event_id)
+        event_registration.get_event_capacity_state(event)
+        rows = event_registration.read_event_registrations(event)
+        public_id = legacy_callable("_event_registration_admin_public_id")
+        result = []
+        for raw in rows:
+            row = dict(raw)
+            row["display_id"] = (
+                str(row.get("admin_id") or "").strip()
+                or str(public_id(row.get("registration_id"), create=True) or "").strip()
+                or str(row.get("registration_id") or "")
+            )
+            result.append(row)
+        return sorted(result, key=lambda row: str(row.get("created_at") or ""), reverse=True)
+
+    def create_tournament_registration(
+        self,
+        event_id: str,
+        *,
+        team_name: str,
+        contact_name: str,
+        phone: str,
+    ) -> str:
+        event = self._event(event_id)
+        result = event_registration.create_event_registration_hold(
+            event,
+            team_name,
+            contact_name,
+            phone,
+        )
+        if not result.get("ok"):
+            raise RuntimeError("El torneo está completo y no admite otra inscripción.")
+        row = result["registration"]
+        display_id = legacy_callable("_event_registration_admin_public_id")(
+            row.get("registration_id"), create=True
+        )
+        return f"Inscripción ID {display_id or row.get('registration_id')} creada para {row.get('team_name')}."
+
+    def update_tournament_registration(
+        self,
+        event_id: str,
+        registration_id: str,
+        *,
+        team_name: str,
+        contact_name: str,
+        phone: str,
+    ) -> str:
+        event = self._event(event_id)
+        result = event_registration.update_event_registration_contact(
+            event,
+            registration_id,
+            team_name=team_name,
+            contact_name=contact_name,
+            phone=phone,
+        )
+        row = result["registration"]
+        return f"Datos de la inscripción de {row.get('team_name')} actualizados."
+
+    def confirm_tournament_registration(self, registration_id: str, *, total: bool) -> str:
+        result = legacy_callable("confirmar_pago_inscripcion_evento_admin")({
+            "registration_id": str(registration_id),
+            "pago_total": bool(total),
+        })
+        if not result.get("ok"):
+            raise RuntimeError(self._result_message(result, "No se pudo confirmar la inscripción."))
+        return self._result_message(result, "Pago de inscripción confirmado.")
+
+    def cancel_tournament_registration(self, registration_id: str) -> str:
+        result = legacy_callable("liberar_inscripcion_evento_admin")({
+            "registration_id": str(registration_id),
+        })
+        if not result.get("ok"):
+            raise RuntimeError(self._result_message(result, "No se pudo liberar la inscripción."))
+        return self._result_message(result, "Inscripción liberada.")
 
     @staticmethod
     def _result_message(result: dict[str, Any], fallback: str) -> str:

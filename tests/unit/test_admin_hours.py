@@ -214,6 +214,7 @@ def test_notification_counts_sum_only_unresolved_admin_work():
         "hours": 0,
         "operation": 0,
         "cases": 2,
+        "tournaments": 0,
         "commands": 0,
         "total": 5,
     }
