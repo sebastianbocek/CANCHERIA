@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.2 - 2026-10-08
+
+- Se corrigió el error de Windows `built-in function kill returned a result
+  with an exception set` que podía abortar una actualización después de cerrar
+  la GUI.
+- El auxiliar ahora espera el cierre de CANCHERIA mediante un handle nativo de
+  Windows, evitando la condición de carrera de `os.kill(pid, 0)`.
+- Las próximas actualizaciones ejecutarán primero el auxiliar nuevo y verificado
+  incluido en el paquete descargado, para que el propio actualizador pueda
+  repararse antes de reemplazar el programa.
+
 ## 0.2.1 - 2026-10-08
 
 - El botón **ADMINISTRACIÓN** muestra un contador rojo con la suma de pagos

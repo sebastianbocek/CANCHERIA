@@ -426,10 +426,14 @@ def launch_update_helper(
     staged_dir = Path(staged_dir).resolve()
     if os.name == "nt":
         installed_helper = install_dir / "CancheriaUpdater.exe"
-        if not installed_helper.is_file():
+        staged_helper = staged_dir / "CancheriaUpdater.exe"
+        helper_source = staged_helper if staged_helper.is_file() else installed_helper
+        if not helper_source.is_file():
             raise UpdateError("No se encontró CancheriaUpdater.exe. Reinstalá esta versión una sola vez.")
         temporary_helper = work_dir / "CancheriaUpdater.exe"
-        shutil.copy2(installed_helper, temporary_helper)
+        # Prefer the already verified helper from the downloaded release. This
+        # allows the updater itself to receive fixes before replacing files.
+        shutil.copy2(helper_source, temporary_helper)
         command = [str(temporary_helper)]
         restart_command = [str(install_dir / "cancheria.exe"), "--update-finished", version]
         kwargs: dict = {

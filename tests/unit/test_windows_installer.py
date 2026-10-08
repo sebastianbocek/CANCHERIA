@@ -45,7 +45,7 @@ def test_installer_creates_zip_backup_before_an_update():
 
 def test_windows_update_explicitly_restores_both_configuration_files():
     installer = (ROOT / "installer" / "cancheria.iss").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.2.1"' in installer
+    assert '#define MyAppVersion "0.2.2"' in installer
     assert "uninsneveruninstall" in installer
     assert "PreservedLegacyConfig" in installer
     assert "PreservedRootConfig" in installer

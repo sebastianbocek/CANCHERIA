@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -183,3 +186,37 @@ def test_gui_exposes_settings_and_update_action() -> None:
     assert 'text="ACTUALIZAR VERSIÓN"' in text
     assert "check_for_update(__version__)" in text
     assert "launch_update_helper" in text
+
+
+def test_parent_wait_treats_frozen_kill_systemerror_as_process_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(update_helper.os, "name", "posix")
+
+    def frozen_runtime_failure(_pid: int, _signal: int) -> None:
+        raise SystemError("built-in kill returned a result with an exception set")
+
+    monkeypatch.setattr(update_helper.os, "kill", frozen_runtime_failure)
+    update_helper._wait_for_parent(12345, timeout=0.01)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows process-handle integration test")
+def test_windows_parent_wait_uses_native_process_handle() -> None:
+    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"])
+    try:
+        with pytest.raises(UpdateError, match="no se cerró a tiempo"):
+            update_helper._wait_for_parent(process.pid, timeout=0.05)
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
+
+    update_helper._wait_for_parent(process.pid, timeout=0.5)
+
+
+def test_windows_launcher_prefers_verified_helper_from_staged_release() -> None:
+    root = Path(__file__).resolve().parents[2]
+    text = (root / "src" / "cancheria" / "desktop" / "update_service.py").read_text(
+        encoding="utf-8"
+    )
+    assert "helper_source = staged_helper if staged_helper.is_file() else installed_helper" in text
+    assert "shutil.copy2(helper_source, temporary_helper)" in text

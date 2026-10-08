@@ -17,14 +17,64 @@ from cancheria.desktop.update_service import UpdateError, validate_staged_update
 
 
 def _wait_for_parent(parent_pid: int, timeout: float = 120.0) -> None:
+    if os.name == "nt":
+        _wait_for_windows_process(parent_pid, timeout)
+        return
+
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
             os.kill(parent_pid, 0)
-        except OSError:
+        except (OSError, SystemError):
             return
         time.sleep(0.25)
     raise UpdateError("CANCHERIA no se cerró a tiempo y la actualización fue cancelada.")
+
+
+def _wait_for_windows_process(parent_pid: int, timeout: float) -> None:
+    """Wait on a Windows process handle without relying on ``os.kill(pid, 0)``.
+
+    CPython's frozen Windows runtime can raise ``SystemError`` when the probed
+    process exits between the internal handle checks.  Waiting on the native
+    process handle is atomic and also protects against PID reuse.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    synchronize = 0x00100000
+    wait_object_0 = 0x00000000
+    wait_timeout = 0x00000102
+    error_invalid_parameter = 87
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    handle = kernel32.OpenProcess(synchronize, False, int(parent_pid))
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == error_invalid_parameter:
+            return
+        raise UpdateError(
+            f"No se pudo comprobar el cierre de CANCHERIA (error de Windows {error})."
+        )
+
+    try:
+        result = kernel32.WaitForSingleObject(handle, max(1, int(timeout * 1000)))
+    finally:
+        kernel32.CloseHandle(handle)
+
+    if result == wait_object_0:
+        return
+    if result == wait_timeout:
+        raise UpdateError("CANCHERIA no se cerró a tiempo y la actualización fue cancelada.")
+    raise UpdateError(
+        f"Windows no pudo esperar el cierre de CANCHERIA (resultado {int(result)})."
+    )
 
 
 def _safe_destination(install_dir: Path, relative: str) -> Path:
