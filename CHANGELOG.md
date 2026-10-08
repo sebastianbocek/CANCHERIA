@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0 - 2026-10-08
+
+- Se agregó **⚙ Ajustes** al panel principal con búsqueda e instalación de
+  actualizaciones directamente desde las publicaciones oficiales de GitHub.
+- Cada descarga exige el tamaño y el hash SHA-256 informado por GitHub y además
+  verifica un manifiesto interno archivo por archivo antes de instalar.
+- Un auxiliar independiente reemplaza los ejecutables después de cerrar la GUI,
+  restaura automáticamente la versión anterior si ocurre un error y reinicia
+  CANCHERIA mostrando el resultado.
+- Los paquetes de actualización excluyen configuración, API key, reservas,
+  sesión de WhatsApp, comprobantes y demás datos privados del cliente.
+- Windows y Debian crean un ZIP en `Backups` antes de aplicar la actualización.
+
 ## 0.1.9 - 2026-10-07
 
 - Las actualizaciones de Windows copian `config.py` y `legacy_config.py` a un

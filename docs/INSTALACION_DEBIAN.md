@@ -23,7 +23,13 @@ La primera vez hay que abrir **Configurar CANCHERIA**, completar los datos del n
 
 ## Actualizaciones
 
-Para actualizar se vuelve a ejecutar el nuevo `InstaladorCancheriaLinux.run` con el mismo usuario. Antes de reemplazar archivos, el instalador crea un ZIP automático en:
+Desde CANCHERIA 0.2.0, abrí **⚙ Ajustes**, elegí **Buscar actualizaciones** y
+presioná **Actualizar versión**. La aplicación descarga el paquete oficial para
+Linux desde GitHub, verifica su hash, crea el respaldo, actualiza el entorno y
+se reinicia automáticamente.
+
+También se puede volver a ejecutar un `InstaladorCancheriaLinux.run` nuevo con
+el mismo usuario. Antes de reemplazar archivos, ambos métodos crean un ZIP en:
 
 ```text
 ~/.local/share/CANCHERIA/Backups

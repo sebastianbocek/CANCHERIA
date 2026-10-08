@@ -31,6 +31,7 @@ $RootFiles = @(
     "WPSetter.py",
     "calendario.py",
     "cancheria_desktop.py",
+    "cancheria_updater.py",
     "config.py",
     "configurador_cancheria.py",
     "event_registration_engine.py",
@@ -95,7 +96,9 @@ if (-not $SkipExeBuild) {
         "--hidden-import", "cancheria.domain.events.registration",
         "--hidden-import", "cancheria.domain.reservations.calendar",
         "--hidden-import", "cancheria.admin.desktop_service",
-        "--hidden-import", "cancheria.desktop.admin_panel"
+        "--hidden-import", "cancheria.desktop.admin_panel",
+        "--hidden-import", "cancheria.desktop.update_service",
+        "--hidden-import", "cancheria.desktop.update_helper"
     )
     $MainArgs = @(
         "--noconfirm", "--clean", "--onefile", "--windowed",
@@ -128,6 +131,21 @@ if (-not $SkipExeBuild) {
     )
     & $BuildPython -m PyInstaller @ConfigArgs
     if ($LASTEXITCODE -ne 0) { throw "Falló la compilación de configurador_cancheria.exe" }
+
+    $UpdaterArgs = @(
+        "--noconfirm", "--clean", "--onefile", "--windowed",
+        "--name", "CancheriaUpdater",
+        "--distpath", $BinRoot,
+        "--workpath", (Join-Path $BuildRoot "pyinstaller-updater"),
+        "--specpath", $SpecDir,
+        "--icon", $Icon,
+        "--paths", (Join-Path $SourceRoot "src"),
+        "--hidden-import", "cancheria.desktop.update_service",
+        "--hidden-import", "cancheria.desktop.update_helper",
+        (Join-Path $SourceRoot "cancheria_updater.py")
+    )
+    & $BuildPython -m PyInstaller @UpdaterArgs
+    if ($LASTEXITCODE -ne 0) { throw "Falló la compilación de CancheriaUpdater.exe" }
 }
 
 foreach ($name in $RootFiles) {
@@ -141,6 +159,7 @@ foreach ($name in $SourceDirs) {
 }
 Copy-Item -LiteralPath (Join-Path $BinRoot "cancheria.exe") -Destination $PayloadRoot -Force
 Copy-Item -LiteralPath (Join-Path $BinRoot "configurador_cancheria.exe") -Destination $PayloadRoot -Force
+Copy-Item -LiteralPath (Join-Path $BinRoot "CancheriaUpdater.exe") -Destination $PayloadRoot -Force
 New-Item -ItemType Directory -Path (Join-Path $PayloadRoot "runtime"), (Join-Path $PayloadRoot "wa_profile"), (Join-Path $PayloadRoot "sessions") -Force | Out-Null
 
 # Verify the fresh source payload contains no OpenAI-style key or operational
@@ -160,6 +179,8 @@ $env:CANCHERIA_INSTALL_ROOT = $PayloadRoot
 if ($LASTEXITCODE -ne 0) { throw "Falló el self-test del cancheria.exe limpio" }
 & (Join-Path $PayloadRoot "configurador_cancheria.exe") --self-test
 if ($LASTEXITCODE -ne 0) { throw "Falló el self-test del configurador limpio" }
+& (Join-Path $PayloadRoot "CancheriaUpdater.exe") --self-test
+if ($LASTEXITCODE -ne 0) { throw "Falló el self-test de CancheriaUpdater.exe" }
 $PayloadSelfTestBuild = Join-Path $PayloadRoot "build"
 if (Test-Path -LiteralPath $PayloadSelfTestBuild) {
     Remove-Item -LiteralPath $PayloadSelfTestBuild -Recurse -Force
@@ -192,6 +213,9 @@ if (-not (Test-Path -LiteralPath $Installer -PathType Leaf)) {
     throw "Inno Setup terminó sin crear $Installer"
 }
 $Hash = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash
+& $BuildPython (Join-Path $Root "scripts\build_update_packages.py") `
+    --payload $PayloadRoot --platform windows --version "0.2.0"
+if ($LASTEXITCODE -ne 0) { throw "Falló la creación del paquete de actualización Windows" }
 Write-Output "INSTALLER=$Installer"
 Write-Output "SHA256=$Hash"
 

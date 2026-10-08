@@ -22,6 +22,7 @@ ROOT_FILES = (
     "WPSetter.py",
     "calendario.py",
     "cancheria_desktop.py",
+    "cancheria_updater.py",
     "config.py",
     "configurador_cancheria.py",
     "event_registration_engine.py",
@@ -79,6 +80,8 @@ COMMON_HIDDEN_IMPORTS = (
     "cancheria.domain.reservations.calendar",
     "cancheria.admin.desktop_service",
     "cancheria.desktop.admin_panel",
+    "cancheria.desktop.update_service",
+    "cancheria.desktop.update_helper",
 )
 
 
@@ -281,7 +284,30 @@ def build_clean_executables(root: Path, source_root: Path, build_root: Path) -> 
         env=env,
         description="[3/7] Reconstruyendo configurador_cancheria.exe limpio...",
     )
-    for executable in (dist_root / "cancheria.exe", dist_root / "configurador_cancheria.exe"):
+    updater_command = pyinstaller_command(
+        build_python,
+        name="CancheriaUpdater",
+        entrypoint=source_root / "cancheria_updater.py",
+        source_root=source_root,
+        dist_root=dist_root,
+        work_root=build_root / "pyinstaller-updater",
+        spec_root=spec_root,
+        icon=icon,
+        hidden_imports=(
+            "cancheria.desktop.update_service",
+            "cancheria.desktop.update_helper",
+        ),
+    )
+    run_command(
+        updater_command,
+        env=env,
+        description="[4/8] Reconstruyendo CancheriaUpdater.exe limpio...",
+    )
+    for executable in (
+        dist_root / "cancheria.exe",
+        dist_root / "configurador_cancheria.exe",
+        dist_root / "CancheriaUpdater.exe",
+    ):
         if not executable.is_file():
             raise BuildError(f"La compilación no produjo {executable}")
     return dist_root
@@ -296,7 +322,7 @@ def assemble_payload(source_root: Path, bin_root: Path, payload_root: Path) -> N
             shutil.copy2(source, payload_root / name)
     for name in SOURCE_DIRECTORIES:
         shutil.copytree(source_root / name, payload_root / name)
-    for name in ("cancheria.exe", "configurador_cancheria.exe"):
+    for name in ("cancheria.exe", "configurador_cancheria.exe", "CancheriaUpdater.exe"):
         shutil.copy2(bin_root / name, payload_root / name)
     for name in EMPTY_DATA_DIRECTORIES:
         (payload_root / name).mkdir(parents=True, exist_ok=True)
@@ -331,10 +357,10 @@ def scan_payload(payload_root: Path) -> None:
 
 
 def run_self_tests(payload_root: Path) -> None:
-    log("[6/7] Ejecutando verificaciones de los dos EXE...")
+    log("[6/7] Ejecutando verificaciones de los tres EXE...")
     env = os.environ.copy()
     env["CANCHERIA_INSTALL_ROOT"] = str(payload_root)
-    for name in ("cancheria.exe", "configurador_cancheria.exe"):
+    for name in ("cancheria.exe", "configurador_cancheria.exe", "CancheriaUpdater.exe"):
         completed = subprocess.run([str(payload_root / name), "--self-test"], env=env, check=False)
         if completed.returncode != 0:
             raise BuildError(f"Falló el self-test de {name}")

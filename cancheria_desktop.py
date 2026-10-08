@@ -138,6 +138,8 @@ def main() -> int:
             "cancheria.config.legacy_config",
             "cancheria.domain.events.registration",
             "cancheria.domain.reservations.calendar",
+            "cancheria.desktop.update_service",
+            "cancheria.desktop.update_helper",
         ):
             try:
                 __import__(module_name)
@@ -159,6 +161,9 @@ def main() -> int:
 
     if args and args[0] == "--worker":
         return run_script(root / "WPSetter.py", args[1:])
+
+    if args and args[0] == "--update-finished":
+        os.environ["CANCHERIA_UPDATE_FINISHED"] = args[1] if len(args) > 1 else ""
 
     from cancheria.desktop.gui import main as gui_main
     return gui_main()

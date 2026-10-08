@@ -10,11 +10,19 @@ import time
 import webbrowser
 from pathlib import Path
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 
+from cancheria import __version__
 from cancheria.desktop.session_manager import ensure_profile, reset_profile, SessionResetError
 from cancheria.config.openai_credentials import CredentialStatus, verify_openai_api_key
 from cancheria.config.settings import AppSettings
+from cancheria.desktop.update_service import (
+    ReleaseInfo,
+    UpdateError,
+    check_for_update,
+    launch_update_helper,
+    prepare_update,
+)
 
 
 def _is_install_root(path: Path) -> bool:
@@ -79,6 +87,8 @@ class CancheriaDesktop(tk.Tk):
         self.manual_path = self.root_dir / "docs" / "MANUAL_DE_USO_CANCHERIA_DUENOS_ENCARGADOS.pdf"
         self.process: subprocess.Popen[str] | None = None
         self.admin_window: tk.Toplevel | None = None
+        self.settings_window: tk.Toplevel | None = None
+        self.available_update: ReleaseInfo | None = None
         self.log_queue: queue.Queue[str] = queue.Queue()
         self._closing = False
 
@@ -96,6 +106,7 @@ class CancheriaDesktop(tk.Tk):
         self._build_ui()
         self.after(120, self._drain_log_queue)
         self.after(700, self._poll_process)
+        self.after(450, self._show_update_result)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
@@ -201,9 +212,23 @@ class CancheriaDesktop(tk.Tk):
             pady=7,
             cursor="hand2",
         ).pack(side="left", padx=(8, 0))
+        tk.Button(
+            secondary,
+            text="⚙ AJUSTES",
+            command=self.open_settings,
+            font=("Segoe UI", 10, "bold"),
+            bg=self.PANEL,
+            fg=self.NAVY,
+            activebackground="#eef4ff",
+            relief="solid",
+            bd=1,
+            padx=14,
+            pady=7,
+            cursor="hand2",
+        ).pack(side="left", padx=(8, 0))
         tk.Label(
             secondary,
-            text="Administración gestiona reservas, pagos, agenda y casos humanos.",
+            text="Reservas, agenda y actualizaciones.",
             font=("Segoe UI", 9),
             bg=self.BG,
             fg=self.MUTED,
@@ -512,6 +537,257 @@ class CancheriaDesktop(tk.Tk):
         except Exception as exc:
             self.admin_window = None
             messagebox.showerror("CANCHERIA", f"No pude abrir Administración:\n{exc}")
+
+    def _show_update_result(self) -> None:
+        if "CANCHERIA_UPDATE_FINISHED" not in os.environ:
+            return
+        status_path = self.root_dir / "Backups" / "ultima_actualizacion.json"
+        try:
+            import json
+
+            status = json.loads(status_path.read_text(encoding="utf-8"))
+        except Exception:
+            messagebox.showwarning(
+                "CANCHERIA · Actualización",
+                "CANCHERIA volvió a iniciarse, pero no se pudo leer el resultado de la actualización.",
+            )
+            return
+        if status.get("success"):
+            version = status.get("version") or os.environ.get("CANCHERIA_UPDATE_FINISHED", "")
+            self._append_log(f"✓ CANCHERIA se actualizó correctamente a la versión {version}.")
+            messagebox.showinfo(
+                "CANCHERIA actualizado",
+                f"La versión {version} quedó instalada correctamente.\n\n"
+                f"Respaldo creado en:\n{status.get('backup', '')}",
+            )
+        else:
+            detail = status.get("detail") or "Error desconocido."
+            self._append_log(f"⚠ La actualización no pudo completarse: {detail}")
+            messagebox.showerror(
+                "CANCHERIA · Actualización",
+                "La actualización no pudo completarse y se restauró la versión anterior.\n\n"
+                f"Detalle: {detail}",
+            )
+
+    def open_settings(self) -> None:
+        if self.settings_window is not None and self.settings_window.winfo_exists():
+            self.settings_window.deiconify()
+            self.settings_window.lift()
+            self.settings_window.focus_force()
+            return
+
+        window = tk.Toplevel(self)
+        self.settings_window = window
+        window.title("CANCHERIA · Ajustes")
+        window.geometry("650x470")
+        window.minsize(570, 420)
+        window.configure(bg=self.BG)
+        window.transient(self)
+        window.protocol("WM_DELETE_WINDOW", lambda: (window.destroy(), setattr(self, "settings_window", None)))
+
+        panel = tk.Frame(window, bg=self.PANEL, bd=1, relief="solid")
+        panel.pack(fill="both", expand=True, padx=20, pady=20)
+        tk.Label(
+            panel,
+            text="⚙ Ajustes y actualizaciones",
+            font=("Segoe UI", 18, "bold"),
+            fg=self.NAVY,
+            bg=self.PANEL,
+        ).pack(anchor="w", padx=20, pady=(18, 4))
+        tk.Label(
+            panel,
+            text=f"Versión instalada: {__version__}",
+            font=("Segoe UI", 10, "bold"),
+            fg=self.MUTED,
+            bg=self.PANEL,
+        ).pack(anchor="w", padx=20)
+
+        self.update_status_var = tk.StringVar(value="Presioná Buscar actualizaciones para consultar GitHub.")
+        tk.Label(
+            panel,
+            textvariable=self.update_status_var,
+            wraplength=580,
+            justify="left",
+            font=("Segoe UI", 10),
+            fg=self.NAVY,
+            bg=self.PANEL,
+        ).pack(fill="x", padx=20, pady=(18, 8))
+
+        self.update_progress = ttk.Progressbar(panel, mode="determinate", maximum=100)
+        self.update_progress.pack(fill="x", padx=20, pady=(0, 12))
+
+        tk.Label(
+            panel,
+            text="Novedades de la versión",
+            font=("Segoe UI", 10, "bold"),
+            fg=self.NAVY,
+            bg=self.PANEL,
+        ).pack(anchor="w", padx=20)
+        self.update_notes = tk.Text(
+            panel,
+            height=9,
+            wrap="word",
+            font=("Segoe UI", 9),
+            bg="#f8fafc",
+            fg=self.NAVY,
+            relief="solid",
+            bd=1,
+            padx=8,
+            pady=8,
+        )
+        self.update_notes.pack(fill="both", expand=True, padx=20, pady=(5, 12))
+        self.update_notes.insert("1.0", "Todavía no se consultó una nueva versión.")
+        self.update_notes.configure(state="disabled")
+
+        buttons = tk.Frame(panel, bg=self.PANEL)
+        buttons.pack(fill="x", padx=20, pady=(0, 18))
+        self.btn_check_update = tk.Button(
+            buttons,
+            text="BUSCAR ACTUALIZACIONES",
+            command=self._check_updates,
+            font=("Segoe UI", 10, "bold"),
+            bg=self.NAVY,
+            fg="white",
+            activebackground=self.NAVY,
+            activeforeground="white",
+            relief="flat",
+            padx=14,
+            pady=9,
+            cursor="hand2",
+        )
+        self.btn_check_update.pack(side="left")
+        self.btn_install_update = tk.Button(
+            buttons,
+            text="ACTUALIZAR VERSIÓN",
+            command=self._install_available_update,
+            state="disabled",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.GREEN,
+            fg="white",
+            activebackground=self.GREEN,
+            activeforeground="white",
+            disabledforeground="#cbd5e1",
+            relief="flat",
+            padx=14,
+            pady=9,
+            cursor="hand2",
+        )
+        self.btn_install_update.pack(side="left", padx=(8, 0))
+        self.after(120, self._check_updates)
+
+    def _set_update_notes(self, text: str) -> None:
+        if self.settings_window is None or not self.settings_window.winfo_exists():
+            return
+        self.update_notes.configure(state="normal")
+        self.update_notes.delete("1.0", "end")
+        self.update_notes.insert("1.0", text.strip() or "Sin notas de versión.")
+        self.update_notes.configure(state="disabled")
+
+    def _check_updates(self) -> None:
+        if self.settings_window is None or not self.settings_window.winfo_exists():
+            return
+        self.available_update = None
+        self.btn_check_update.configure(state="disabled")
+        self.btn_install_update.configure(state="disabled")
+        self.update_progress.configure(value=0)
+        self.update_status_var.set("Consultando la última versión publicada en GitHub...")
+
+        def worker() -> None:
+            try:
+                release = check_for_update(__version__)
+            except Exception as exc:
+                message = str(exc)
+                self.after(0, lambda: self._finish_update_check(None, message))
+                return
+            self.after(0, lambda: self._finish_update_check(release, ""))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_update_check(self, release: ReleaseInfo | None, error: str) -> None:
+        if self.settings_window is None or not self.settings_window.winfo_exists():
+            return
+        self.btn_check_update.configure(state="normal")
+        if error:
+            self.update_status_var.set(f"No se pudo buscar la actualización: {error}")
+            self._set_update_notes("Volvé a intentarlo cuando tengas conexión a Internet.")
+            return
+        if release is None:
+            self.update_status_var.set(f"CANCHERIA {__version__} ya es la versión más reciente.")
+            self._set_update_notes("No hay actualizaciones pendientes.")
+            return
+        self.available_update = release
+        self.update_status_var.set(
+            f"Nueva versión disponible: {release.version} · {release.asset.size / (1024 * 1024):.1f} MB"
+        )
+        self._set_update_notes(release.notes)
+        self.btn_install_update.configure(state="normal")
+
+    def _install_available_update(self) -> None:
+        release = self.available_update
+        if release is None:
+            return
+        if not messagebox.askyesno(
+            "Actualizar CANCHERIA",
+            f"Se instalará CANCHERIA {release.version}.\n\n"
+            "Antes de actualizar se creará un respaldo automático. "
+            "La aplicación se cerrará y volverá a abrir al terminar.\n\n"
+            "¿Continuar?",
+            parent=self.settings_window,
+        ):
+            return
+
+        self._stop_process()
+        self.btn_check_update.configure(state="disabled")
+        self.btn_install_update.configure(state="disabled")
+        self.update_status_var.set("Descargando y verificando la actualización...")
+        self.update_progress.configure(value=0)
+
+        def progress(downloaded: int, total: int) -> None:
+            percent = min(100, int(downloaded * 100 / max(total, 1)))
+            self.after(0, lambda value=percent: self.update_progress.configure(value=value))
+
+        def worker() -> None:
+            try:
+                prepared = prepare_update(release, self.root_dir, progress)
+            except Exception as exc:
+                message = str(exc)
+                self.after(0, lambda: self._update_install_failed(message))
+                return
+            self.after(0, lambda: self._launch_prepared_update(release, prepared))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _update_install_failed(self, message: str) -> None:
+        if self.settings_window is not None and self.settings_window.winfo_exists():
+            self.btn_check_update.configure(state="normal")
+            self.btn_install_update.configure(state="normal")
+            self.update_status_var.set(f"La actualización fue cancelada: {message}")
+        self._append_log(f"⚠ Actualización cancelada: {message}")
+        messagebox.showerror("CANCHERIA · Actualización", message, parent=self.settings_window)
+
+    def _launch_prepared_update(
+        self,
+        release: ReleaseInfo,
+        prepared: tuple[Path, Path, Path],
+    ) -> None:
+        work_dir, staged_dir, backup_zip = prepared
+        try:
+            launch_update_helper(
+                self.root_dir,
+                work_dir,
+                staged_dir,
+                release.version,
+                backup_zip,
+            )
+        except UpdateError as exc:
+            self._update_install_failed(str(exc))
+            return
+        self._append_log(
+            f"⬆ Actualización {release.version} verificada. Cerrando CANCHERIA para instalarla..."
+        )
+        self.update_status_var.set("Paquete verificado. CANCHERIA se reiniciará automáticamente...")
+        self._closing = True
+        self.after(350, self.destroy)
 
     def open_manual(self) -> None:
         if not self.manual_path.exists():

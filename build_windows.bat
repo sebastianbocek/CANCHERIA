@@ -11,7 +11,7 @@ set "SPEC_DIR=%ROOT%\build\spec"
 
 echo ============================================================
 echo   CANCHERIA - Build Windows
-echo   cancheria.exe + configurador_cancheria.exe en la RAIZ
+echo   cancheria.exe + configurador_cancheria.exe + CancheriaUpdater.exe
 echo ============================================================
 echo.
 
@@ -61,6 +61,7 @@ rmdir /s /q "%ROOT%\dist" 2>nul
 mkdir "%SPEC_DIR%" 2>nul
 del /q "%ROOT%\cancheria.exe" 2>nul
 del /q "%ROOT%\configurador_cancheria.exe" 2>nul
+del /q "%ROOT%\CancheriaUpdater.exe" 2>nul
 
 echo [4/8] Compilando cancheria.exe...
 "%BUILD_PY%" -m PyInstaller ^
@@ -91,6 +92,8 @@ echo [4/8] Compilando cancheria.exe...
   --hidden-import cancheria.config.legacy_config ^
   --hidden-import cancheria.domain.events.registration ^
   --hidden-import cancheria.domain.reservations.calendar ^
+  --hidden-import cancheria.desktop.update_service ^
+  --hidden-import cancheria.desktop.update_helper ^
   "%ROOT%\cancheria_desktop.py"
 if errorlevel 1 goto :error
 
@@ -125,7 +128,28 @@ if not exist "%ROOT%\configurador_cancheria.exe" (
   goto :error
 )
 
-echo [6/8] Verificando runtime congelado de cancheria.exe...
+echo [6/10] Compilando CancheriaUpdater.exe...
+"%BUILD_PY%" -m PyInstaller ^
+  --noconfirm ^
+  --clean ^
+  --onefile ^
+  --windowed ^
+  --name CancheriaUpdater ^
+  --distpath "." ^
+  --workpath "%ROOT%\build\pyinstaller-updater" ^
+  --specpath "%SPEC_DIR%" ^
+  --icon "%ICON%" ^
+  --paths "%SRC%" ^
+  --hidden-import cancheria.desktop.update_service ^
+  --hidden-import cancheria.desktop.update_helper ^
+  "%ROOT%\cancheria_updater.py"
+if errorlevel 1 goto :error
+if not exist "%ROOT%\CancheriaUpdater.exe" (
+  echo ERROR: PyInstaller termino pero no existe %ROOT%\CancheriaUpdater.exe
+  goto :error
+)
+
+echo [7/10] Verificando runtime congelado de cancheria.exe...
 "%ROOT%\cancheria.exe" --self-test
 if errorlevel 1 (
   echo ERROR: cancheria.exe no contiene todos los modulos de runtime.
@@ -133,7 +157,7 @@ if errorlevel 1 (
   goto :error
 )
 
-echo [7/8] Verificando runtime congelado del configurador...
+echo [8/10] Verificando runtime congelado del configurador...
 "%ROOT%\configurador_cancheria.exe" --self-test
 if errorlevel 1 (
   echo ERROR: configurador_cancheria.exe no contiene todos los modulos de runtime.
@@ -141,7 +165,11 @@ if errorlevel 1 (
   goto :error
 )
 
-echo [8/8] Armando paquete de distribucion...
+echo [9/10] Verificando el actualizador...
+"%ROOT%\CancheriaUpdater.exe" --self-test
+if errorlevel 1 goto :error
+
+echo [10/10] Armando paquete de distribucion...
 "%BUILD_PY%" "%ROOT%\scripts\assemble_windows_release.py"
 if errorlevel 1 goto :error
 

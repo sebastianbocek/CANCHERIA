@@ -10,7 +10,7 @@ TARGET.mkdir(parents=True, exist_ok=True)
 
 # New builds emit both executables directly in the project root.  Keep a
 # dist/ fallback only so an older build can still be assembled.
-for exe_name in ("cancheria.exe", "configurador_cancheria.exe"):
+for exe_name in ("cancheria.exe", "configurador_cancheria.exe", "CancheriaUpdater.exe"):
     candidates = [ROOT / exe_name, ROOT / "dist" / exe_name]
     for built_exe in candidates:
         if built_exe.exists():
@@ -20,6 +20,7 @@ for exe_name in ("cancheria.exe", "configurador_cancheria.exe"):
 FILES = [
     "WPSetter.py",
     "calendario.py",
+    "cancheria_updater.py",
     "config.py",
     "configurador_cancheria.py",
     "event_registration_engine.py",

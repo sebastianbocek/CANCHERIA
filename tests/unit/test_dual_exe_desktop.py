@@ -32,17 +32,18 @@ def test_admin_panel_reuses_whatsapp_admin_operations():
     assert 'legacy_callable("resolver_caso_humano")' in service
 
 
-def test_windows_build_produces_both_executables():
+def test_windows_build_produces_all_desktop_executables():
     text = (ROOT / "build_windows.bat").read_text(encoding="utf-8")
     assert '--name cancheria' in text
     assert '--name configurador_cancheria' in text
+    assert '--name CancheriaUpdater' in text
     assert '--distpath "."' in text
     assert 'dist\\configurador_cancheria.exe' not in text
 
 
-def test_release_assembler_copies_both_executables():
+def test_release_assembler_copies_all_executables():
     text = (ROOT / "scripts" / "assemble_windows_release.py").read_text(encoding="utf-8")
-    assert '("cancheria.exe", "configurador_cancheria.exe")' in text
+    assert '("cancheria.exe", "configurador_cancheria.exe", "CancheriaUpdater.exe")' in text
 
 
 def test_launchers_can_recover_project_root_from_old_dist_location():

@@ -10,6 +10,7 @@ def test_windows_build_uses_root_exes_and_absolute_icon_variable():
     assert '--distpath "."' in text
     assert 'cancheria.exe' in text
     assert 'configurador_cancheria.exe' in text
+    assert 'CancheriaUpdater.exe' in text
 
 
 def test_windows_build_does_not_collect_every_openai_submodule():

@@ -5,9 +5,14 @@ import hashlib
 import io
 import os
 import shutil
+import sys
 import tarfile
 import tempfile
 from pathlib import Path
+
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+if str(SCRIPT_ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT / "src"))
 
 from create_fresh_client_zip import (
     EMPTY_DATA_DIRECTORIES,
@@ -19,6 +24,7 @@ from create_fresh_client_zip import (
     scan_payload,
     write_manifest,
 )
+from cancheria.desktop.update_service import UPDATE_ASSETS, create_update_archive
 
 
 OUTPUT_NAME = "InstaladorCancheriaLinux.run"
@@ -86,6 +92,10 @@ def build_installer(root: Path) -> tuple[Path, str]:
     final_path.with_suffix(".run.sha256.txt").write_text(
         f"{digest}  {final_path.name}\n", encoding="ascii"
     )
+    update_path = release_dir / UPDATE_ASSETS["linux"]
+    _, update_digest = create_update_archive(payload_root, update_path, "0.2.0", "linux")
+    print(f"Paquete de actualización: {update_path}")
+    print(f"SHA-256 actualización: {update_digest.upper()}")
     print("[4/4] Instalador Linux creado correctamente.", flush=True)
     return final_path, digest
 

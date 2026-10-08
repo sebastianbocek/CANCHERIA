@@ -48,3 +48,5 @@ def test_linux_builder_uses_the_clean_client_payload():
     assert "write_manifest" in text
     assert "InstaladorCancheriaLinux.run" in text
     assert "tarfile.open" in text
+    assert "create_update_archive" in text
+    assert 'UPDATE_ASSETS["linux"]' in text
