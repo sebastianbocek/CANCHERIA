@@ -138224,45 +138224,68 @@ def _canonical_v183_hydrate_from_legacy(
     ]
     active_question = questions[-1] if questions else {}
 
-    active_booking_context = bool(availability or draft or active_question)
+    # Un pending creado por el fast path canónico es más reciente y preciso que
+    # los drafts/open_questions del puente legado. El incidente del 08/10/2026
+    # mostró que rehidratar primero el draft viejo podía reemplazar "hoy 16:00"
+    # por "miércoles 18:00" justo antes de que el cliente respondiera el deporte.
+    canonical_pending = (
+        dict(state.get("pending") or {})
+        if isinstance(state.get("pending"), dict)
+        else {}
+    )
+    canonical_pending_source = str(canonical_pending.get("source") or "").strip()
+    canonical_owned_booking_pending = bool(
+        _canonical_v183_booking_question(canonical_pending)
+        and canonical_pending_source.startswith("canonical_")
+        and str(canonical_pending.get("operation") or "").strip()
+        in {"create_booking", "query_availability"}
+    )
+
+    active_booking_context = bool(
+        canonical_owned_booking_pending or availability or draft or active_question
+    )
     if active_booking_context:
         state["active_flow"] = "booking"
 
         day = str(
-            draft.get("dia")
+            (canonical_pending.get("day") if canonical_owned_booking_pending else None)
+            or booking.get("day")
+            or draft.get("dia")
             or availability.get("dia")
             or availability.get("dia_resuelto")
             or active_question.get("dia")
-            or booking.get("day")
             or ""
         ).strip()
         if day:
             booking["day"] = day
 
         hour = normalizar_hora_detectada(
-            draft.get("hora")
-            or active_question.get("hora")
+            (canonical_pending.get("time") if canonical_owned_booking_pending else None)
             or booking.get("time")
+            or draft.get("hora")
+            or active_question.get("hora")
         )
         if hora_es_valida(hour):
             booking["time"] = hour
 
         resource_types = _canonical_configured_court_types(
-            draft.get("resource_types")
+            (canonical_pending.get("resource_type") if canonical_owned_booking_pending else None)
+            or booking.get("resource_type")
+            or draft.get("resource_types")
             or draft.get("resource_type")
             or availability.get("resource_types")
             or availability.get("resource_type")
             or active_question.get("resource_types")
             or active_question.get("resource_type")
-            or booking.get("resource_type")
         )
         if len(resource_types) == 1:
             booking["resource_type"] = resource_types[0]
 
         duration = normalizar_duracion_horas(
-            draft.get("duracion_horas")
-            or active_question.get("duracion_horas")
+            (canonical_pending.get("duration_hours") if canonical_owned_booking_pending else None)
             or booking.get("duration_hours")
+            or draft.get("duracion_horas")
+            or active_question.get("duracion_horas")
             or DEFAULT_TURN_DURATION_HOURS,
             DEFAULT_TURN_DURATION_HOURS,
         )
@@ -138271,7 +138294,7 @@ def _canonical_v183_hydrate_from_legacy(
         if draft.get("cancha"):
             booking["court"] = draft.get("cancha")
 
-        if availability:
+        if availability and not canonical_owned_booking_pending:
             state["availability"] = {
                 "scope_id": availability.get("scope_id"),
                 "day": availability.get("dia") or availability.get("dia_resuelto"),
@@ -138281,7 +138304,7 @@ def _canonical_v183_hydrate_from_legacy(
                 "created_at": availability.get("created_at"),
             }
 
-        if active_question:
+        if active_question and not canonical_owned_booking_pending:
             state["pending"] = {
                 "field": active_question.get("field"),
                 "question_id": active_question.get("question_id"),
@@ -138497,7 +138520,7 @@ def _canonical_v183_merge_booking_decision(
     day = _agent_v2_v103_normalized_day(parsed_day.isoformat()) if parsed_day else str(raw_day or "").strip()
 
     hour = normalizar_hora_detectada(
-        incoming.get("time") or stored.get("time")
+        incoming.get("time") or stored.get("time") or pending.get("time")
     )
 
     resource_types = _canonical_configured_court_types(
@@ -138512,12 +138535,24 @@ def _canonical_v183_merge_booking_decision(
     duration = normalizar_duracion_horas(
         incoming.get("duration_hours")
         or stored.get("duration_hours")
+        or pending.get("duration_hours")
         or DEFAULT_TURN_DURATION_HOURS,
         DEFAULT_TURN_DURATION_HOURS,
     )
     return {
         "day": day or None,
         "time": hour if hora_es_valida(hour) else None,
+        "time_specificity": (
+            str(
+                incoming.get("time_specificity")
+                or stored.get("time_specificity")
+                or pending.get("time_specificity")
+                or ""
+            ).strip().casefold()
+            or ("exact" if hora_es_valida(hour) else "none")
+        ),
+        "time_source": incoming.get("time_source") or stored.get("time_source"),
+        "time_evidence": incoming.get("time_evidence") or stored.get("time_evidence"),
         "resource_type": resource_type,
         "duration_hours": duration,
     }
@@ -138707,11 +138742,19 @@ async def _canonical_v183_execute_booking(
         state["active_flow"] = "booking"
         state["booking"].update(booking)
         state["pending"] = {
+            "type": "booking_question",
             "field": field,
             "question_id": f"canonical_{uuid.uuid4().hex[:16]}",
             "scope_id": str(((state.get("availability") or {}).get("scope_id") if isinstance(state.get("availability"), dict) else "") or f"canonical_scope_{uuid.uuid4().hex[:16]}"),
             "day": booking.get("day"),
+            "time": booking.get("time"),
+            "time_specificity": booking.get("time_specificity"),
             "resource_type": booking.get("resource_type"),
+            "duration_hours": booking.get("duration_hours"),
+            "operation": "create_booking",
+            "source": "canonical_v225_booking_question",
+            "goal_context": ["crear_reserva"],
+            "created_at": datetime.datetime.now(TIMEZONE).isoformat(),
         }
         _canonical_v183_save(telefono, state)
         print(
@@ -139150,11 +139193,19 @@ async def ejecutar_agente_real_v2_turno(
                         field = fields[0]
                         canonical_state["booking"].update(merged)
                         canonical_state["pending"] = {
+                            "type": "booking_question",
                             "field": field,
                             "question_id": f"canonical_{uuid.uuid4().hex[:16]}",
                             "scope_id": str(((canonical_state.get("availability") or {}).get("scope_id") if isinstance(canonical_state.get("availability"), dict) else "") or f"canonical_scope_{uuid.uuid4().hex[:16]}"),
                             "day": merged.get("day"),
+                            "time": merged.get("time"),
+                            "time_specificity": merged.get("time_specificity"),
                             "resource_type": merged.get("resource_type"),
+                            "duration_hours": merged.get("duration_hours"),
+                            "operation": "create_booking",
+                            "source": "canonical_v225_booking_question",
+                            "goal_context": ["crear_reserva"],
+                            "created_at": datetime.datetime.now(TIMEZONE).isoformat(),
                         }
                         _canonical_v183_save(telefono_key, canonical_state)
                         print(
@@ -139769,12 +139820,16 @@ def _canonical_v201_last_verified_availability_context(
     if daypart not in {"mañana", "tarde", "noche", "madrugada"}:
         daypart = None
 
-    time_value = normalizar_hora_detectada(booking.get("time"))
+    time_value = normalizar_hora_detectada(
+        booking.get("time") or pending.get("time")
+    )
     if not hora_es_valida(time_value):
         time_value = None
 
     duration = normalizar_duracion_horas(
-        booking.get("duration_hours") or DEFAULT_TURN_DURATION_HOURS,
+        booking.get("duration_hours")
+        or pending.get("duration_hours")
+        or DEFAULT_TURN_DURATION_HOURS,
         DEFAULT_TURN_DURATION_HOURS,
     )
 
@@ -142358,6 +142413,7 @@ async def _canonical_v184_execute_availability(
             "duration_hours": merged.get("duration_hours"),
         })
         state["pending"] = {
+            "type": "booking_question",
             "field": "dia",
             "question_id": f"canonical_{uuid.uuid4().hex[:12]}",
             "scope_id": f"canonical_scope_{uuid.uuid4().hex[:12]}",
@@ -142366,6 +142422,10 @@ async def _canonical_v184_execute_availability(
             "time_specificity": specificity,
             "resource_type": merged.get("resource_type"),
             "duration_hours": merged.get("duration_hours"),
+            "operation": "query_availability",
+            "source": "canonical_v223_availability_question",
+            "goal_context": ["buscar_turno"],
+            "created_at": datetime.datetime.now(TIMEZONE).isoformat(),
         }
         _canonical_v183_save(telefono, state)
         return _canonical_v184_result(
@@ -145724,6 +145784,111 @@ def _canonical_v223_restore_pending_time_after_day(
     return patched
 
 
+def _canonical_v225_complete_pending_booking_resource(
+    decision: Dict[str, Any],
+    state: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Convierte la respuesta del deporte faltante en el write ya iniciado.
+
+    No interpreta texto. Consume exclusivamente el pending transaccional que
+    creó el fast path y el receipt V205, aislado y con evidencia literal del
+    turno actual. Así "Futbol" completa hoy/16:00 en vez de degradar el flujo a
+    una nueva consulta de disponibilidad de día completo.
+    """
+    if not isinstance(decision, dict):
+        return decision
+    state = state if isinstance(state, dict) else {}
+    pending = dict(state.get("pending") or {})
+    if not (
+        str(pending.get("field") or "").strip() == "resource_type"
+        and str(pending.get("operation") or "").strip() == "create_booking"
+        and str(pending.get("source") or "").strip().startswith("canonical_")
+    ):
+        return decision
+
+    receipt = dict(decision.get("_v205_current_turn_resource_receipt") or {})
+    resource_type = _canonical_configured_court_type(receipt.get("resource_type"))
+    if not (receipt.get("explicit") is True and resource_type):
+        return decision
+
+    # Una fecha/hora explícita nueva representa otro pedido y nunca debe ser
+    # sustituida por el pending anterior. V213/V187 ya adjudicaron esas fuentes.
+    day_receipt = dict(decision.get("_v213_current_turn_day_receipt") or {})
+    if (
+        day_receipt.get("validated") is True
+        and str(day_receipt.get("mode") or "").strip().casefold()
+        == "current_turn_explicit_day"
+    ):
+        return decision
+    incoming = dict(decision.get("booking") or {})
+    incoming_hour = normalizar_hora_detectada(incoming.get("time"))
+    if (
+        hora_es_valida(incoming_hour)
+        and str(incoming.get("time_source") or "").strip().casefold()
+        == "current_turn"
+    ):
+        return decision
+
+    stored = dict(state.get("booking") or {})
+    day = str(pending.get("day") or stored.get("day") or "").strip()
+    hour = normalizar_hora_detectada(
+        pending.get("time") or stored.get("time")
+    )
+    if not day or not hora_es_valida(hour):
+        return decision
+    duration = normalizar_duracion_horas(
+        pending.get("duration_hours")
+        or stored.get("duration_hours")
+        or DEFAULT_TURN_DURATION_HOURS,
+        DEFAULT_TURN_DURATION_HOURS,
+    )
+
+    patched = copy.deepcopy(decision)
+
+    def patch_payload(payload: Dict[str, Any]) -> None:
+        payload["operation"] = "create_booking"
+        payload["intent_mode"] = "transactional_action"
+        payload["confidence"] = max(float(payload.get("confidence") or 0.0), 0.90)
+        payload["missing_fields"] = []
+        booking = dict(payload.get("booking") or {})
+        booking.update({
+            "day": day,
+            "time": hour,
+            "time_specificity": "exact",
+            "time_source": "canonical_state",
+            "time_evidence": None,
+            "references_previous_time": True,
+            "resource_type": resource_type,
+            "resource_type_source": "current_turn",
+            "resource_type_evidence": receipt.get("evidence"),
+            "duration_hours": duration,
+        })
+        payload["booking"] = booking
+        resolution = dict(payload.get("context_resolution") or {})
+        resolution.update({
+            "relation": "answers_pending_booking_question",
+            "effective_operation": "create_booking",
+            "inherit_fields": ["day", "time", "duration_hours"],
+            "replace_fields": ["resource_type"],
+        })
+        payload["context_resolution"] = resolution
+        payload["_v225_pending_booking_completed"] = True
+
+    patch_payload(patched)
+    actions = patched.get("_v188_actions")
+    if isinstance(actions, list) and actions:
+        patch_payload(actions[0])
+    raw_actions = patched.get("actions")
+    if isinstance(raw_actions, list) and raw_actions:
+        patch_payload(raw_actions[0])
+
+    print(
+        "   ✅ [CANONICAL V225 PENDING BOOKING COMPLETED] "
+        f"day={day} time={hour} resource_type={resource_type} → create_booking"
+    )
+    return patched
+
+
 async def _canonical_v184_execute_availability(
     message: str,
     user_messages: List[str],
@@ -146622,7 +146787,8 @@ async def _canonical_v184_orchestrate(
         state,
         image_path=image_path,
     )
-    return _canonical_v223_restore_pending_time_after_day(decision, state)
+    decision = _canonical_v223_restore_pending_time_after_day(decision, state)
+    return _canonical_v225_complete_pending_booking_resource(decision, state)
 
 
 # ============================================================================

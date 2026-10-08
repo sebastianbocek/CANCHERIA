@@ -334,3 +334,177 @@ def test_explicit_future_day_is_never_replaced_by_implicit_today() -> None:
 
     assert untouched is decision
     assert untouched["booking"]["day"] == "Viernes 09/10"
+
+
+def test_canonical_pending_booking_wins_over_stale_legacy_draft(monkeypatch) -> None:
+    """El draft viejo no puede reemplazar el slot que acaba de preguntar V183."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    state = legacy._canonical_v183_default_state("artificial-test")
+    state["active_flow"] = "booking"
+    state["booking"].update({
+        "day": "Jueves 08/10",
+        "time": "16:00",
+        "time_specificity": "exact",
+        "duration_hours": 1.0,
+    })
+    state["pending"] = {
+        "type": "booking_question",
+        "field": "resource_type",
+        "day": "Jueves 08/10",
+        "time": "16:00",
+        "time_specificity": "exact",
+        "duration_hours": 1.0,
+        "operation": "create_booking",
+        "source": "canonical_v225_booking_question",
+        "goal_context": ["crear_reserva"],
+    }
+    stale_agent_state = {
+        "availability_context": {},
+        "desires": {
+            "booking_draft": {
+                "dia": "Miércoles 07/10",
+                "hora": "18:00",
+            }
+        },
+        "open_questions": [],
+    }
+
+    monkeypatch.setattr(legacy, "_canonical_v183_load", lambda owner: state)
+    monkeypatch.setattr(legacy, "_canonical_v183_save", lambda owner, value: value)
+    monkeypatch.setattr(legacy, "_agent_v2_state", lambda conv: stale_agent_state)
+
+    hydrated = legacy._canonical_v183_hydrate_from_legacy(
+        "artificial-test", {"historial": []}
+    )
+
+    assert hydrated["booking"]["day"] == "Jueves 08/10"
+    assert hydrated["booking"]["time"] == "16:00"
+    assert hydrated["pending"]["field"] == "resource_type"
+
+
+def test_answering_only_sport_completes_hold_and_requests_receipt(monkeypatch) -> None:
+    """Reproduce los dos turnos del 08/10 sin API, WhatsApp ni archivos reales."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    state = legacy._canonical_v183_default_state("artificial-test")
+    state["active_flow"] = "booking"
+    state["booking"].update({
+        "day": "Jueves 08/10",
+        "time": "16:00",
+        "time_specificity": "exact",
+        "duration_hours": 1.0,
+    })
+    state["pending"] = {
+        "type": "booking_question",
+        "field": "resource_type",
+        "day": "Jueves 08/10",
+        "time": "16:00",
+        "time_specificity": "exact",
+        "duration_hours": 1.0,
+        "operation": "create_booking",
+        "source": "canonical_v225_booking_question",
+        "goal_context": ["crear_reserva"],
+    }
+    decision = {
+        "operation": "query_availability",
+        "confidence": 0.9,
+        "booking": {
+            "day": "Jueves 08/10",
+            "time": None,
+            "resource_type": "Futbol 5",
+            "resource_type_source": "current_turn",
+            "resource_type_evidence": "Futbol",
+            "duration_hours": 1.0,
+        },
+        "missing_fields": [],
+        "context_resolution": {
+            "relation": "continue_previous_availability",
+            "inherit_fields": [],
+            "replace_fields": ["resource_type"],
+        },
+        "_v205_current_turn_resource_receipt": {
+            "explicit": True,
+            "resource_type": "Futbol 5",
+            "evidence": "Futbol",
+        },
+        "_v213_current_turn_day_receipt": {
+            "mode": "references_previous_day",
+            "validated": False,
+        },
+        "_v188_actions": [{
+            "operation": "query_availability",
+            "confidence": 0.9,
+            "booking": {"day": "Jueves 08/10", "time": None},
+        }],
+    }
+
+    fixed = legacy._canonical_v225_complete_pending_booking_resource(decision, state)
+    assert fixed["operation"] == "create_booking"
+    assert fixed["booking"]["day"] == "Jueves 08/10"
+    assert fixed["booking"]["time"] == "16:00"
+    assert fixed["booking"]["resource_type"] == "Futbol 5"
+    assert fixed["_v188_actions"][0]["operation"] == "create_booking"
+
+    async def fake_tool(name, args, *unused_args, **unused_kwargs):
+        if name == "consultar_disponibilidad":
+            return {
+                "observation_id": "availability-test",
+                "tool": name,
+                "ok": True,
+                "status": "success",
+                "data": {
+                    "dia": "Jueves 08/10",
+                    "hora": "16:00",
+                    "canchas_libres": ["Cancha 1", "Cancha 2"],
+                    "auto_assigned_court": "Cancha 1",
+                },
+            }
+        return {
+            "observation_id": "booking-test",
+            "tool": name,
+            "ok": True,
+            "status": "success",
+            "data": {
+                "reservation_id": "R-ARTIFICIAL",
+                "dia": "Jueves 08/10",
+                "hora": "16:00",
+                "cancha": "Cancha 1",
+                "duracion_horas": 1.0,
+                "precio_total": 20000,
+                "senia_monto": 10000,
+                "monto_pendiente": 10000,
+            },
+        }
+
+    monkeypatch.setattr(legacy, "ejecutar_tool_agent_v2", fake_tool)
+    monkeypatch.setattr(legacy, "_canonical_v183_save", lambda *args, **kwargs: None)
+    monkeypatch.setattr(legacy, "get_conversation_state", lambda *args, **kwargs: {})
+    monkeypatch.setattr(legacy, "aplicar_observation_agent_v2", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        legacy,
+        "construir_world_state_agent_v2",
+        lambda *args, **kwargs: {"message": "Futbol", "facts": {}},
+    )
+
+    result = asyncio.run(
+        legacy._canonical_v183_execute_booking(
+            "Futbol",
+            ["Futbol"],
+            state,
+            fixed,
+            {"nombre": "Sebastian"},
+            "artificial-test",
+        )
+    )
+
+    assert result["handled"] is True
+    assert [item["tool"] for item in result["observations"]] == [
+        "consultar_disponibilidad",
+        "crear_reserva",
+    ]
+    assert result["plan"]["steps"][1]["args"]["hora"] == "16:00"
+    assert "16hs-17hs" in result["response"]
+    assert "comprobante" in result["response"].casefold()

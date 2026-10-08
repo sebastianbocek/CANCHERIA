@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.5 - 2026-10-08
+
+- Conserva el día, la hora y la duración canónicos cuando sólo falta elegir el deporte.
+- Una respuesta breve como `Futbol` completa la reserva iniciada, crea el hold y solicita el comprobante, sin volver a listar todos los horarios del día.
+- Impide que borradores viejos del puente legado reemplacen el slot recién entendido por el fast path.
+- Añade una regresión artificial completa para el diálogo `cancha para las 4` → `Futbol`.
+
 ## 0.2.4 - 2026-10-08
 
 - Se corrigió `ZIP does not support timestamps before 1980` al crear el
