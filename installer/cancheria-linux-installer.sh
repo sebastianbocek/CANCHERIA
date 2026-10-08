@@ -2,7 +2,7 @@
 set -eu
 
 APP_NAME="CANCHERIA"
-APP_VERSION="0.2.3"
+APP_VERSION="0.2.4"
 PAYLOAD_MARKER="__CANCHERIA_PAYLOAD_BELOW__"
 
 say() {
@@ -102,6 +102,13 @@ if [ "$IS_UPDATE" -eq 1 ]; then
         "" \
         "Este ZIP contiene configuración y datos privados del cliente." \
         "No debe compartirse públicamente." > "$BACKUP_STAGE/LEEME_RESPALDO.txt"
+
+    # ZIP sólo admite fechas entre 1980 y 2107. Se corrige únicamente la copia
+    # temporal del respaldo, nunca los archivos originales de la instalación.
+    find "$BACKUP_STAGE" -type f ! -newermt '1980-01-01 00:00:00 UTC' \
+        -exec touch -d '1980-01-01 00:00:00 UTC' {} +
+    find "$BACKUP_STAGE" -type f -newermt '2107-12-31 23:59:58 UTC' \
+        -exec touch -d '2107-12-31 23:59:58 UTC' {} +
 
     BACKUP_FILE="$BACKUP_DIR/CANCHERIA_BACKUP_ANTES_ACTUALIZAR_$(date '+%Y%m%d_%H%M%S').zip"
     (

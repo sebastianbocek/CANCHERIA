@@ -41,11 +41,13 @@ def test_installer_creates_zip_backup_before_an_update():
     assert '"runtime"' in backup_script
     assert '"wa_profile"' in backup_script
     assert "legacy_config.py" in backup_script
+    assert "1980-01-01T00:00:00" in backup_script
+    assert "LastWriteTimeUtc" in backup_script
 
 
 def test_windows_update_explicitly_restores_both_configuration_files():
     installer = (ROOT / "installer" / "cancheria.iss").read_text(encoding="utf-8")
-    assert '#define MyAppVersion "0.2.3"' in installer
+    assert '#define MyAppVersion "0.2.4"' in installer
     assert "uninsneveruninstall" in installer
     assert "PreservedLegacyConfig" in installer
     assert "PreservedRootConfig" in installer

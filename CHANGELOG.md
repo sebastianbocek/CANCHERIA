@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.4 - 2026-10-08
+
+- Se corrigió `ZIP does not support timestamps before 1980` al crear el
+  respaldo automático desde la actualización de la GUI.
+- Los archivos con fechas antiguas se guardan en el ZIP con la fecha mínima
+  compatible, sin modificar los originales del cliente.
+- La misma protección se agregó a los instaladores completos de Windows y
+  Debian y al generador de paquetes de actualización.
+
 ## 0.2.3 - 2026-10-08
 
 - Una consulta de disponibilidad con hora exacta y sin fecha, como `tenes

@@ -38,6 +38,8 @@ def test_linux_updates_create_a_zip_and_preserve_private_data():
         'cp -a "$TEMP_DIR/payload/." "$INSTALL_DIR/"'
     )
     assert "La actualización fue cancelada sin modificar CANCHERIA" in text
+    assert "1980-01-01 00:00:00 UTC" in text
+    assert 'find "$BACKUP_STAGE" -type f' in text
 
 
 def test_linux_builder_uses_the_clean_client_payload():

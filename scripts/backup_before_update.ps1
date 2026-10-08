@@ -99,6 +99,20 @@ try {
     )
     Set-Content -LiteralPath (Join-Path $StageRoot "LEEME_RESPALDO.txt") -Value $info -Encoding UTF8
 
+    # ZIP no admite timestamps anteriores a 1980 ni posteriores a 2107.
+    # Normalizamos sólo la copia temporal; los datos originales del cliente no
+    # se modifican.
+    $zipMinimumDate = [DateTime]::SpecifyKind([DateTime]::Parse("1980-01-01T00:00:00"), [DateTimeKind]::Utc)
+    $zipMaximumDate = [DateTime]::SpecifyKind([DateTime]::Parse("2107-12-31T23:59:58"), [DateTimeKind]::Utc)
+    Get-ChildItem -LiteralPath $StageRoot -File -Recurse -Force | ForEach-Object {
+        if ($_.LastWriteTimeUtc -lt $zipMinimumDate) {
+            $_.LastWriteTimeUtc = $zipMinimumDate
+        }
+        elseif ($_.LastWriteTimeUtc -gt $zipMaximumDate) {
+            $_.LastWriteTimeUtc = $zipMaximumDate
+        }
+    }
+
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $timestamp = $createdAt.ToString("yyyyMMdd_HHmmss_fff")
     $zipPath = Join-Path $BackupRoot "CANCHERIA_BACKUP_ANTES_ACTUALIZAR_$timestamp.zip"

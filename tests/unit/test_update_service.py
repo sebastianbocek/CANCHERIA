@@ -140,6 +140,23 @@ def test_backup_contains_private_data_but_skips_browser_cache(tmp_path: Path) ->
     assert "wa_profile/Default/Cache/discard.bin" not in names
 
 
+def test_backup_clamps_pre_1980_timestamps_without_touching_original(tmp_path: Path) -> None:
+    install = tmp_path / "CANCHERIA"
+    install.mkdir()
+    legacy_file = install / "client_memory.json"
+    legacy_file.write_text("{}", encoding="utf-8")
+    os.utime(legacy_file, (0, 0))
+    original_mtime = legacy_file.stat().st_mtime
+
+    backup = create_data_backup(install)
+
+    with zipfile.ZipFile(backup) as archive:
+        entry = archive.getinfo("client_memory.json")
+        assert entry.date_time == (1980, 1, 1, 0, 0, 0)
+        assert archive.read("client_memory.json") == b"{}"
+    assert legacy_file.stat().st_mtime == original_mtime
+
+
 def test_update_helper_rolls_back_program_files_when_replacement_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

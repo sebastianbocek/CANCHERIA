@@ -370,7 +370,17 @@ def create_data_backup(install_dir: Path) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = backup_dir / f"CANCHERIA_BACKUP_ANTES_ACTUALIZAR_{stamp}.zip"
     try:
-        with zipfile.ZipFile(backup_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+        # Algunos perfiles de Chromium/WhatsApp migrados desde otra PC pueden
+        # contener archivos con mtime 1970 o incluso 1601. El formato ZIP sólo
+        # admite fechas desde 1980. ``strict_timestamps=False`` limita esa fecha
+        # en la copia comprimida sin tocar el archivo original del cliente.
+        with zipfile.ZipFile(
+            backup_path,
+            "w",
+            zipfile.ZIP_DEFLATED,
+            compresslevel=6,
+            strict_timestamps=False,
+        ) as archive:
             archive.writestr(
                 "LEEME_RESPALDO.txt",
                 "CANCHERIA - Respaldo automático antes de actualizar\n"
@@ -385,7 +395,7 @@ def create_data_backup(install_dir: Path) -> Path:
                     continue
                 seen.add(resolved)
                 archive.write(source, source.relative_to(install_dir).as_posix())
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         backup_path.unlink(missing_ok=True)
         raise UpdateError("No se pudo crear el respaldo. La actualización fue cancelada.") from exc
     return backup_path
@@ -508,7 +518,13 @@ def create_update_archive(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_path.with_suffix(output_path.suffix + ".tmp")
     try:
-        with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        with zipfile.ZipFile(
+            temporary,
+            "w",
+            zipfile.ZIP_DEFLATED,
+            compresslevel=9,
+            strict_timestamps=False,
+        ) as archive:
             archive.writestr(
                 "update-manifest.json",
                 json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
