@@ -17,13 +17,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.0/InstaladorCancheria.exe"><strong>⬇️ Descargar para Windows</strong></a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.1/InstaladorCancheria.exe"><strong>⬇️ Descargar para Windows</strong></a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.0/InstaladorCancheriaLinux.run"><strong>⬇️ Descargar para Debian</strong></a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.1/InstaladorCancheriaLinux.run"><strong>⬇️ Descargar para Debian</strong></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/tag/v0.2.0">Ver versión v0.2.0</a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/tag/v0.2.1">Ver versión v0.2.1</a>
   ·
   <a href="docs/MANUAL_DE_USO_CANCHERIA_DUENOS_ENCARGADOS.pdf">Manual completo</a>
 </p>
@@ -55,6 +55,7 @@ El software de CANCHERIA se distribuye sin costo de licencia. Para responder con
 - Detección de casos que necesitan atención humana.
 - Blacklist y múltiples administradores autorizados.
 - Panel de administración con agenda visual por horas.
+- Alertas rojas automáticas en Administración y en la pestaña que necesita atención.
 - Sesión de WhatsApp persistente: no es necesario escanear el QR en cada inicio.
 - Respaldo automático antes de cada actualización.
 - Actualización directa desde **⚙ Ajustes**, sin descargar manualmente otro instalador.
@@ -66,13 +67,13 @@ El software de CANCHERIA se distribuye sin costo de licencia. Para responder con
 La siguiente demostración muestra una conversación real de reserva con CANCHERIA. La vista previa se reproduce directamente en el README; hacé clic sobre ella para abrir el video completo con audio.
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.0/DEMO-CANCHERIA-CHAT.mp4">
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.1/DEMO-CANCHERIA-CHAT.mp4">
     <img src="docs/images/cancheria-demo.webp" alt="Demo de una conversación de reserva con CANCHERIA" width="420">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.0/DEMO-CANCHERIA-CHAT.mp4"><strong>▶ Ver demo completa con audio</strong></a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.1/DEMO-CANCHERIA-CHAT.mp4"><strong>▶ Ver demo completa con audio</strong></a>
 </p>
 
 ### Panel principal
@@ -93,7 +94,7 @@ La pestaña **Horas** muestra cada horario y cancha en una grilla: verde cuando 
 
 ### Windows 10 y Windows 11
 
-1. Descargá **[InstaladorCancheria.exe](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.0/InstaladorCancheria.exe)**.
+1. Descargá **[InstaladorCancheria.exe](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.1/InstaladorCancheria.exe)**.
 2. Cerrá una instalación anterior de CANCHERIA si estuviera abierta.
 3. Ejecutá `InstaladorCancheria.exe` y seguí el asistente.
 4. Dejá marcada la opción **Configurar mi negocio ahora**.
@@ -112,7 +113,7 @@ Requisitos:
 - Usuario normal con acceso a `sudo`.
 - Conexión a Internet.
 
-1. Descargá **[InstaladorCancheriaLinux.run](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.0/InstaladorCancheriaLinux.run)**.
+1. Descargá **[InstaladorCancheriaLinux.run](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.1/InstaladorCancheriaLinux.run)**.
 2. Abrí una terminal en la carpeta de descarga.
 3. Ejecutá el instalador con tu usuario normal, sin anteponer `sudo`:
 
@@ -190,6 +191,9 @@ El panel visual permite trabajar sin recordar comandos:
 - Consultar la agenda completa por fecha y cancha.
 - Seleccionar horarios libres u ocupados directamente desde la grilla.
 - Revisar el estado operativo y los comandos disponibles.
+- Ver contadores rojos en el botón **ADMINISTRACIÓN** y en la pestaña exacta
+  que tiene pagos o casos humanos pendientes. Abrir el panel no borra la alerta:
+  desaparece al confirmar el pago o resolver el caso.
 
 La fecha de la pestaña **Horas** comienza siempre en el día actual y puede cambiarse para revisar o administrar cualquier otra fecha.
 
@@ -300,7 +304,7 @@ Los resultados se guardan en `release/`. Los generadores usan una configuración
 
 ## Estado de licencia
 
-CANCHERIA `v0.2.0` se ofrece para descarga y uso sin costo de licencia. La licencia jurídica definitiva del código fuente continúa pendiente de selección por AI BROTHERS; consultá [docs/licensing.md](docs/licensing.md). Esto no afecta la descarga gratuita de los instaladores publicados.
+CANCHERIA `v0.2.1` se ofrece para descarga y uso sin costo de licencia. La licencia jurídica definitiva del código fuente continúa pendiente de selección por AI BROTHERS; consultá [docs/licensing.md](docs/licensing.md). Esto no afecta la descarga gratuita de los instaladores publicados.
 
 ---
 

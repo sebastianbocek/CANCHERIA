@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 - 2026-10-08
+
+- El botón **ADMINISTRACIÓN** muestra un contador rojo con la suma de pagos
+  pendientes y casos que requieren atención humana.
+- Las pestañas **Reservas y pagos** y **Atención humana** muestran su propio
+  contador rojo para identificar inmediatamente el origen de cada alerta.
+- Los contadores se actualizan automáticamente cada tres segundos y desaparecen
+  únicamente cuando la tarea queda realmente resuelta.
+- Si existe una sola categoría con alertas, el panel se abre directamente en
+  esa pestaña para reducir pasos al administrador.
+
 ## 0.2.0 - 2026-10-08
 
 - Se agregó **⚙ Ajustes** al panel principal con búsqueda e instalación de

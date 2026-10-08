@@ -49,10 +49,15 @@ class AdminPanel(tk.Toplevel):
         parent: tk.Misc,
         service: DesktopAdminService,
         open_configurator: Callable[[], None],
+        on_notifications_changed: Callable[[dict[str, int]], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
         self.open_configurator_callback = open_configurator
+        self.on_notifications_changed = on_notifications_changed or (lambda _counts: None)
+        self._notification_poll_id: str | None = None
+        self._last_notification_counts: dict[str, int] | None = None
+        self._initial_notification_tab_selected = False
         self.title("CANCHERIA · Administración")
         self.geometry("1180x740")
         self.minsize(980, 620)
@@ -64,6 +69,7 @@ class AdminPanel(tk.Toplevel):
         }
         self._build()
         self.refresh_all()
+        self._schedule_notification_poll()
 
     def _build(self) -> None:
         header = tk.Frame(self, bg="white")
@@ -93,6 +99,21 @@ class AdminPanel(tk.Toplevel):
         self.notebook.add(self.operation_tab, text="Operación")
         self.notebook.add(self.cases_tab, text="Atención humana")
         self.notebook.add(self.commands_tab, text="Comandos y configuración")
+        self._tab_titles = {
+            self.bookings_tab: "Reservas y pagos",
+            self.hours_tab: "Horas",
+            self.operation_tab: "Operación",
+            self.cases_tab: "Atención humana",
+            self.commands_tab: "Comandos y configuración",
+        }
+        self._tab_notification_keys = {
+            self.bookings_tab: "bookings",
+            self.hours_tab: "hours",
+            self.operation_tab: "operation",
+            self.cases_tab: "cases",
+            self.commands_tab: "commands",
+        }
+        self._tab_badge_images: dict[tk.Widget, tk.PhotoImage] = {}
         self._build_bookings()
         self._build_hours()
         self._build_operation()
@@ -215,14 +236,133 @@ class AdminPanel(tk.Toplevel):
 
     def refresh_all(self) -> None:
         try:
-            for key, value in self.service.stats().items():
+            stats = self.service.stats()
+            for key, value in stats.items():
                 if key in self.summary_vars:
                     self.summary_vars[key].set(str(value))
+            self._apply_notification_counts(self._notification_counts_for_stats(stats))
             self._refresh_bookings()
             self._refresh_cases()
             self._refresh_hours()
         except Exception as exc:
             messagebox.showerror("Administración", f"No pude actualizar el panel:\n{exc}", parent=self)
+
+    def _apply_notification_counts(self, counts: dict[str, int]) -> None:
+        normalized = {
+            key: max(0, int(counts.get(key, 0) or 0))
+            for key in ("bookings", "hours", "operation", "cases", "commands")
+        }
+        normalized["total"] = sum(normalized.values())
+        self._last_notification_counts = normalized
+
+        for tab, title in self._tab_titles.items():
+            count = normalized[self._tab_notification_keys[tab]]
+            if count:
+                image = self._create_badge_image(count)
+                self._tab_badge_images[tab] = image
+                self.notebook.tab(tab, text=title, image=image, compound="right")
+            else:
+                self._tab_badge_images.pop(tab, None)
+                self.notebook.tab(tab, text=title, image="")
+
+        active_sources = [
+            tab for tab in self._tab_titles
+            if normalized[self._tab_notification_keys[tab]] > 0
+        ]
+        if not self._initial_notification_tab_selected:
+            self._initial_notification_tab_selected = True
+            if len(active_sources) == 1:
+                self.notebook.select(active_sources[0])
+
+        self.on_notifications_changed(dict(normalized))
+
+    def _notification_counts_for_stats(self, stats: dict[str, int]) -> dict[str, int]:
+        method = getattr(self.service, "notification_counts", None)
+        if callable(method):
+            return method(stats)
+        bookings = max(0, int(stats.get("pending", 0) or 0))
+        cases = max(0, int(stats.get("cases", 0) or 0))
+        return {
+            "bookings": bookings,
+            "hours": 0,
+            "operation": 0,
+            "cases": cases,
+            "commands": 0,
+            "total": bookings + cases,
+        }
+
+    def _create_badge_image(self, count: int) -> tk.PhotoImage:
+        """Draw a dependency-free red numeric pill for a ttk notebook tab."""
+        text = "99+" if count > 99 else str(count)
+        glyphs = {
+            "0": ("111", "101", "101", "101", "111"),
+            "1": ("010", "110", "010", "010", "111"),
+            "2": ("111", "001", "111", "100", "111"),
+            "3": ("111", "001", "111", "001", "111"),
+            "4": ("101", "101", "111", "001", "001"),
+            "5": ("111", "100", "111", "001", "111"),
+            "6": ("111", "100", "111", "101", "111"),
+            "7": ("111", "001", "010", "010", "010"),
+            "8": ("111", "101", "111", "101", "111"),
+            "9": ("111", "101", "111", "001", "111"),
+            "+": ("000", "010", "111", "010", "000"),
+        }
+        scale = 2
+        glyph_width = 3 * scale
+        gap = scale
+        width = max(18, 8 + len(text) * glyph_width + max(0, len(text) - 1) * gap)
+        height = 18
+        image = tk.PhotoImage(master=self, width=width, height=height)
+        for y in range(height):
+            inset = 5 if y in {0, height - 1} else 3 if y in {1, height - 2} else 1
+            image.put("#e31b23", to=(inset, y, width - inset, y + 1))
+        text_width = len(text) * glyph_width + max(0, len(text) - 1) * gap
+        start_x = (width - text_width) // 2
+        start_y = 4
+        for char_index, char in enumerate(text):
+            glyph = glyphs[char]
+            glyph_x = start_x + char_index * (glyph_width + gap)
+            for row, bits in enumerate(glyph):
+                for column, bit in enumerate(bits):
+                    if bit == "1":
+                        x = glyph_x + column * scale
+                        y = start_y + row * scale
+                        image.put("white", to=(x, y, x + scale, y + scale))
+        return image
+
+    def _schedule_notification_poll(self) -> None:
+        if self.winfo_exists():
+            self._notification_poll_id = self.after(3000, self._poll_notifications)
+
+    def _poll_notifications(self) -> None:
+        self._notification_poll_id = None
+        if not self.winfo_exists():
+            return
+        try:
+            stats = self.service.stats()
+            for key, value in stats.items():
+                if key in self.summary_vars:
+                    self.summary_vars[key].set(str(value))
+            previous = self._last_notification_counts
+            current = self._notification_counts_for_stats(stats)
+            self._apply_notification_counts(current)
+            if previous != self._last_notification_counts:
+                self._refresh_bookings()
+                self._refresh_cases()
+        except Exception:
+            # A transient file write must not interrupt the administrator.
+            pass
+        finally:
+            self._schedule_notification_poll()
+
+    def destroy(self) -> None:
+        if self._notification_poll_id is not None:
+            try:
+                self.after_cancel(self._notification_poll_id)
+            except tk.TclError:
+                pass
+            self._notification_poll_id = None
+        super().destroy()
 
     def _refresh_bookings(self) -> None:
         self.booking_tree.delete(*self.booking_tree.get_children())

@@ -89,6 +89,8 @@ class CancheriaDesktop(tk.Tk):
         self.admin_window: tk.Toplevel | None = None
         self.settings_window: tk.Toplevel | None = None
         self.available_update: ReleaseInfo | None = None
+        self.admin_service = None
+        self._admin_notification_poll_id: str | None = None
         self.log_queue: queue.Queue[str] = queue.Queue()
         self._closing = False
 
@@ -107,6 +109,7 @@ class CancheriaDesktop(tk.Tk):
         self.after(120, self._drain_log_queue)
         self.after(700, self._poll_process)
         self.after(450, self._show_update_result)
+        self.after(800, self._poll_admin_notifications)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
@@ -183,8 +186,10 @@ class CancheriaDesktop(tk.Tk):
             pady=8,
             cursor="hand2",
         ).pack(side="left")
-        tk.Button(
-            secondary,
+        admin_button_holder = tk.Frame(secondary, bg=self.BG)
+        admin_button_holder.pack(side="left", padx=(8, 0))
+        self.btn_admin = tk.Button(
+            admin_button_holder,
             text="ADMINISTRACIÓN",
             command=self.open_admin_panel,
             font=("Segoe UI", 10, "bold"),
@@ -197,7 +202,19 @@ class CancheriaDesktop(tk.Tk):
             padx=14,
             pady=8,
             cursor="hand2",
-        ).pack(side="left", padx=(8, 0))
+        )
+        self.btn_admin.pack()
+        self.admin_notification_badge = tk.Label(
+            admin_button_holder,
+            text="",
+            bg="#e31b23",
+            fg="white",
+            font=("Segoe UI", 8, "bold"),
+            padx=5,
+            pady=1,
+            cursor="hand2",
+        )
+        self.admin_notification_badge.bind("<Button-1>", lambda _event: self.open_admin_panel())
         tk.Button(
             secondary,
             text="Abrir manual",
@@ -524,10 +541,12 @@ class CancheriaDesktop(tk.Tk):
             from cancheria.admin.desktop_service import DesktopAdminService
             from cancheria.desktop.admin_panel import AdminPanel
 
+            service = self._get_admin_service()
             self.admin_window = AdminPanel(
                 self,
-                DesktopAdminService(self.root_dir),
+                service,
                 self.open_configurator,
+                self._update_admin_notification_badge,
             )
             self.admin_window.protocol(
                 "WM_DELETE_WINDOW",
@@ -537,6 +556,36 @@ class CancheriaDesktop(tk.Tk):
         except Exception as exc:
             self.admin_window = None
             messagebox.showerror("CANCHERIA", f"No pude abrir Administración:\n{exc}")
+
+    def _get_admin_service(self):
+        if self.admin_service is None:
+            from cancheria.admin.desktop_service import DesktopAdminService
+
+            self.admin_service = DesktopAdminService(self.root_dir)
+        return self.admin_service
+
+    def _update_admin_notification_badge(self, counts: dict[str, int]) -> None:
+        total = max(0, int(counts.get("total", 0) or 0))
+        if total:
+            self.admin_notification_badge.configure(text="99+" if total > 99 else str(total))
+            self.admin_notification_badge.place(relx=1.0, rely=0.0, x=-2, y=2, anchor="ne")
+            self.admin_notification_badge.lift()
+        else:
+            self.admin_notification_badge.place_forget()
+
+    def _poll_admin_notifications(self) -> None:
+        self._admin_notification_poll_id = None
+        if self._closing:
+            return
+        try:
+            counts = self._get_admin_service().notification_counts()
+            self._update_admin_notification_badge(counts)
+        except Exception:
+            # Runtime files can be replaced atomically by the agent. Retry on
+            # the next cycle without distracting the operator with a popup.
+            pass
+        if not self._closing:
+            self._admin_notification_poll_id = self.after(3000, self._poll_admin_notifications)
 
     def _show_update_result(self) -> None:
         if "CANCHERIA_UPDATE_FINISHED" not in os.environ:

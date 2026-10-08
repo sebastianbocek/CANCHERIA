@@ -43,13 +43,40 @@ class DesktopAdminService:
             if str(row.get("senia_estado") or "").strip().lower()
             in {"pendiente", "parcial", "parcial_efectivo_pendiente"}
         ]
+        pending_reservations = {
+            str(row.get("reservation_id") or "").strip()
+            or "|".join(
+                str(row.get(key) or "").strip()
+                for key in ("telefono", "fecha", "cancha")
+            )
+            for row in pending
+        }
         today = dt.date.today().strftime("%d/%m")
         today_count = sum(today in str(row.get("fecha") or "") for row in active)
         return {
             "active": len(active),
-            "pending": len(pending),
+            "pending": len(pending_reservations),
             "today": today_count,
             "cases": len(self.human_cases()),
+        }
+
+    def notification_counts(self, stats: dict[str, int] | None = None) -> dict[str, int]:
+        """Return unresolved administrative work grouped by panel section.
+
+        Notifications are derived from the underlying business state, so merely
+        opening the panel never clears them.  They disappear only after the
+        pending payment or human-attention case is actually resolved.
+        """
+        current = stats or self.stats()
+        bookings = max(0, int(current.get("pending", 0) or 0))
+        cases = max(0, int(current.get("cases", 0) or 0))
+        return {
+            "bookings": bookings,
+            "hours": 0,
+            "operation": 0,
+            "cases": cases,
+            "commands": 0,
+            "total": bookings + cases,
         }
 
     @staticmethod

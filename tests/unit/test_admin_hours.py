@@ -204,6 +204,40 @@ def test_unblock_slot_removes_only_selected_block(monkeypatch):
     assert service.calendar.rows[0]["hora"] == "11:00"
 
 
+def test_notification_counts_sum_only_unresolved_admin_work():
+    service = object.__new__(DesktopAdminService)
+
+    counts = service.notification_counts({"active": 8, "pending": 3, "today": 4, "cases": 2})
+
+    assert counts == {
+        "bookings": 3,
+        "hours": 0,
+        "operation": 0,
+        "cases": 2,
+        "commands": 0,
+        "total": 5,
+    }
+
+
+def test_stats_counts_multislot_pending_booking_as_one_notification(monkeypatch):
+    rows = [
+        {
+            "reservation_id": "12",
+            "fecha": display_day(future_day()),
+            "hora": hour,
+            "cancha": "Cancha 1",
+            "estado": "reservado",
+            "senia_estado": "pendiente",
+        }
+        for hour in ("20:00", "21:00")
+    ]
+    service = build_service(monkeypatch, rows)
+    monkeypatch.setattr(service, "human_cases", lambda: [])
+
+    assert service.stats()["pending"] == 1
+    assert service.notification_counts()["total"] == 1
+
+
 def test_admin_panel_exposes_hours_tab_and_click_editing():
     from pathlib import Path
 
@@ -269,6 +303,69 @@ def test_admin_hours_tab_builds_with_colored_slot_buttons():
         assert "Horas" in tab_labels
         assert len(buttons) == 4
         assert {button.cget("bg") for button in buttons} == {panel.FREE_GREEN, panel.RED}
+    finally:
+        if panel is not None:
+            panel.destroy()
+        root.destroy()
+
+
+def test_admin_panel_shows_red_badge_and_opens_only_notified_tab():
+    import tkinter as tk
+
+    from cancheria.desktop.admin_panel import AdminPanel
+
+    class UiService:
+        def courts(self):
+            return ["Cancha 1"]
+
+        def stats(self):
+            return {"active": 0, "pending": 0, "today": 0, "cases": 2}
+
+        def notification_counts(self, stats=None):
+            return {
+                "bookings": 0,
+                "hours": 0,
+                "operation": 0,
+                "cases": 2,
+                "commands": 0,
+                "total": 2,
+            }
+
+        def bookings(self):
+            return []
+
+        def human_cases(self):
+            return [
+                {"case_id": 1, "created_at": "2026-10-08", "nombre": "Juan"},
+                {"case_id": 2, "created_at": "2026-10-08", "nombre": "Ana"},
+            ]
+
+        def day_schedule(self, day):
+            return {
+                "day": day,
+                "display_day": "08/10/2026",
+                "attention_day": True,
+                "courts": self.courts(),
+                "slots": [],
+                "cells": [],
+            }
+
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("Tk no está disponible en este entorno")
+    root.withdraw()
+    panel = None
+    changes = []
+    try:
+        panel = AdminPanel(root, UiService(), lambda: None, changes.append)
+        panel.update_idletasks()
+
+        assert panel.notebook.select() == str(panel.cases_tab)
+        assert panel.notebook.tab(panel.cases_tab, "image")
+        assert not panel.notebook.tab(panel.bookings_tab, "image")
+        assert changes[-1]["total"] == 2
+        assert changes[-1]["cases"] == 2
     finally:
         if panel is not None:
             panel.destroy()
