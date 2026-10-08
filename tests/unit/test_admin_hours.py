@@ -95,6 +95,56 @@ def test_day_schedule_marks_free_occupied_and_blocked(monkeypatch):
     assert statuses[("11:00", "Cancha 2")] == "free"
 
 
+def test_day_schedule_hides_every_elapsed_slot_for_today(monkeypatch):
+    class FixedDateTime(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2031, 5, 10, 14, 30)
+            return value if tz is None else value.replace(tzinfo=tz)
+
+    monkeypatch.setattr(service_module.dt, "datetime", FixedDateTime)
+    service = build_service(monkeypatch, [], end_hour=17)
+
+    schedule = service.day_schedule("2031-05-10")
+
+    assert schedule["slots"] == ["15:00", "16:00"]
+    assert {cell["status"] for cell in schedule["cells"]} == {"free"}
+
+
+def test_court_catalog_and_sport_update_share_whatsapp_configuration(monkeypatch):
+    monkeypatch.setattr(
+        service_module.cfg,
+        "COURTS",
+        [
+            {"name": "Cancha 1", "type": "Futbol 5"},
+            {"name": "Cancha 2", "type": "Pádel"},
+        ],
+    )
+    captured = {}
+
+    def fake_legacy_callable(name):
+        assert name == "actualizar_canchas_config"
+
+        def update(courts):
+            captured["courts"] = courts
+            return {"ok": True, "respuesta": "ok"}
+
+        return update
+
+    monkeypatch.setattr(service_module, "legacy_callable", fake_legacy_callable)
+    service = object.__new__(DesktopAdminService)
+
+    assert service.court_catalog() == [
+        {"name": "Cancha 1", "type": "Futbol 5", "icon": "⚽"},
+        {"name": "Cancha 2", "type": "Pádel", "icon": "🎾"},
+    ]
+    result = service.update_court_sport("Cancha 1", "Básquet")
+
+    assert captured["courts"][0] == {"name": "Cancha 1", "type": "Básquet"}
+    assert captured["courts"][1] == {"name": "Cancha 2", "type": "Pádel"}
+    assert result.startswith("🏀 Cancha 1")
+
+
 def test_update_booking_moves_all_slots_and_preserves_other_fields(monkeypatch):
     day = future_day()
     rows = [
@@ -253,6 +303,11 @@ def test_admin_panel_exposes_hours_tab_and_click_editing():
     assert "def _refresh_hours" in source
     assert "def _open_hour_cell" in source
     assert "def _edit_booking_dialog" in source
+    assert 'text="Fecha 📅"' in source
+    assert '"<Button-3>"' in source
+    assert "def _show_court_sport_menu" in source
+    assert "def _change_court_sport" in source
+    assert '"No quedan horarios futuros para esta fecha."' in source
 
 
 def test_admin_hours_tab_builds_with_colored_slot_buttons():

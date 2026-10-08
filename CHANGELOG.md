@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.10 - 2026-10-08
+
+- Agrega un calendario visual al selector de fecha de la pestaña `Horas`.
+- Agrega el mismo calendario al crear o editar la fecha de un torneo.
+- Oculta las franjas horarias que ya pasaron para que la agenda de hoy empiece en el próximo horario útil.
+- Muestra junto a cada cancha el ícono y el deporte definidos en `COURTS`.
+- Permite cambiar el deporte de una cancha con clic derecho sobre su encabezado.
+- Unifica el mapeo de íconos entre la GUI y las respuestas de disponibilidad de WhatsApp.
+- Los cambios de deporte se guardan mediante la misma configuración con recarga dinámica que usa el administrador de WhatsApp.
+
 ## 0.2.9 - 2026-10-08
 
 - Agrega la pestaña `Torneos` junto a `Atención humana` en el panel de administración.

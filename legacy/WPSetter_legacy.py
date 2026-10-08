@@ -107,6 +107,7 @@ import threading
 from cancheria.paths import PROJECT_ROOT, runtime_dir, runtime_file, ensure_runtime_layout
 from cancheria.browser_runtime import persistent_context_options
 from cancheria.config import legacy_config as _legacy_config_module
+from cancheria.config.court_sports import sport_icon as _configured_court_sport_icon
 from cancheria.domain.events import registration as event_registration
 from playwright.async_api import async_playwright
 from openai import OpenAI
@@ -2140,37 +2141,7 @@ def _court_type_icon_from_label(court_type: Any) -> str:
     Esto NO interpreta texto del usuario ni reemplaza a Perception IA. Es sólo
     presentación determinista de un tipo de recurso ya configurado.
     """
-    normalized = normalizar_texto_ia(court_type or "").strip()
-    if not normalized:
-        return "🏟️"
-
-    # Tipos específicos antes que familias generales.
-    if "tenis de mesa" in normalized or "ping pong" in normalized or "ping-pong" in normalized:
-        return "🏓"
-    if "badminton" in normalized:
-        return "🏸"
-    if "basquet" in normalized or "basket" in normalized:
-        return "🏀"
-    if "voley" in normalized or "volley" in normalized or "voleibol" in normalized:
-        return "🏐"
-    if "rugby" in normalized:
-        return "🏉"
-    if "hockey" in normalized:
-        return "🏑"
-    if "softball" in normalized:
-        return "🥎"
-    if "baseball" in normalized or "beisbol" in normalized:
-        return "⚾"
-    if "golf" in normalized:
-        return "⛳"
-    if "futbol" in normalized or "futsal" in normalized:
-        return "⚽"
-    if "tenis" in normalized or "padel" in normalized or "squash" in normalized:
-        # Unicode no tiene un emoji específico de pádel; 🎾 es la representación
-        # de deporte de raqueta más cercana y evita mostrar fútbol incorrectamente.
-        return "🎾"
-
-    return "🏟️"
+    return _configured_court_sport_icon(court_type)
 
 
 def _court_type_icon_for_name(court_name: str) -> str:

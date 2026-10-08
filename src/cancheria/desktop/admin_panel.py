@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 from typing import Callable
 
 from cancheria.admin.desktop_service import DesktopAdminService
+from cancheria.desktop.date_picker import DatePicker
 
 
 COMMAND_REFERENCE_FALLBACK = """CONTROL DEL AGENTE
@@ -153,11 +154,31 @@ class AdminPanel(tk.Toplevel):
     def _build_hours(self) -> None:
         toolbar = tk.Frame(self.hours_tab, bg="white")
         toolbar.pack(fill="x", padx=14, pady=(12, 6))
-        tk.Label(toolbar, text="Fecha", font=("Segoe UI", 10, "bold"), fg=self.NAVY, bg="white").pack(side="left")
+        date_label = tk.Label(
+            toolbar,
+            text="Fecha 📅",
+            font=("Segoe UI", 10, "bold"),
+            fg=self.BLUE,
+            bg="white",
+            cursor="hand2",
+        )
+        date_label.pack(side="left")
         self.hours_day_var = tk.StringVar(value=dt_today())
         date_entry = tk.Entry(toolbar, textvariable=self.hours_day_var, width=13, font=("Segoe UI", 10))
         date_entry.pack(side="left", padx=(8, 5), ipady=5)
         date_entry.bind("<Return>", lambda _event: self._refresh_hours())
+        date_entry.bind(
+            "<Double-Button-1>",
+            lambda _event: self._show_date_picker(
+                self.hours_day_var, date_entry, "Fecha de horarios", self._refresh_hours
+            ),
+        )
+        date_label.bind(
+            "<Button-1>",
+            lambda _event: self._show_date_picker(
+                self.hours_day_var, date_entry, "Fecha de horarios", self._refresh_hours
+            ),
+        )
         self._action_button(toolbar, "◀", lambda: self._move_hours_date(-1), self.NAVY).pack(side="left", padx=2)
         self._action_button(toolbar, "Hoy", self._set_hours_today, self.BLUE).pack(side="left", padx=2)
         self._action_button(toolbar, "▶", lambda: self._move_hours_date(1), self.NAVY).pack(side="left", padx=2)
@@ -167,7 +188,7 @@ class AdminPanel(tk.Toplevel):
         legend.pack(fill="x", padx=14, pady=(0, 8))
         self._legend_item(legend, self.FREE_GREEN, "Disponible")
         self._legend_item(legend, self.RED, "Ocupado / bloqueado")
-        self._legend_item(legend, self.PAST_GRAY, "Horario pasado / fuera de atención")
+        self._legend_item(legend, self.PAST_GRAY, "Fuera de atención")
         self.hours_status_var = tk.StringVar(value="")
         tk.Label(legend, textvariable=self.hours_status_var, bg="white", fg=self.MUTED).pack(side="right")
 
@@ -193,6 +214,15 @@ class AdminPanel(tk.Toplevel):
         item.pack(side="left", padx=(0, 16))
         tk.Label(item, text="  ", bg=color, width=2).pack(side="left", padx=(0, 5))
         tk.Label(item, text=label, bg="white", fg=self.NAVY).pack(side="left")
+
+    def _show_date_picker(
+        self,
+        variable: tk.StringVar,
+        anchor: tk.Widget,
+        title: str,
+        on_select: Callable[[], None] | None = None,
+    ) -> None:
+        DatePicker(self, variable, anchor=anchor, title=title, on_select=on_select)
 
     def _resize_hours_grid(self, event) -> None:
         requested = self.hours_grid.winfo_reqwidth()
@@ -628,16 +658,30 @@ class AdminPanel(tk.Toplevel):
             width=9,
             pady=10,
         ).grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+        catalog_method = getattr(self.service, "court_catalog", None)
+        catalog = catalog_method() if callable(catalog_method) else []
+        identities = {str(item.get("name")): item for item in catalog}
         for column, court in enumerate(courts, start=1):
             self.hours_grid.grid_columnconfigure(column, weight=1, minsize=180)
-            tk.Label(
+            identity = identities.get(court, {})
+            icon = str(identity.get("icon") or "🏟️")
+            court_type = str(identity.get("type") or "").strip()
+            header = tk.Label(
                 self.hours_grid,
-                text=court,
+                text=f"{icon} {court}" + (f" · {court_type}" if court_type else ""),
                 font=("Segoe UI", 10, "bold"),
                 fg=self.NAVY,
                 bg="#eef2f6",
                 pady=10,
-            ).grid(row=0, column=column, sticky="nsew", padx=2, pady=2)
+                cursor="hand2",
+            )
+            header.grid(row=0, column=column, sticky="nsew", padx=2, pady=2)
+            header.bind(
+                "<Button-3>",
+                lambda event, selected_court=court: self._show_court_sport_menu(
+                    event, selected_court
+                ),
+            )
 
         for row_index, time in enumerate(slots, start=1):
             tk.Label(
@@ -669,7 +713,11 @@ class AdminPanel(tk.Toplevel):
         if not slots:
             tk.Label(
                 self.hours_grid,
-                text="No hay franjas horarias configuradas.",
+                text=(
+                    "No quedan horarios futuros para esta fecha."
+                    if schedule.get("attention_day")
+                    else "La fecha está fuera de los días de atención."
+                ),
                 bg="white",
                 fg=self.MUTED,
                 pady=30,
@@ -677,6 +725,48 @@ class AdminPanel(tk.Toplevel):
         self.hours_status_var.set(f"{schedule['display_day']} · {len(slots)} horarios")
         self.hours_canvas.update_idletasks()
         self.hours_canvas.configure(scrollregion=self.hours_canvas.bbox("all"))
+
+    def _show_court_sport_menu(self, event, court: str) -> None:
+        menu = tk.Menu(self, tearoff=False)
+        options_method = getattr(self.service, "court_sport_options", None)
+        options = options_method() if callable(options_method) else []
+        for option in options:
+            court_type = str(option.get("type") or "").strip()
+            menu.add_command(
+                label=str(option.get("label") or court_type),
+                command=lambda selected=court_type: self._change_court_sport(court, selected),
+            )
+        if options:
+            menu.add_separator()
+        menu.add_command(
+            label="🏟️  Otro deporte...",
+            command=lambda: self._custom_court_sport(court),
+        )
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _custom_court_sport(self, court: str) -> None:
+        court_type = simpledialog.askstring(
+            "Deporte de la cancha",
+            f"Escribí el deporte correspondiente a {court}:",
+            parent=self,
+        )
+        if court_type and court_type.strip():
+            self._change_court_sport(court, court_type.strip())
+
+    def _change_court_sport(self, court: str, court_type: str) -> None:
+        try:
+            result = self.service.update_court_sport(court, court_type)
+            self._refresh_hours()
+            messagebox.showinfo(
+                "Deporte actualizado",
+                result + "\n\nEl agente usará este mismo deporte e ícono en WhatsApp.",
+                parent=self,
+            )
+        except Exception as exc:
+            messagebox.showerror("Deporte de la cancha", str(exc), parent=self)
 
     def _hour_cell_style(self, cell: dict) -> tuple[str, str]:
         status = cell["status"]
@@ -942,10 +1032,34 @@ class AdminPanel(tk.Toplevel):
             ("Máximo de equipos", "capacity"),
         )
         for row_index, (label, key) in enumerate(fields):
-            tk.Label(dialog, text=label).grid(row=row_index, column=0, sticky="w", padx=14, pady=7)
-            tk.Entry(dialog, textvariable=values[key], width=34).grid(
+            field_label = tk.Label(
+                dialog,
+                text=("Fecha 📅" if key == "date" else label),
+                fg=(self.BLUE if key == "date" else "black"),
+                cursor=("hand2" if key == "date" else "arrow"),
+            )
+            field_label.grid(row=row_index, column=0, sticky="w", padx=14, pady=7)
+            field_entry = tk.Entry(dialog, textvariable=values[key], width=34)
+            field_entry.grid(
                 row=row_index, column=1, padx=14, pady=7
             )
+            if key == "date":
+                open_calendar = lambda _event=None, entry=field_entry: self._show_date_picker(
+                    values["date"], entry, "Fecha del torneo"
+                )
+                field_label.bind("<Button-1>", open_calendar)
+                field_entry.bind("<Double-Button-1>", open_calendar)
+                tk.Button(
+                    dialog,
+                    text="📅",
+                    command=open_calendar,
+                    relief="flat",
+                    bg=self.BLUE,
+                    fg="white",
+                    cursor="hand2",
+                    padx=7,
+                    pady=3,
+                ).grid(row=row_index, column=2, padx=(0, 12), pady=7)
         next_row = len(fields)
         if not editing:
             tk.Label(dialog, text="Alias de pago (opcional)").grid(
@@ -984,7 +1098,7 @@ class AdminPanel(tk.Toplevel):
 
         self._action_button(
             dialog, "Guardar cambios" if editing else "Crear torneo", save, self.BLUE
-        ).grid(row=next_row, column=0, columnspan=2, pady=14)
+        ).grid(row=next_row, column=0, columnspan=3, pady=14)
 
     def _delete_tournament(self) -> None:
         try:

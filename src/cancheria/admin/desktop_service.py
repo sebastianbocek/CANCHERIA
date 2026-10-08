@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from cancheria.config import legacy_config as cfg
+from cancheria.config.court_sports import sport_icon, sport_menu_options
 from cancheria.domain.reservations.calendar import CalendarioLlamadas
 from cancheria.domain.events import registration as event_registration
 from cancheria.legacy_bridge import legacy_callable
@@ -354,6 +355,53 @@ class DesktopAdminService:
             if isinstance(item, dict) and str(item.get("name") or "").strip()
         ] or [str(getattr(cfg, "DEFAULT_COURT_NAME", "Cancha 1"))]
 
+    def court_catalog(self) -> list[dict[str, str]]:
+        catalog: list[dict[str, str]] = []
+        for item in cfg.COURTS or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("nombre") or "").strip()
+            if not name:
+                continue
+            court_type = str(item.get("type") or item.get("tipo") or "").strip()
+            catalog.append({
+                "name": name,
+                "type": court_type,
+                "icon": sport_icon(court_type),
+            })
+        if catalog:
+            return catalog
+        name = str(getattr(cfg, "DEFAULT_COURT_NAME", "Cancha 1"))
+        return [{"name": name, "type": "", "icon": "🏟️"}]
+
+    @staticmethod
+    def court_sport_options() -> list[dict[str, str]]:
+        return sport_menu_options()
+
+    def update_court_sport(self, court_name: str, court_type: str) -> str:
+        court_name = str(court_name or "").strip()
+        court_type = str(court_type or "").strip()
+        if not court_name or not court_type:
+            raise ValueError("Seleccioná una cancha y un deporte válidos.")
+        courts = []
+        found = False
+        for item in cfg.COURTS or []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or item.get("nombre") or "").strip()
+            current_type = str(item.get("type") or item.get("tipo") or "").strip()
+            if name == court_name:
+                current_type = court_type
+                found = True
+            if name:
+                courts.append({"name": name, "type": current_type})
+        if not found:
+            raise ValueError("La cancha seleccionada ya no existe en la configuración.")
+        result = legacy_callable("actualizar_canchas_config")(courts)
+        if not result.get("ok"):
+            raise RuntimeError(self._result_message(result, "No se pudo cambiar el deporte."))
+        return f"{sport_icon(court_type)} {court_name} ahora corresponde a {court_type}."
+
     @staticmethod
     def _parse_panel_date(value: str) -> dt.date:
         text = str(value or "").strip().lower()
@@ -415,8 +463,12 @@ class DesktopAdminService:
 
         attention_day = selected.weekday() in set(cfg.obtener_dias_atencion())
         now = dt.datetime.now()
+        visible_slots = [
+            time for time in slots
+            if dt.datetime.combine(selected, dt.time.fromisoformat(time)) > now
+        ]
         cells: list[dict[str, Any]] = []
-        for time in slots:
+        for time in visible_slots:
             slot_dt = dt.datetime.combine(selected, dt.time.fromisoformat(time))
             for court in self.courts():
                 booking = active_rows.get((court, time))
@@ -428,8 +480,6 @@ class DesktopAdminService:
                     status = "blocked" if blocked else "occupied"
                 elif not attention_day:
                     status = "closed"
-                elif slot_dt <= now:
-                    status = "past"
                 else:
                     status = "free"
                 cells.append({
@@ -445,7 +495,8 @@ class DesktopAdminService:
             "display_day": selected.strftime("%d/%m/%Y"),
             "attention_day": attention_day,
             "courts": self.courts(),
-            "slots": slots,
+            "court_catalog": self.court_catalog(),
+            "slots": visible_slots,
             "cells": cells,
         }
 
