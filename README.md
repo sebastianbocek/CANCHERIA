@@ -8,7 +8,8 @@
 <p align="center">
   <strong>Contacto y soporte · Sebastián Bocek</strong><br>
   Email: <a href="mailto:sebastianbocek.marketing@gmail.com">sebastianbocek.marketing@gmail.com</a><br>
-  WhatsApp: <a href="https://wa.me/5493513441882">+54 9 351 344-1882</a>
+  WhatsApp: <a href="https://wa.me/5493513441882">+54 9 351 344-1882</a><br>
+  LinkedIn: <a href="https://www.linkedin.com/in/sebastianbocek/">Sebastián Bocek</a>
 </p>
 
 <p align="center">
