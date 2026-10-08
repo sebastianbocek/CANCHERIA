@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.7 - 2026-10-08
+
+- Corrige el enrutamiento contextual de `Pago el resto en efectivo` después de una transferencia parcial de la seña.
+- La elección de efectivo se vincula a la única obligación parcial real —reserva o inscripción de torneo— en vez de confiar en una etiqueta de dominio equivocada del modelo.
+- Una reserva con seña parcial queda firme, conserva el dinero transferido y registra únicamente la diferencia como efectivo pendiente.
+- Una decisión de efectivo para torneo sin una inscripción real identificada ya no responde con el fallback genérico `¿A qué torneo te referís?`.
+- El contrato canónico de pago presencial queda congelado y autoriza explícitamente `payment_method=cash` antes de ejecutar la tool.
+- Verifica que el código y los instaladores públicos no incluyan API keys reales.
+
 ## 0.2.6 - 2026-10-08
 
 - Elimina la pregunta redundante `¿Qué día te gustaría?` cuando el usuario da una hora exacta sin fecha: el fast path usa hoy.

@@ -141932,6 +141932,13 @@ def _canonical_v184_tool_perception(
             "wants_write": wants_write,
             "wants_information": not wants_write,
         },
+        "changes": ([{
+            "field": "payment_method",
+            "value": "cash",
+            "operation": "set",
+            "source": "current_user_turn",
+            "evidence": str(message or ""),
+        }] if operation in {"choose_booking_cash", "choose_event_cash"} else []),
         "provenance": [{
             "field": "operation",
             "source": "canonical_ai_orchestrator_v184",
@@ -141969,6 +141976,7 @@ def _canonical_v184_tool_perception(
             }],
         },
         "execution_contract": {
+            "frozen": True,
             "authoritative": True,
             "source": "canonical_ai_orchestrator_v184",
             "acts": [act],
@@ -142788,6 +142796,22 @@ async def _canonical_v184_execute_event(
 
     if operation in {"register_event_payment", "choose_event_cash", "cancel_event_registration"}:
         if not event_id or not registration_id:
+            # Una elección de efectivo es una continuación financiera, no una
+            # consulta de catálogo de torneos. Si llegó hasta acá sin una
+            # inscripción real identificada, la decisión semántica quedó
+            # inconsistente. Nunca la degradamos a la pregunta genérica
+            # "¿A qué torneo te referís?", porque eso mezcla dominios y oculta
+            # el error de enrutamiento.
+            if operation == "choose_event_cash":
+                return await _canonical_v184_silent_failure(
+                    source="event_cash_without_grounded_registration",
+                    message=message,
+                    telefono=telefono,
+                    prospecto=prospecto or {},
+                    page=page,
+                    observations=[],
+                    original_response="",
+                )
             field = "comprobante" if operation == "register_event_payment" else "event_selection"
             return _canonical_v184_result(
                 response=_canonical_v184_missing_question(field, state), observations=[], world={"message": message},
@@ -146806,6 +146830,171 @@ async def _canonical_v184_orchestrate(
 
 
 # ============================================================================
+# V227 — ELECCIÓN DE EFECTIVO LIGADA A LA OBLIGACIÓN PARCIAL REAL
+# ============================================================================
+# Incidente 08/10/2026 14:09:
+#   reserva con $7.500 transferidos y $2.500 de seña pendientes
+#   usuario: "Pago el resto en efectivo"
+#   Orchestrator: choose_event_cash
+#   respuesta incorrecta: "¿A qué torneo te referís?"
+#
+# La IA ya resolvió correctamente la intención (elegir efectivo). El único dato
+# equivocado fue el dominio de destino. Esta capa no interpreta palabras ni
+# inventa acciones: vincula esa intención exclusivamente a la única obligación
+# parcial comprobable en el estado transaccional. Si hay cero o más de una, no
+# adivina y conserva la decisión para que actúen las salvaguardas normales.
+# ============================================================================
+
+
+def _canonical_v227_partial_booking_obligation(
+    state: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    candidates: Dict[str, Dict[str, Any]] = {}
+    for raw in (state or {}).get("reservations") or []:
+        if not isinstance(raw, dict):
+            continue
+        row = dict(raw)
+        reservation_id = str(row.get("reservation_id") or "").strip()
+        deposit_status = str(row.get("deposit_status") or "").strip().casefold()
+        paid = _monto_a_int(row.get("deposit_paid")) or 0
+        pending = _monto_a_int(row.get("deposit_pending"))
+        required = _monto_a_int(row.get("deposit_required"))
+        if pending is None and required is not None:
+            pending = max(0, required - paid)
+        if (
+            reservation_id
+            and deposit_status == "parcial"
+            and paid > 0
+            and (pending or 0) > 0
+        ):
+            candidates.setdefault(reservation_id, row)
+    if len(candidates) == 1:
+        return next(iter(candidates.values()))
+    return None
+
+
+def _canonical_v227_partial_event_obligation(
+    state: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    event = dict((state or {}).get("event_registration") or {})
+    registration_id = str(event.get("registration_id") or "").strip()
+    event_id = str(event.get("event_id") or "").strip()
+    status = str(event.get("status") or "").strip().casefold()
+    paid = _monto_a_int(event.get("paid_amount")) or 0
+    remaining = _monto_a_int(event.get("remaining_amount")) or 0
+    if (
+        registration_id
+        and event_id
+        and status == "pending_payment"
+        and paid > 0
+        and remaining > 0
+    ):
+        return event
+    return None
+
+
+def _canonical_v227_bind_cash_to_partial_obligation(
+    decision: Dict[str, Any],
+    state: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not isinstance(decision, dict):
+        return decision
+    operation = str(decision.get("operation") or "").strip()
+    if operation not in {"choose_booking_cash", "choose_event_cash"}:
+        return decision
+
+    booking_target = _canonical_v227_partial_booking_obligation(state)
+    event_target = _canonical_v227_partial_event_obligation(state)
+    # Cero destinos o ambos dominios activos: no hay autoridad suficiente para
+    # elegir uno. Este guard es deliberadamente fail-closed.
+    if bool(booking_target) == bool(event_target):
+        return decision
+
+    patched = copy.deepcopy(decision)
+    target_operation = "choose_booking_cash" if booking_target else "choose_event_cash"
+    patched["operation"] = target_operation
+    patched["intent_mode"] = "continuation"
+    patched["confidence"] = max(float(patched.get("confidence") or 0.0), 0.99)
+    patched["missing_fields"] = []
+
+    if booking_target:
+        reservation_id = str(booking_target.get("reservation_id") or "").strip()
+        reservation = dict(patched.get("reservation") or {})
+        reservation["reservation_id"] = reservation_id
+        patched["reservation"] = reservation
+    else:
+        event = dict(patched.get("event") or {})
+        for field in (
+            "event_id", "event_name", "event_date", "team_name",
+            "registration_id",
+        ):
+            if event_target.get(field) not in (None, ""):
+                event[field] = event_target.get(field)
+        patched["event"] = event
+
+    resolution = dict(patched.get("context_resolution") or {})
+    if resolution:
+        resolution["effective_operation"] = target_operation
+        patched["context_resolution"] = resolution
+
+    def patch_actions(key: str) -> None:
+        rows = patched.get(key)
+        if not isinstance(rows, list):
+            return
+        fixed = []
+        for raw in rows:
+            action = copy.deepcopy(raw) if isinstance(raw, dict) else raw
+            if (
+                isinstance(action, dict)
+                and str(action.get("operation") or "").strip()
+                in {"choose_booking_cash", "choose_event_cash"}
+            ):
+                action["operation"] = target_operation
+                action["intent_mode"] = "continuation"
+                action["confidence"] = patched["confidence"]
+                action["missing_fields"] = []
+                if booking_target:
+                    action_reservation = dict(action.get("reservation") or {})
+                    action_reservation["reservation_id"] = str(
+                        booking_target.get("reservation_id") or ""
+                    ).strip()
+                    action["reservation"] = action_reservation
+                else:
+                    action["event"] = copy.deepcopy(patched.get("event") or {})
+            fixed.append(action)
+        patched[key] = fixed
+
+    patch_actions("actions")
+    patch_actions("_v188_actions")
+    print(
+        "   💵 [CANONICAL V227 PARTIAL CASH BINDING] "
+        f"{operation}→{target_operation} "
+        f"reservation_id={str((patched.get('reservation') or {}).get('reservation_id') or '-')} "
+        f"registration_id={str((patched.get('event') or {}).get('registration_id') or '-')}"
+    )
+    return patched
+
+
+_canonical_v184_orchestrate_v227_base = _canonical_v184_orchestrate
+
+
+async def _canonical_v184_orchestrate(
+    message: str,
+    user_messages: List[str],
+    state: Dict[str, Any],
+    *,
+    image_path: str = "",
+) -> Dict[str, Any]:
+    decision = await _canonical_v184_orchestrate_v227_base(
+        message,
+        user_messages,
+        state,
+        image_path=image_path,
+    )
+    return _canonical_v227_bind_cash_to_partial_obligation(decision, state)
+
+
+# ============================================================================
 # V212 — INFORMATION ANSWER + SOCIAL ACK + TRANSACTIONAL NEXT BEST ACTION
 # ============================================================================
 # Las tools informativas resuelven hechos; esta capa opera UNA sola vez sobre la
@@ -147185,13 +147374,13 @@ def run_agent_v2_invariant_evals() -> Dict[str, Any]:
         "passed": passed,
         "total": len(results),
         "results": results,
-        "build": "v218-booking-quincho-state-integrity",
+        "build": "v227-partial-cash-context-binding",
     }
 
 
-AGENT_V2_UNIFIED_AGENTIC_CORE = "v218-booking-quincho-state-integrity"
-AGENT_V2_UNIFIED_CONVERSATION_KERNEL = "v218-booking-quincho-state-integrity"
-AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-08_canonical_no_day_fallback_removed_v226"
+AGENT_V2_UNIFIED_AGENTIC_CORE = "v227-partial-cash-context-binding"
+AGENT_V2_UNIFIED_CONVERSATION_KERNEL = "v227-partial-cash-context-binding"
+AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-08_canonical_partial_cash_binding_v227"
 
 # V195 marker is defined immediately above. V194 marker intentionally retired.
 
