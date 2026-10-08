@@ -138,6 +138,8 @@ def _request_json(url: str, timeout: float = 20.0) -> dict:
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
             "User-Agent": "CANCHERIA-Updater",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
         },
     )
     try:

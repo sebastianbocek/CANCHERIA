@@ -80,6 +80,9 @@ class CancheriaDesktop(tk.Tk):
     ORANGE = "#b45309"
     RED = "#b42318"
     UPDATE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000
+    UPDATE_STARTUP_DELAY_MS = 350
+    UPDATE_STARTUP_RETRY_MS = 30_000
+    UPDATE_STARTUP_CHECKS = 3
 
     def __init__(self) -> None:
         super().__init__()
@@ -94,6 +97,7 @@ class CancheriaDesktop(tk.Tk):
         self._admin_notification_poll_id: str | None = None
         self._update_notification_poll_id: str | None = None
         self._update_check_in_progress = False
+        self._startup_update_checks_remaining = self.UPDATE_STARTUP_CHECKS
         self._announced_update_version = ""
         self.log_queue: queue.Queue[str] = queue.Queue()
         self._closing = False
@@ -114,7 +118,10 @@ class CancheriaDesktop(tk.Tk):
         self.after(700, self._poll_process)
         self.after(450, self._show_update_result)
         self.after(800, self._poll_admin_notifications)
-        self._update_notification_poll_id = self.after(2200, self._poll_update_notifications)
+        self._update_notification_poll_id = self.after(
+            self.UPDATE_STARTUP_DELAY_MS,
+            self._poll_update_notifications,
+        )
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
@@ -875,6 +882,8 @@ class CancheriaDesktop(tk.Tk):
 
     def _finish_update_check(self, release: ReleaseInfo | None, error: str) -> None:
         self._update_check_in_progress = False
+        if self._startup_update_checks_remaining > 0:
+            self._startup_update_checks_remaining -= 1
         if not error:
             self.available_update = release
             self._update_update_notification_badge(release)
@@ -888,7 +897,13 @@ class CancheriaDesktop(tk.Tk):
                     "Abrí ACTUALIZACIÓN para instalarla."
                 )
         self._render_update_check_result(release, error)
-        self._schedule_update_notification_poll()
+        retry_startup = (
+            release is None
+            and self._startup_update_checks_remaining > 0
+        )
+        self._schedule_update_notification_poll(
+            self.UPDATE_STARTUP_RETRY_MS if retry_startup else None
+        )
 
     def _install_available_update(self) -> None:
         release = self.available_update

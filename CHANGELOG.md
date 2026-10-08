@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.11 - 2026-10-08
+
+- Inicia la comprobación automática de actualizaciones apenas se dibuja la ventana principal.
+- Repite la consulta durante el arranque cuando GitHub falla transitoriamente o todavía devuelve la versión anterior.
+- Solicita la última release sin usar una respuesta HTTP cacheada.
+- Mantiene la comprobación periódica cada seis horas después de completar los intentos iniciales.
+- La insignia roja aparece sin abrir manualmente la ventana de Actualización.
+
 ## 0.2.10 - 2026-10-08
 
 - Agrega un calendario visual al selector de fecha de la pestaña `Horas`.

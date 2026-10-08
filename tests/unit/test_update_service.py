@@ -209,13 +209,75 @@ def test_gui_checks_updates_automatically_and_shows_creator_contact() -> None:
     root = Path(__file__).resolve().parents[2]
     text = (root / "src" / "cancheria" / "desktop" / "gui.py").read_text(encoding="utf-8")
 
-    assert "self.after(2200, self._poll_update_notifications)" in text
+    assert "UPDATE_STARTUP_DELAY_MS = 350" in text
+    assert "UPDATE_STARTUP_RETRY_MS = 30_000" in text
+    assert "UPDATE_STARTUP_CHECKS = 3" in text
+    assert "self.UPDATE_STARTUP_DELAY_MS" in text
     assert "UPDATE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000" in text
     assert "self._update_update_notification_badge(release)" in text
     assert 'text="Software creado por Sebastián Bocek de AIBROTHERS"' in text
     assert "https://github.com/sebastianbocek" in text
     assert "sebastianbocek.marketing@gmail.com" in text
     assert "https://wa.me/5493513441882" in text
+
+
+def test_automatic_update_check_retries_at_startup_without_opening_settings() -> None:
+    from cancheria.desktop.gui import CancheriaDesktop
+
+    class FakeDesktop:
+        _update_check_in_progress = True
+        _startup_update_checks_remaining = 3
+        available_update = None
+        _announced_update_version = ""
+        UPDATE_STARTUP_RETRY_MS = 30_000
+        rendered = []
+        scheduled = []
+        badges = []
+
+        def _update_update_notification_badge(self, release):
+            self.badges.append(release)
+
+        def _append_log(self, _message):
+            pass
+
+        def _render_update_check_result(self, release, error):
+            self.rendered.append((release, error))
+
+        def _schedule_update_notification_poll(self, delay_ms=None):
+            self.scheduled.append(delay_ms)
+
+    desktop = FakeDesktop()
+    CancheriaDesktop._finish_update_check(desktop, None, "fallo transitorio")
+
+    assert desktop._update_check_in_progress is False
+    assert desktop._startup_update_checks_remaining == 2
+    assert desktop.scheduled == [30_000]
+    assert desktop.badges == []
+
+
+def test_github_release_request_bypasses_stale_http_cache(monkeypatch) -> None:
+    captured = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size):
+            return b'{"tag_name":"v0.2.10"}'
+
+    def fake_urlopen(request, timeout):
+        captured["headers"] = {key.casefold(): value for key, value in request.header_items()}
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(update_service.urllib.request, "urlopen", fake_urlopen)
+    update_service._request_json(update_service.LATEST_RELEASE_API)
+
+    assert captured["headers"]["cache-control"] == "no-cache"
+    assert captured["headers"]["pragma"] == "no-cache"
 
 
 def test_parent_wait_treats_frozen_kill_systemerror_as_process_exit(
