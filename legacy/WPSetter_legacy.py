@@ -60011,6 +60011,16 @@ def _agent_v2_join_human(items: List[str]) -> str:
     return ", ".join(values[:-1]) + " y " + values[-1]
 
 
+def _agent_v2_join_human_options(items: List[str]) -> str:
+    """Une alternativas excluyentes con «o», no como una lista acumulativa."""
+    values = [str(x) for x in (items or []) if str(x)]
+    if not values:
+        return ""
+    if len(values) == 1:
+        return values[0]
+    return ", ".join(values[:-1]) + " o " + values[-1]
+
+
 def _agent_v2_relative_day_label(_mensaje: str, fallback: str) -> str:
     """Renderiza únicamente la fecha ya observada, sin releer lenguaje natural.
 
@@ -138350,7 +138360,7 @@ def _canonical_v183_missing_question(field: str) -> str:
     if field == "resource_type":
         options = list(_configured_court_type_labels())
         if options:
-            return f"¿Qué querés reservar: {_agent_v2_join_human(options)}?"
+            return f"¿Qué querés reservar: {_agent_v2_join_human_options(options)}?"
         return "¿Qué tipo de cancha querés reservar?"
     if field == "duracion_horas":
         labels = [f"{float(v):g} h" for v in (ALLOWED_TURN_DURATIONS or [])]
@@ -141809,7 +141819,7 @@ def _canonical_v184_missing_question(
         return "¿Qué hora te sirve?"
     if field == "resource_type":
         configured = list(_configured_court_type_labels())
-        return f"¿Qué querés reservar: {_agent_v2_join_human(configured)}?" if configured else "¿Qué tipo de cancha querés reservar?"
+        return f"¿Qué querés reservar: {_agent_v2_join_human_options(configured)}?" if configured else "¿Qué tipo de cancha querés reservar?"
     if field == "team_name":
         event = dict((state or {}).get("event_registration") or {})
         name = event.get("event_name") or "el torneo"
@@ -145604,7 +145614,7 @@ def _canonical_v213_apply_current_turn_day_receipt(
 
 
 # ============================================================================
-# V223 — HORA EXACTA SIN FECHA = HOY + CONTINUIDAD DEL SLOT PENDIENTE
+# V226 — HORA EXACTA SIN FECHA = HOY + CONTINUIDAD DEL SLOT PENDIENTE
 # ============================================================================
 # Incidente 08/10/2026 12:22:
 #   "Hola tenes cancha para las 4" -> "¿Qué día te gustaría?" -> "Hoy"
@@ -145645,7 +145655,11 @@ def _canonical_v223_apply_implicit_today_for_exact_time(
     receipt = day_receipt if isinstance(day_receipt, dict) else {}
     mode = str(receipt.get("mode") or "").strip().casefold()
     no_day_authorized = bool(
-        (mode == "no_day_context" and receipt.get("validated") is True)
+        # ``no_day_context`` no afirma ninguna fecha y, por definición, no
+        # necesita materializar evidencia literal. Si el transformer ya validó
+        # una hora exacta del turno actual, la política comercial es HOY aunque
+        # la confianza del adjudicador de día haya quedado debajo de 0.70.
+        mode == "no_day_context"
         or (
             mode == "not_required"
             and not str(prior_day or "").strip()
@@ -145693,7 +145707,7 @@ def _canonical_v223_apply_implicit_today_for_exact_time(
                 patch_payload(action)
 
     print(
-        "   📍 [CANONICAL V223 IMPLICIT TODAY] "
+        "   📍 [CANONICAL V226 IMPLICIT TODAY] "
         f"hora exacta actual={hour} sin fecha → day={today}"
     )
     return patched
@@ -146946,7 +146960,7 @@ def _canonical_v212_information_continuation(
         configured = list(_configured_court_type_labels())
         question = (
             f"Para {day} a las {hour}, ¿qué querés reservar: "
-            f"{_agent_v2_join_human(configured)}?"
+            f"{_agent_v2_join_human_options(configured)}?"
             if configured else
             f"Para {day} a las {hour}, ¿qué tipo de cancha querés reservar?"
         )
@@ -147177,7 +147191,7 @@ def run_agent_v2_invariant_evals() -> Dict[str, Any]:
 
 AGENT_V2_UNIFIED_AGENTIC_CORE = "v218-booking-quincho-state-integrity"
 AGENT_V2_UNIFIED_CONVERSATION_KERNEL = "v218-booking-quincho-state-integrity"
-AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-08_canonical_implicit_today_slot_continuity_v223"
+AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-08_canonical_no_day_fallback_removed_v226"
 
 # V195 marker is defined immediately above. V194 marker intentionally retired.
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.6 - 2026-10-08
+
+- Elimina la pregunta redundante `¿Qué día te gustaría?` cuando el usuario da una hora exacta sin fecha: el fast path usa hoy.
+- La regla también funciona si existe un día viejo en memoria y el adjudicador temporal clasifica correctamente `no_day_context` con confianza baja.
+- Las preguntas con deportes alternativos ahora usan `o`: `Futbol 5, Tenis o Pádel`.
+- Añade regresiones del incidente real `Hola tenes cancha para las 7` de las 13:48.
+
 ## 0.2.5 - 2026-10-08
 
 - Conserva el día, la hora y la duración canónicos cuando sólo falta elegir el deporte.

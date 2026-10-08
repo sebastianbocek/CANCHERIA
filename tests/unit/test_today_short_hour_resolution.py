@@ -230,7 +230,9 @@ def test_exact_time_without_day_defaults_to_today_and_queries_only_16(
         "missing_fields": [],
         "_v213_current_turn_day_receipt": {
             "mode": "no_day_context",
-            "validated": True,
+            # Reproduce el log real del 08/10 13:48: no había fecha explícita,
+            # pero la confianza del adjudicador quedó debajo del umbral.
+            "validated": False,
             "prior_day": "Miércoles 07/10",
         },
     }
@@ -255,6 +257,16 @@ def test_exact_time_without_day_defaults_to_today_and_queries_only_16(
     assert data["hora"] == "16:00"
     assert "16" in result["response"]
     assert "Qué día" not in result["response"]
+
+
+def test_resource_choice_question_uses_or_between_options() -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    question = legacy._canonical_v183_missing_question("resource_type")
+
+    assert " o " in question
+    assert " y " not in question
 
 
 def test_answering_today_keeps_exact_time_from_pending_day_question() -> None:
