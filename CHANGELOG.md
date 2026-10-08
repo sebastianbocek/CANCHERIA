@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.3 - 2026-10-08
+
+- Una consulta de disponibilidad con hora exacta y sin fecha, como `tenes
+  cancha para las 4`, se interpreta como una consulta para hoy y conserva la
+  resolución operacional de reloj (`16:00` a las 12:22).
+- Si el agente ya había preguntado el día, una respuesta como `Hoy` conserva la
+  hora, deporte y duración pendientes en vez de mostrar toda la agenda diaria.
+- Las consultas de disponibilidad reconocidas por el fast path canónico ya no
+  pueden caer al executor legacy por baja confianza, error interno o resultado
+  no manejado: se aplica el cierre seguro canónico.
+
 ## 0.2.2 - 2026-10-08
 
 - Se corrigió el error de Windows `built-in function kill returned a result

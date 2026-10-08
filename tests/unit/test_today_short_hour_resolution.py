@@ -157,3 +157,180 @@ def test_artificial_2255_canonical_flow_queries_real_calendar_tool_at_23(
     assert data["canchas_libres"] == ["Cancha 1", "Cancha 2"]
     assert decision["booking"]["time"] == "23:00"
     assert "23" in result["response"]
+
+
+def test_exact_time_without_day_defaults_to_today_and_queries_only_16(
+    monkeypatch,
+) -> None:
+    """Reproduce el chat real de las 12:22 sin API ni escritura persistente."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    real_datetime = datetime.datetime
+    real_date = datetime.date
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = real_datetime(2026, 10, 8, 12, 22)
+            if tz is None:
+                return value
+            if hasattr(tz, "localize"):
+                return tz.localize(value)
+            return value.replace(tzinfo=tz)
+
+    class FrozenDate(real_date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 10, 8)
+
+    monkeypatch.setattr(legacy.datetime, "datetime", FrozenDateTime)
+    monkeypatch.setattr(legacy.datetime, "date", FrozenDate)
+    monkeypatch.setattr(legacy.calendario, "_esta_reservado", lambda *args, **kwargs: False)
+    monkeypatch.setattr(legacy, "_canonical_v183_save", lambda *args, **kwargs: None)
+    monkeypatch.setattr(legacy, "get_conversation_state", lambda *args, **kwargs: {})
+    monkeypatch.setattr(legacy, "aplicar_observation_agent_v2", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        legacy,
+        "construir_world_state_agent_v2",
+        lambda telefono, prospecto, state, message, image_path="": {
+            "message": message,
+            "facts": {"reservas_reales": []},
+            "active_goals": [],
+            "current_scope_id": "artificial-1222",
+        },
+    )
+
+    message = "Hola tenes cancha para las 4"
+    state = legacy._canonical_v183_default_state("artificial-test")
+    state["active_flow"] = "booking"
+    state["booking"].update({
+        "day": "Miércoles 07/10",
+        "time": "18:00",
+        "duration_hours": 1.0,
+    })
+    decision = {
+        "operation": "query_availability",
+        "confidence": 0.99,
+        "booking": {
+            "day": "Miércoles 07/10",
+            "time": "16:00",
+            "time_specificity": "exact",
+            "time_source": "current_turn",
+            "time_evidence": "las 4",
+            "references_previous_time": False,
+            "resource_type": None,
+            "duration_hours": 1.0,
+        },
+        "context_resolution": {
+            "relation": "continue_previous_availability",
+            "inherit_fields": ["day", "duration_hours"],
+            "replace_fields": ["time"],
+        },
+        "missing_fields": [],
+        "_v213_current_turn_day_receipt": {
+            "mode": "no_day_context",
+            "validated": True,
+            "prior_day": "Miércoles 07/10",
+        },
+    }
+
+    result = asyncio.run(
+        legacy._canonical_v184_execute_availability(
+            message,
+            [message],
+            state,
+            decision,
+            {"nombre": "Prueba artificial"},
+            "artificial-test",
+        )
+    )
+
+    observation = result["observations"][0]
+    data = observation["data"]
+    assert result["handled"] is True
+    assert observation["tool"] == "consultar_disponibilidad"
+    assert observation["ok"] is True
+    assert data["dia"] == "Jueves 08/10"
+    assert data["hora"] == "16:00"
+    assert "16" in result["response"]
+    assert "Qué día" not in result["response"]
+
+
+def test_answering_today_keeps_exact_time_from_pending_day_question() -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    state = legacy._canonical_v183_default_state("artificial-test")
+    state["active_flow"] = "booking"
+    state["booking"].update({
+        "time": "16:00",
+        "time_specificity": "exact",
+        "resource_type": "Futbol 5",
+        "duration_hours": 1.0,
+    })
+    state["pending"] = {
+        "field": "dia",
+        "time": "16:00",
+        "time_specificity": "exact",
+        "resource_type": "Futbol 5",
+        "duration_hours": 1.0,
+    }
+    decision = {
+        "operation": "query_availability",
+        "booking": {
+            "day": "Jueves 08/10",
+            "time": None,
+            "time_specificity": "none",
+        },
+        "context_resolution": {
+            "relation": "continue_previous_availability",
+            "inherit_fields": [],
+            "replace_fields": ["day", "time"],
+        },
+        "_v213_current_turn_day_receipt": {
+            "mode": "current_turn_explicit_day",
+            "validated": True,
+            "resolved_day": "Jueves 08/10",
+            "evidence": "Hoy",
+        },
+        "_v188_actions": [{
+            "operation": "query_availability",
+            "booking": {"day": "Jueves 08/10", "time": None},
+            "context_resolution": {"replace_fields": ["day", "time"]},
+        }],
+    }
+
+    fixed = legacy._canonical_v223_restore_pending_time_after_day(decision, state)
+
+    assert fixed["booking"]["time"] == "16:00"
+    assert fixed["booking"]["time_specificity"] == "exact"
+    assert fixed["booking"]["references_previous_time"] is True
+    assert "time" not in fixed["context_resolution"]["replace_fields"]
+    assert "time" in fixed["context_resolution"]["inherit_fields"]
+    assert fixed["_v188_actions"][0]["booking"]["time"] == "16:00"
+
+
+def test_explicit_future_day_is_never_replaced_by_implicit_today() -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    decision = {
+        "operation": "query_availability",
+        "booking": {
+            "day": "Viernes 09/10",
+            "time": "16:00",
+            "time_specificity": "exact",
+            "time_source": "current_turn",
+            "time_evidence": "mañana a las 4",
+        },
+    }
+
+    untouched = legacy._canonical_v223_apply_implicit_today_for_exact_time(
+        decision,
+        {"mode": "not_required", "validated": False},
+        prior_day="",
+    )
+
+    assert untouched is decision
+    assert untouched["booking"]["day"] == "Viernes 09/10"
