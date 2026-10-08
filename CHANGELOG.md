@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.8 - 2026-10-08
+
+- Renombra el acceso principal `AJUSTES` como `ACTUALIZACIÓN` para que su función sea evidente.
+- Comprueba automáticamente GitHub al iniciar y cada seis horas, sin interrumpir al operador si no hay conexión.
+- Muestra una insignia roja sobre `ACTUALIZACIÓN` cuando existe una versión nueva.
+- Conserva una actualización ya detectada si una comprobación posterior falla temporalmente.
+- Agrega un apartado visible de autoría para Sebastián Bocek de AIBROTHERS con enlaces a GitHub, email y WhatsApp.
+
 ## 0.2.7 - 2026-10-08
 
 - Corrige el enrutamiento contextual de `Pago el resto en efectivo` después de una transferencia parcial de la seña.

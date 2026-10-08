@@ -79,6 +79,7 @@ class CancheriaDesktop(tk.Tk):
     GREEN = "#14804a"
     ORANGE = "#b45309"
     RED = "#b42318"
+    UPDATE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000
 
     def __init__(self) -> None:
         super().__init__()
@@ -91,6 +92,9 @@ class CancheriaDesktop(tk.Tk):
         self.available_update: ReleaseInfo | None = None
         self.admin_service = None
         self._admin_notification_poll_id: str | None = None
+        self._update_notification_poll_id: str | None = None
+        self._update_check_in_progress = False
+        self._announced_update_version = ""
         self.log_queue: queue.Queue[str] = queue.Queue()
         self._closing = False
 
@@ -110,6 +114,7 @@ class CancheriaDesktop(tk.Tk):
         self.after(700, self._poll_process)
         self.after(450, self._show_update_result)
         self.after(800, self._poll_admin_notifications)
+        self._update_notification_poll_id = self.after(2200, self._poll_update_notifications)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
@@ -229,9 +234,11 @@ class CancheriaDesktop(tk.Tk):
             pady=7,
             cursor="hand2",
         ).pack(side="left", padx=(8, 0))
-        tk.Button(
-            secondary,
-            text="⚙ AJUSTES",
+        update_button_holder = tk.Frame(secondary, bg=self.BG)
+        update_button_holder.pack(side="left", padx=(8, 0))
+        self.btn_settings = tk.Button(
+            update_button_holder,
+            text="⬆ ACTUALIZACIÓN",
             command=self.open_settings,
             font=("Segoe UI", 10, "bold"),
             bg=self.PANEL,
@@ -242,10 +249,24 @@ class CancheriaDesktop(tk.Tk):
             padx=14,
             pady=7,
             cursor="hand2",
-        ).pack(side="left", padx=(8, 0))
+        )
+        self.btn_settings.pack()
+        self.update_notification_badge = tk.Label(
+            update_button_holder,
+            text="",
+            bg="#e31b23",
+            fg="white",
+            font=("Segoe UI", 8, "bold"),
+            padx=5,
+            pady=1,
+            cursor="hand2",
+        )
+        self.update_notification_badge.bind(
+            "<Button-1>", lambda _event: self.open_settings()
+        )
         tk.Label(
             secondary,
-            text="Reservas, agenda y actualizaciones.",
+            text="Reservas, agenda y versión del sistema.",
             font=("Segoe UI", 9),
             bg=self.BG,
             fg=self.MUTED,
@@ -587,6 +608,38 @@ class CancheriaDesktop(tk.Tk):
         if not self._closing:
             self._admin_notification_poll_id = self.after(3000, self._poll_admin_notifications)
 
+    def _update_update_notification_badge(self, release: ReleaseInfo | None) -> None:
+        if release is not None:
+            self.update_notification_badge.configure(text="1")
+            self.update_notification_badge.place(
+                relx=1.0, rely=0.0, x=-2, y=2, anchor="ne"
+            )
+            self.update_notification_badge.lift()
+        else:
+            self.update_notification_badge.place_forget()
+
+    def _schedule_update_notification_poll(self, delay_ms: int | None = None) -> None:
+        if self._closing:
+            return
+        if self._update_notification_poll_id is not None:
+            try:
+                self.after_cancel(self._update_notification_poll_id)
+            except Exception:
+                pass
+        self._update_notification_poll_id = self.after(
+            delay_ms or self.UPDATE_POLL_INTERVAL_MS,
+            self._poll_update_notifications,
+        )
+
+    def _poll_update_notifications(self) -> None:
+        self._update_notification_poll_id = None
+        if self._closing:
+            return
+        if self._update_check_in_progress:
+            self._schedule_update_notification_poll(60_000)
+            return
+        self._start_update_check(show_status=False)
+
     def _show_update_result(self) -> None:
         if "CANCHERIA_UPDATE_FINISHED" not in os.environ:
             return
@@ -627,9 +680,9 @@ class CancheriaDesktop(tk.Tk):
 
         window = tk.Toplevel(self)
         self.settings_window = window
-        window.title("CANCHERIA · Ajustes")
-        window.geometry("650x470")
-        window.minsize(570, 420)
+        window.title("CANCHERIA · Actualización")
+        window.geometry("680x570")
+        window.minsize(600, 520)
         window.configure(bg=self.BG)
         window.transient(self)
         window.protocol("WM_DELETE_WINDOW", lambda: (window.destroy(), setattr(self, "settings_window", None)))
@@ -638,7 +691,7 @@ class CancheriaDesktop(tk.Tk):
         panel.pack(fill="both", expand=True, padx=20, pady=20)
         tk.Label(
             panel,
-            text="⚙ Ajustes y actualizaciones",
+            text="⬆ Actualización de CANCHERIA",
             font=("Segoe UI", 18, "bold"),
             fg=self.NAVY,
             bg=self.PANEL,
@@ -651,7 +704,7 @@ class CancheriaDesktop(tk.Tk):
             bg=self.PANEL,
         ).pack(anchor="w", padx=20)
 
-        self.update_status_var = tk.StringVar(value="Presioná Buscar actualizaciones para consultar GitHub.")
+        self.update_status_var = tk.StringVar(value="Comprobando la última versión publicada...")
         tk.Label(
             panel,
             textvariable=self.update_status_var,
@@ -722,6 +775,45 @@ class CancheriaDesktop(tk.Tk):
             cursor="hand2",
         )
         self.btn_install_update.pack(side="left", padx=(8, 0))
+
+        creator_panel = tk.Frame(
+            panel,
+            bg="#eef4ff",
+            highlightbackground="#c9dcff",
+            highlightthickness=1,
+        )
+        creator_panel.pack(fill="x", padx=20, pady=(0, 18))
+        tk.Label(
+            creator_panel,
+            text="Software creado por Sebastián Bocek de AIBROTHERS",
+            font=("Segoe UI", 10, "bold"),
+            fg=self.NAVY,
+            bg="#eef4ff",
+        ).pack(anchor="w", padx=12, pady=(9, 2))
+        contacts = tk.Frame(creator_panel, bg="#eef4ff")
+        contacts.pack(anchor="w", padx=12, pady=(0, 9))
+
+        def contact_link(label: str, url: str) -> None:
+            link = tk.Label(
+                contacts,
+                text=label,
+                font=("Segoe UI", 9, "underline"),
+                fg="#0b63ce",
+                bg="#eef4ff",
+                cursor="hand2",
+            )
+            link.pack(side="left", padx=(0, 16))
+            link.bind("<Button-1>", lambda _event, target=url: webbrowser.open_new_tab(target))
+
+        contact_link("GitHub: @sebastianbocek", "https://github.com/sebastianbocek")
+        contact_link(
+            "Email: sebastianbocek.marketing@gmail.com",
+            "mailto:sebastianbocek.marketing@gmail.com",
+        )
+        contact_link("WhatsApp", "https://wa.me/5493513441882")
+
+        if self.available_update is not None:
+            self._render_update_check_result(self.available_update, "")
         self.after(120, self._check_updates)
 
     def _set_update_notes(self, text: str) -> None:
@@ -733,13 +825,20 @@ class CancheriaDesktop(tk.Tk):
         self.update_notes.configure(state="disabled")
 
     def _check_updates(self) -> None:
-        if self.settings_window is None or not self.settings_window.winfo_exists():
+        self._start_update_check(show_status=True)
+
+    def _start_update_check(self, *, show_status: bool) -> None:
+        settings_open = self.settings_window is not None and self.settings_window.winfo_exists()
+        if self._update_check_in_progress:
+            if show_status and settings_open:
+                self.update_status_var.set("Ya se está comprobando la última versión...")
             return
-        self.available_update = None
-        self.btn_check_update.configure(state="disabled")
-        self.btn_install_update.configure(state="disabled")
-        self.update_progress.configure(value=0)
-        self.update_status_var.set("Consultando la última versión publicada en GitHub...")
+        self._update_check_in_progress = True
+        if show_status and settings_open:
+            self.btn_check_update.configure(state="disabled")
+            self.btn_install_update.configure(state="disabled")
+            self.update_progress.configure(value=0)
+            self.update_status_var.set("Consultando la última versión publicada en GitHub...")
 
         def worker() -> None:
             try:
@@ -752,24 +851,44 @@ class CancheriaDesktop(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _finish_update_check(self, release: ReleaseInfo | None, error: str) -> None:
+    def _render_update_check_result(self, release: ReleaseInfo | None, error: str) -> None:
         if self.settings_window is None or not self.settings_window.winfo_exists():
             return
         self.btn_check_update.configure(state="normal")
         if error:
             self.update_status_var.set(f"No se pudo buscar la actualización: {error}")
             self._set_update_notes("Volvé a intentarlo cuando tengas conexión a Internet.")
+            self.btn_install_update.configure(
+                state="normal" if self.available_update is not None else "disabled"
+            )
             return
         if release is None:
             self.update_status_var.set(f"CANCHERIA {__version__} ya es la versión más reciente.")
             self._set_update_notes("No hay actualizaciones pendientes.")
+            self.btn_install_update.configure(state="disabled")
             return
-        self.available_update = release
         self.update_status_var.set(
             f"Nueva versión disponible: {release.version} · {release.asset.size / (1024 * 1024):.1f} MB"
         )
         self._set_update_notes(release.notes)
         self.btn_install_update.configure(state="normal")
+
+    def _finish_update_check(self, release: ReleaseInfo | None, error: str) -> None:
+        self._update_check_in_progress = False
+        if not error:
+            self.available_update = release
+            self._update_update_notification_badge(release)
+            if (
+                release is not None
+                and release.version != self._announced_update_version
+            ):
+                self._announced_update_version = release.version
+                self._append_log(
+                    f"🔴 Nueva versión disponible: CANCHERIA {release.version}. "
+                    "Abrí ACTUALIZACIÓN para instalarla."
+                )
+        self._render_update_check_result(release, error)
+        self._schedule_update_notification_poll()
 
     def _install_available_update(self) -> None:
         release = self.available_update
@@ -859,6 +978,11 @@ class CancheriaDesktop(tk.Tk):
             if not ok:
                 return
         self._closing = True
+        if self._update_notification_poll_id is not None:
+            try:
+                self.after_cancel(self._update_notification_poll_id)
+            except Exception:
+                pass
         self._stop_process()
         self.destroy()
 

@@ -199,10 +199,23 @@ def test_update_helper_rolls_back_program_files_when_replacement_fails(
 def test_gui_exposes_settings_and_update_action() -> None:
     root = Path(__file__).resolve().parents[2]
     text = (root / "src" / "cancheria" / "desktop" / "gui.py").read_text(encoding="utf-8")
-    assert 'text="⚙ AJUSTES"' in text
+    assert 'text="⬆ ACTUALIZACIÓN"' in text
     assert 'text="ACTUALIZAR VERSIÓN"' in text
     assert "check_for_update(__version__)" in text
     assert "launch_update_helper" in text
+
+
+def test_gui_checks_updates_automatically_and_shows_creator_contact() -> None:
+    root = Path(__file__).resolve().parents[2]
+    text = (root / "src" / "cancheria" / "desktop" / "gui.py").read_text(encoding="utf-8")
+
+    assert "self.after(2200, self._poll_update_notifications)" in text
+    assert "UPDATE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000" in text
+    assert "self._update_update_notification_badge(release)" in text
+    assert 'text="Software creado por Sebastián Bocek de AIBROTHERS"' in text
+    assert "https://github.com/sebastianbocek" in text
+    assert "sebastianbocek.marketing@gmail.com" in text
+    assert "https://wa.me/5493513441882" in text
 
 
 def test_parent_wait_treats_frozen_kill_systemerror_as_process_exit(
