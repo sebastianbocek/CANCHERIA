@@ -80,6 +80,7 @@ class DesktopAdminService:
             "operation": 0,
             "cases": cases,
             "tournaments": tournaments,
+            "blacklist": 0,
             "commands": 0,
             "total": bookings + cases + tournaments,
         }
@@ -87,6 +88,47 @@ class DesktopAdminService:
     def command_reference(self) -> str:
         """Use the exact help catalog exposed by the WhatsApp admin command."""
         return str(legacy_callable("build_mensaje_ayuda_admin")("todos") or "")
+
+    def blacklist_entries(self) -> list[dict[str, str]]:
+        """Return the same normalized blacklist used by the WhatsApp agent."""
+        load_blacklist = legacy_callable("cargar_blacklist")
+        blacklist_label = legacy_callable("_blacklist_label")
+        result: list[dict[str, str]] = []
+        for raw_entry in load_blacklist() or []:
+            entry = str(raw_entry or "").strip()
+            if not entry:
+                continue
+            result.append({
+                "entry": entry,
+                "kind": "Teléfono" if entry.startswith("phone:") else "Nombre",
+                "label": str(blacklist_label(entry) or entry),
+            })
+        return sorted(result, key=lambda item: item["label"].casefold())
+
+    def block_blacklist(self, target: str) -> str:
+        """Block a phone/name through the exact WhatsApp administration helper."""
+        target = str(target or "").strip()
+        if not target:
+            raise ValueError("Ingresá un número de teléfono o nombre de contacto.")
+        if not legacy_callable("bloquear_numero")(target):
+            raise ValueError(
+                "No pude bloquear ese contacto. Verificá el número o nombre; "
+                "un administrador autorizado no puede incluirse en la blacklist."
+            )
+        normalized = legacy_callable("_blacklist_entry_from_target")(target)
+        label = legacy_callable("_blacklist_label")(normalized)
+        return f"{label} fue agregado a la blacklist. El agente no le responderá."
+
+    def unblock_blacklist(self, target: str) -> str:
+        """Unblock a phone/name through the exact WhatsApp administration helper."""
+        target = str(target or "").strip()
+        if not target:
+            raise ValueError("Ingresá o seleccioná un contacto bloqueado.")
+        if not legacy_callable("desbloquear_numero")(target):
+            raise ValueError("No encontré ese número o nombre en la blacklist.")
+        normalized = legacy_callable("_blacklist_entry_from_target")(target)
+        label = legacy_callable("_blacklist_label")(normalized)
+        return f"{label} fue eliminado de la blacklist."
 
     def tournaments(self) -> list[dict[str, Any]]:
         result = []

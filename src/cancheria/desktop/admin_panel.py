@@ -95,12 +95,14 @@ class AdminPanel(tk.Toplevel):
         self.operation_tab = tk.Frame(self.notebook, bg="white")
         self.cases_tab = tk.Frame(self.notebook, bg="white")
         self.tournaments_tab = tk.Frame(self.notebook, bg="white")
+        self.blacklist_tab = tk.Frame(self.notebook, bg="white")
         self.commands_tab = tk.Frame(self.notebook, bg="white")
         self.notebook.add(self.bookings_tab, text="Reservas y pagos")
         self.notebook.add(self.hours_tab, text="Horas")
         self.notebook.add(self.operation_tab, text="Operación")
         self.notebook.add(self.cases_tab, text="Atención humana")
         self.notebook.add(self.tournaments_tab, text="Torneos")
+        self.notebook.add(self.blacklist_tab, text="Blacklist")
         self.notebook.add(self.commands_tab, text="Comandos y configuración")
         self._tab_titles = {
             self.bookings_tab: "Reservas y pagos",
@@ -108,6 +110,7 @@ class AdminPanel(tk.Toplevel):
             self.operation_tab: "Operación",
             self.cases_tab: "Atención humana",
             self.tournaments_tab: "Torneos",
+            self.blacklist_tab: "Blacklist",
             self.commands_tab: "Comandos y configuración",
         }
         self._tab_notification_keys = {
@@ -116,6 +119,7 @@ class AdminPanel(tk.Toplevel):
             self.operation_tab: "operation",
             self.cases_tab: "cases",
             self.tournaments_tab: "tournaments",
+            self.blacklist_tab: "blacklist",
             self.commands_tab: "commands",
         }
         self._tab_badge_images: dict[tk.Widget, tk.PhotoImage] = {}
@@ -124,6 +128,7 @@ class AdminPanel(tk.Toplevel):
         self._build_operation()
         self._build_cases()
         self._build_tournaments()
+        self._build_blacklist()
         self._build_commands()
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
@@ -233,6 +238,8 @@ class AdminPanel(tk.Toplevel):
             self._refresh_hours()
         elif self.notebook.select() == str(self.tournaments_tab):
             self._refresh_tournaments()
+        elif self.notebook.select() == str(self.blacklist_tab):
+            self._refresh_blacklist()
 
     def _build_operation(self) -> None:
         form = tk.Frame(self.operation_tab, bg="white")
@@ -413,6 +420,71 @@ class AdminPanel(tk.Toplevel):
         registration_scroll.pack(side="right", fill="y", pady=(0, 10))
         self.registration_tree.pack(fill="both", expand=True, padx=(10, 0), pady=(0, 10))
 
+    def _build_blacklist(self) -> None:
+        header = tk.Frame(self.blacklist_tab, bg="white")
+        header.pack(fill="x", padx=16, pady=(16, 8))
+        tk.Label(
+            header,
+            text="Gestión de contactos bloqueados",
+            font=("Segoe UI", 14, "bold"),
+            fg=self.NAVY,
+            bg="white",
+        ).pack(anchor="w")
+        tk.Label(
+            header,
+            text=(
+                "Ingresá un teléfono completo (por ejemplo +549351...) o un nombre. "
+                "El agente ignorará sus mensajes sin responder."
+            ),
+            fg=self.MUTED,
+            bg="white",
+        ).pack(anchor="w", pady=(3, 0))
+
+        actions = tk.Frame(self.blacklist_tab, bg="white")
+        actions.pack(fill="x", padx=16, pady=(4, 12))
+        tk.Label(actions, text="Número o nombre", fg=self.NAVY, bg="white").pack(
+            side="left", padx=(0, 8)
+        )
+        self.blacklist_target_var = tk.StringVar()
+        self.blacklist_target_entry = tk.Entry(
+            actions,
+            textvariable=self.blacklist_target_var,
+            width=34,
+            font=("Segoe UI", 10),
+        )
+        self.blacklist_target_entry.pack(side="left", padx=(0, 8), ipady=5)
+        self.blacklist_target_entry.bind(
+            "<Return>", lambda _event: self._blacklist_action(block=True)
+        )
+        self._action_button(
+            actions, "Bloquear", lambda: self._blacklist_action(block=True), self.RED
+        ).pack(side="left", padx=3)
+        self._action_button(
+            actions,
+            "Desbloquear",
+            lambda: self._blacklist_action(block=False),
+            self.GREEN,
+        ).pack(side="left", padx=3)
+        self._action_button(
+            actions, "Actualizar", self._refresh_blacklist, self.NAVY
+        ).pack(side="left", padx=3)
+
+        body = tk.Frame(self.blacklist_tab, bg="white")
+        body.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        columns = ("kind", "contact")
+        self.blacklist_tree = ttk.Treeview(
+            body, columns=columns, show="headings", selectmode="browse"
+        )
+        self.blacklist_tree.heading("kind", text="Tipo")
+        self.blacklist_tree.heading("contact", text="Número o nombre bloqueado")
+        self.blacklist_tree.column("kind", width=130, anchor="center")
+        self.blacklist_tree.column("contact", width=540, anchor="w")
+        self.blacklist_tree.bind("<<TreeviewSelect>>", self._on_blacklist_selected)
+        scrollbar = ttk.Scrollbar(body, orient="vertical", command=self.blacklist_tree.yview)
+        self.blacklist_tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.blacklist_tree.pack(side="left", fill="both", expand=True)
+
     def _build_commands(self) -> None:
         bar = tk.Frame(self.commands_tab, bg="white")
         bar.pack(fill="x", padx=14, pady=12)
@@ -466,6 +538,7 @@ class AdminPanel(tk.Toplevel):
             self._refresh_bookings()
             self._refresh_cases()
             self._refresh_tournaments()
+            self._refresh_blacklist()
             self._refresh_hours()
         except Exception as exc:
             messagebox.showerror("Administración", f"No pude actualizar el panel:\n{exc}", parent=self)
@@ -473,7 +546,9 @@ class AdminPanel(tk.Toplevel):
     def _apply_notification_counts(self, counts: dict[str, int]) -> None:
         normalized = {
             key: max(0, int(counts.get(key, 0) or 0))
-            for key in ("bookings", "hours", "operation", "cases", "tournaments", "commands")
+            for key in (
+                "bookings", "hours", "operation", "cases", "tournaments", "blacklist", "commands"
+            )
         }
         normalized["total"] = sum(normalized.values())
         self._last_notification_counts = normalized
@@ -511,6 +586,7 @@ class AdminPanel(tk.Toplevel):
             "operation": 0,
             "cases": cases,
             "tournaments": 0,
+            "blacklist": 0,
             "commands": 0,
             "total": bookings + cases,
         }
@@ -574,6 +650,8 @@ class AdminPanel(tk.Toplevel):
                 self._refresh_bookings()
                 self._refresh_cases()
                 self._refresh_tournaments()
+            if self.notebook.select() == str(self.blacklist_tab):
+                self._refresh_blacklist()
         except Exception:
             # A transient file write must not interrupt the administrator.
             pass
@@ -597,6 +675,70 @@ class AdminPanel(tk.Toplevel):
                 row.get("nombre", ""), row.get("telefono", ""), row.get("estado", ""), row.get("senia_estado", ""),
                 row.get("monto_pendiente", ""),
             ))
+
+    def _refresh_blacklist(self) -> None:
+        if not hasattr(self, "blacklist_tree"):
+            return
+        method = getattr(self.service, "blacklist_entries", None)
+        if not callable(method):
+            return
+        selected_entry = ""
+        selection = self.blacklist_tree.selection()
+        if selection:
+            selected_entry = str(
+                getattr(self, "_blacklist_rows", {}).get(selection[0], {}).get("entry") or ""
+            )
+        self.blacklist_tree.delete(*self.blacklist_tree.get_children())
+        self._blacklist_rows = {}
+        for index, row in enumerate(method()):
+            iid = f"blacklist:{index}"
+            normalized = dict(row)
+            self._blacklist_rows[iid] = normalized
+            self.blacklist_tree.insert(
+                "",
+                "end",
+                iid=iid,
+                values=(normalized.get("kind", ""), normalized.get("label", "")),
+            )
+            if normalized.get("entry") == selected_entry:
+                self.blacklist_tree.selection_set(iid)
+
+    def _on_blacklist_selected(self, _event=None) -> None:
+        selection = self.blacklist_tree.selection()
+        if not selection:
+            return
+        row = getattr(self, "_blacklist_rows", {}).get(selection[0]) or {}
+        self.blacklist_target_var.set(str(row.get("label") or row.get("entry") or ""))
+
+    def _blacklist_action(self, *, block: bool) -> None:
+        try:
+            target = self.blacklist_target_var.get().strip()
+            if not block:
+                selection = self.blacklist_tree.selection()
+                if selection:
+                    row = getattr(self, "_blacklist_rows", {}).get(selection[0]) or {}
+                    target = str(row.get("entry") or target).strip()
+            if not target:
+                raise ValueError(
+                    "Ingresá un número o nombre para bloquear, o seleccioná uno para desbloquear."
+                )
+            verb = "bloquear" if block else "desbloquear"
+            if not messagebox.askyesno(
+                "Blacklist",
+                f"¿Querés {verb} a {self.blacklist_target_var.get().strip() or target}?",
+                parent=self,
+            ):
+                return
+            method_name = "block_blacklist" if block else "unblock_blacklist"
+            method = getattr(self.service, method_name, None)
+            if not callable(method):
+                raise RuntimeError("La gestión de blacklist no está disponible.")
+            result = method(target)
+            messagebox.showinfo("Blacklist", result, parent=self)
+            self.blacklist_target_var.set("")
+            self._refresh_blacklist()
+        except Exception as exc:
+            messagebox.showerror("Blacklist", str(exc), parent=self)
 
     def _selected_booking_id(self) -> str:
         selection = self.booking_tree.selection()

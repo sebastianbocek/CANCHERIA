@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.18 - 2026-10-09
+
+- Agrega la pestaña `Blacklist` al panel de administración, ubicada antes de `Comandos y configuración`.
+- Permite listar, bloquear y desbloquear teléfonos o nombres de contacto desde la GUI.
+- Comparte la misma normalización, protección de administradores y archivo de datos que los comandos administrativos de WhatsApp.
+- Actualiza automáticamente la tabla mientras la pestaña está abierta para reflejar cambios realizados desde WhatsApp.
+
 ## 0.2.17 - 2026-10-09
 
 - Agrega el selector visual de calendario al campo `Fecha` de la pestaña `Operación`.
