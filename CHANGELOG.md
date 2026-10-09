@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.23 - 2026-10-09
+
+- La pestaña `Torneos` reparte dinámicamente el alto entre torneos e inscripciones para mantener visibles ambas tablas y todas las acciones.
+- La agenda de `Horas` admite desplazamiento vertical con la rueda del mouse sobre cualquier celda, botón o superficie de la grilla.
+- `Shift` + rueda desplaza horizontalmente la agenda cuando existen más canchas que ancho disponible.
+
 ## 0.2.22 - 2026-10-09
 
 - La ventana del panel de administración usa explícitamente el icono oficial de CANCHERIA en lugar del icono predeterminado de Tkinter.

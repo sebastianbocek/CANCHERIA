@@ -46,6 +46,9 @@ def test_admin_panel_visual_contract_keeps_all_features_and_callbacks():
     assert 'root / "assets" / "cancheria.ico"' in source
     assert "self.iconbitmap(str(icon_path))" in source
     assert "self.iconbitmap(default=str(icon_path))" in source
+    assert "self.tournament_panes = tk.PanedWindow" in source
+    assert 'widget.bind("<MouseWheel>", self._scroll_hours_vertical' in source
+    assert 'widget.bind("<Shift-MouseWheel>", self._scroll_hours_horizontal' in source
 
 
 def test_custom_tab_bar_selects_all_tabs_and_scrolls_when_narrow():

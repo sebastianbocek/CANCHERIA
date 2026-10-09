@@ -615,6 +615,8 @@ class AdminPanel(tk.Toplevel):
             lambda _event: self.hours_canvas.configure(scrollregion=self.hours_canvas.bbox("all")),
         )
         self.hours_canvas.bind("<Configure>", self._resize_hours_grid)
+        self._bind_hours_wheel(self.hours_canvas)
+        self._bind_hours_wheel(self.hours_grid)
 
     def _legend_item(self, parent: tk.Widget, color: str, label: str) -> None:
         item = tk.Frame(parent, bg="white")
@@ -634,6 +636,28 @@ class AdminPanel(tk.Toplevel):
     def _resize_hours_grid(self, event) -> None:
         requested = self.hours_grid.winfo_reqwidth()
         self.hours_canvas.itemconfigure(self.hours_grid_window, width=max(event.width, requested))
+
+    def _bind_hours_wheel(self, widget: tk.Widget) -> None:
+        """Make the schedule scroll naturally anywhere under the pointer."""
+        if not getattr(widget, "_cancheria_hours_wheel_bound", False):
+            widget.bind("<MouseWheel>", self._scroll_hours_vertical, add="+")
+            widget.bind("<Shift-MouseWheel>", self._scroll_hours_horizontal, add="+")
+            # X11/Tk uses buttons 4 and 5 instead of MouseWheel.
+            widget.bind("<Button-4>", self._scroll_hours_vertical, add="+")
+            widget.bind("<Button-5>", self._scroll_hours_vertical, add="+")
+            setattr(widget, "_cancheria_hours_wheel_bound", True)
+        for child in widget.winfo_children():
+            self._bind_hours_wheel(child)
+
+    def _scroll_hours_vertical(self, event) -> str:
+        direction = -1 if getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0 else 1
+        self.hours_canvas.yview_scroll(direction * 3, "units")
+        return "break"
+
+    def _scroll_hours_horizontal(self, event) -> str:
+        direction = -1 if getattr(event, "delta", 0) > 0 else 1
+        self.hours_canvas.xview_scroll(direction * 3, "units")
+        return "break"
 
     def _on_tab_changed(self, _event=None) -> None:
         if self.notebook.select() == str(self.hours_tab):
@@ -731,14 +755,31 @@ class AdminPanel(tk.Toplevel):
         tournament_columns = (
             "id", "name", "date", "price", "prize", "confirmed", "holds", "available"
         )
-        tournament_body = tk.Frame(self.tournaments_tab, bg=self.SURFACE)
-        tournament_body.pack(fill="x", padx=10, pady=(0, 8))
+        self.tournament_panes = tk.PanedWindow(
+            self.tournaments_tab,
+            orient="vertical",
+            bg=self.BORDER,
+            bd=0,
+            sashwidth=7,
+            sashrelief="flat",
+            showhandle=False,
+        )
+        self.tournament_panes.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.tournament_panes.bind("<Configure>", self._resize_tournament_panes)
+
+        tournament_section = tk.Frame(self.tournament_panes, bg=self.SURFACE)
+        registration_section = tk.Frame(self.tournament_panes, bg=self.SURFACE)
+        self.tournament_panes.add(tournament_section, minsize=105, stretch="always")
+        self.tournament_panes.add(registration_section, minsize=145, stretch="always")
+
+        tournament_body = tk.Frame(tournament_section, bg=self.SURFACE)
+        tournament_body.pack(fill="both", expand=True)
         self.tournament_tree = ttk.Treeview(
             tournament_body,
             columns=tournament_columns,
             show="headings",
             selectmode="browse",
-            height=7,
+            height=3,
             style="Admin.Treeview",
         )
         tournament_labels = (
@@ -761,15 +802,13 @@ class AdminPanel(tk.Toplevel):
         )
         self.tournament_tree.configure(yscrollcommand=tournament_scroll.set)
         tournament_scroll.pack(side="right", fill="y")
-        self.tournament_tree.pack(side="left", fill="x", expand=True)
+        self.tournament_tree.pack(side="left", fill="both", expand=True)
         self.tournament_tree.bind(
             "<<TreeviewSelect>>", lambda _event: self._refresh_tournament_registrations()
         )
 
-        separator = ttk.Separator(self.tournaments_tab, orient="horizontal")
-        separator.pack(fill="x", padx=10, pady=(0, 7))
-        registrations_header = tk.Frame(self.tournaments_tab, bg="white")
-        registrations_header.pack(fill="x", padx=10, pady=(0, 6))
+        registrations_header = tk.Frame(registration_section, bg="white")
+        registrations_header.pack(fill="x", pady=(5, 6))
         tk.Label(
             registrations_header,
             text="Inscripciones del torneo seleccionado",
@@ -813,8 +852,10 @@ class AdminPanel(tk.Toplevel):
         registration_columns = (
             "id", "team", "contact", "phone", "status", "paid", "pending", "method"
         )
+        registration_body = tk.Frame(registration_section, bg=self.SURFACE)
+        registration_body.pack(fill="both", expand=True)
         self.registration_tree = ttk.Treeview(
-            self.tournaments_tab,
+            registration_body,
             columns=registration_columns,
             show="headings",
             selectmode="browse",
@@ -835,14 +876,24 @@ class AdminPanel(tk.Toplevel):
                 anchor="w" if key in {"team", "contact", "phone"} else "center",
             )
         registration_scroll = ttk.Scrollbar(
-            self.tournaments_tab,
+            registration_body,
             orient="vertical",
             command=self.registration_tree.yview,
             style="Admin.Vertical.TScrollbar",
         )
         self.registration_tree.configure(yscrollcommand=registration_scroll.set)
-        registration_scroll.pack(side="right", fill="y", pady=(0, 10))
-        self.registration_tree.pack(fill="both", expand=True, padx=(10, 0), pady=(0, 10))
+        registration_scroll.pack(side="right", fill="y")
+        self.registration_tree.pack(side="left", fill="both", expand=True)
+
+    def _resize_tournament_panes(self, event) -> None:
+        """Keep tournament and registration controls visible at every height."""
+        if event.height < 260:
+            return
+        upper = max(105, min(event.height - 145, int(event.height * .43)))
+        try:
+            self.tournament_panes.sash_place(0, 0, upper)
+        except tk.TclError:
+            pass
 
     def _build_fixed_turns(self) -> None:
         header = tk.Frame(self.fixed_turns_tab, bg="white")
@@ -1525,6 +1576,7 @@ class AdminPanel(tk.Toplevel):
         self.hours_status_var.set(f"{schedule['display_day']} · {len(slots)} horarios")
         self.hours_canvas.update_idletasks()
         self.hours_canvas.configure(scrollregion=self.hours_canvas.bbox("all"))
+        self._bind_hours_wheel(self.hours_grid)
 
     def _show_court_sport_menu(self, event, court: str) -> None:
         menu = tk.Menu(self, tearoff=False)
