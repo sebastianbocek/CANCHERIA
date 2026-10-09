@@ -11,10 +11,15 @@ from cancheria.config import legacy_config as cfg
 from cancheria.config.court_sports import sport_icon, sport_menu_options
 from cancheria.domain.reservations.calendar import CalendarioLlamadas
 from cancheria.domain.events import registration as event_registration
+from cancheria.infrastructure.persistence.json_store import JSONStore
 from cancheria.legacy_bridge import legacy_callable
 
 
 ACTIVE_STATES = {str(value).strip().lower() for value in cfg.ACTIVE_BOOKING_STATUSES}
+NOTIFICATION_KEYS = (
+    "bookings", "hours", "operation", "cases", "tournaments", "fixed_turns",
+    "blacklist", "commands",
+)
 
 
 class DesktopAdminService:
@@ -29,6 +34,9 @@ class DesktopAdminService:
         self.root = Path(root).resolve()
         self.runtime = self.root / "runtime"
         self.calendar = CalendarioLlamadas(str(self.runtime / "calendario_turnos.csv"))
+        self._notification_read_store = JSONStore(
+            self.runtime / "admin_notification_read_state.json"
+        )
 
     def bookings(self) -> list[dict[str, Any]]:
         rows = self.calendar.asegurar_ids_reservas()
@@ -64,12 +72,7 @@ class DesktopAdminService:
         }
 
     def notification_counts(self, stats: dict[str, int] | None = None) -> dict[str, int]:
-        """Return unresolved administrative work grouped by panel section.
-
-        Notifications are derived from the underlying business state, so merely
-        opening the panel never clears them.  They disappear only after the
-        pending payment or human-attention case is actually resolved.
-        """
+        """Return unresolved administrative work grouped by panel section."""
         current = stats or self.stats()
         bookings = max(0, int(current.get("pending", 0) or 0))
         cases = max(0, int(current.get("cases", 0) or 0))
@@ -85,6 +88,95 @@ class DesktopAdminService:
             "commands": 0,
             "total": bookings + cases + tournaments,
         }
+
+    def unread_notification_counts(
+        self, _stats: dict[str, int] | None = None
+    ) -> dict[str, int]:
+        """Return only unresolved items that the operator has not yet reviewed."""
+        current = self._notification_items()
+        read = self._read_notification_state()
+        counts = {
+            key: len(current.get(key, set()) - read.get(key, set()))
+            for key in NOTIFICATION_KEYS
+        }
+        counts["total"] = sum(counts.values())
+        return counts
+
+    def mark_notifications_read(self, keys: list[str] | tuple[str, ...] | None = None) -> dict[str, int]:
+        """Persist that the current items in ``keys`` were reviewed by the operator."""
+        selected = set(keys or NOTIFICATION_KEYS) & set(NOTIFICATION_KEYS)
+        current = self._notification_items()
+        read = self._read_notification_state()
+        for key in selected:
+            read[key] = set(current.get(key, set()))
+        payload = {
+            "version": 1,
+            "read": {key: sorted(read.get(key, set())) for key in NOTIFICATION_KEYS},
+            "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
+        }
+        self._notification_store().write(payload)
+        return self.unread_notification_counts()
+
+    def _notification_store(self) -> JSONStore:
+        store = getattr(self, "_notification_read_store", None)
+        if store is None:
+            store = JSONStore(self.runtime / "admin_notification_read_state.json")
+            self._notification_read_store = store
+        return store
+
+    def _read_notification_state(self) -> dict[str, set[str]]:
+        try:
+            payload = self._notification_store().read(default={}) or {}
+        except (OSError, ValueError, TypeError):
+            payload = {}
+        raw = payload.get("read", {}) if isinstance(payload, dict) else {}
+        return {
+            key: {str(value) for value in raw.get(key, [])}
+            if isinstance(raw, dict) and isinstance(raw.get(key, []), list)
+            else set()
+            for key in NOTIFICATION_KEYS
+        }
+
+    def _notification_items(self) -> dict[str, set[str]]:
+        """Build stable identities so reading one alert never hides a future item."""
+        items = {key: set() for key in NOTIFICATION_KEYS}
+        pending_states = {"pendiente", "parcial", "parcial_efectivo_pendiente"}
+        for row in self.bookings():
+            if str(row.get("estado") or "").strip().lower() not in ACTIVE_STATES:
+                continue
+            if str(row.get("senia_estado") or "").strip().lower() not in pending_states:
+                continue
+            identity = str(row.get("reservation_id") or "").strip() or "|".join(
+                str(row.get(key) or "").strip()
+                for key in ("telefono", "fecha", "cancha")
+            )
+            if identity:
+                items["bookings"].add(identity)
+
+        for index, row in enumerate(self.human_cases()):
+            identity = str(row.get("case_id") or row.get("id") or "").strip()
+            if not identity:
+                identity = "|".join(
+                    str(row.get(key) or "").strip()
+                    for key in ("created_at", "telefono", "nombre", "reason")
+                ) or f"case:{index}"
+            items["cases"].add(identity)
+
+        for event in event_registration.list_business_events(active_only=False):
+            event_id = str(event.get("event_id") or event.get("id") or "event").strip()
+            for index, row in enumerate(event_registration.read_event_registrations(event)):
+                if str(row.get("status") or "").strip() != "pending_payment":
+                    continue
+                registration_id = str(
+                    row.get("registration_id") or row.get("admin_id") or ""
+                ).strip()
+                if not registration_id:
+                    registration_id = "|".join(
+                        str(row.get(key) or "").strip()
+                        for key in ("created_at", "phone", "team_name")
+                    ) or str(index)
+                items["tournaments"].add(f"{event_id}:{registration_id}")
+        return items
 
     def command_reference(self) -> str:
         """Use the exact help catalog exposed by the WhatsApp admin command."""

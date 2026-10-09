@@ -272,6 +272,65 @@ def test_notification_counts_sum_only_unresolved_admin_work():
     }
 
 
+def test_admin_notifications_stay_read_until_a_new_item_arrives(tmp_path, monkeypatch):
+    service = object.__new__(DesktopAdminService)
+    service.runtime = tmp_path / "runtime"
+    service._notification_read_store = None
+    rows = [
+        {
+            "reservation_id": "R-1",
+            "estado": "reservado",
+            "senia_estado": "pendiente",
+        }
+    ]
+    cases = [{"case_id": "C-1", "status": "pending"}]
+    monkeypatch.setattr(service, "bookings", lambda: list(rows))
+    monkeypatch.setattr(service, "human_cases", lambda: list(cases))
+    monkeypatch.setattr(
+        "cancheria.admin.desktop_service.event_registration.list_business_events",
+        lambda active_only=False: [],
+    )
+
+    assert service.unread_notification_counts()["total"] == 2
+    assert service.mark_notifications_read()["total"] == 0
+    assert service.unread_notification_counts()["total"] == 0
+
+    rows.append({
+        "reservation_id": "R-2",
+        "estado": "reservado",
+        "senia_estado": "parcial",
+    })
+    counts = service.unread_notification_counts()
+    assert counts["bookings"] == 1
+    assert counts["cases"] == 0
+    assert counts["total"] == 1
+
+
+def test_admin_can_mark_only_the_clicked_notification_section(tmp_path, monkeypatch):
+    service = object.__new__(DesktopAdminService)
+    service.runtime = tmp_path / "runtime"
+    service._notification_read_store = None
+    monkeypatch.setattr(service, "bookings", lambda: [{
+        "reservation_id": "R-1",
+        "estado": "reservado",
+        "senia_estado": "pendiente",
+    }])
+    monkeypatch.setattr(
+        service,
+        "human_cases",
+        lambda: [{"case_id": "C-1", "status": "pending"}],
+    )
+    monkeypatch.setattr(
+        "cancheria.admin.desktop_service.event_registration.list_business_events",
+        lambda active_only=False: [],
+    )
+
+    counts = service.mark_notifications_read(["bookings"])
+    assert counts["bookings"] == 0
+    assert counts["cases"] == 1
+    assert counts["total"] == 1
+
+
 def test_stats_counts_multislot_pending_booking_as_one_notification(monkeypatch):
     rows = [
         {

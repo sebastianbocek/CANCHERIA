@@ -959,7 +959,18 @@ class CancheriaDesktop(tk.Tk):
 
     def open_admin_panel(self) -> None:
         """Open the visual counterpart of the WhatsApp admin commands."""
+        service = self._get_admin_service()
+        try:
+            unread = service.mark_notifications_read()
+            self._update_admin_notification_badge(unread)
+        except Exception:
+            # El panel debe poder abrir aun si el archivo de lectura estuviera
+            # momentaneamente ocupado o dañado.
+            pass
         if self.admin_window is not None and self.admin_window.winfo_exists():
+            marker = getattr(self.admin_window, "mark_notifications_read", None)
+            if callable(marker):
+                marker()
             self.admin_window.deiconify()
             self.admin_window.lift()
             self.admin_window.focus_force()
@@ -968,7 +979,6 @@ class CancheriaDesktop(tk.Tk):
             from cancheria.admin.desktop_service import DesktopAdminService
             from cancheria.desktop.admin_panel import AdminPanel
 
-            service = self._get_admin_service()
             self.admin_window = AdminPanel(
                 self,
                 service,
@@ -1005,7 +1015,9 @@ class CancheriaDesktop(tk.Tk):
         if self._closing:
             return
         try:
-            counts = self._get_admin_service().notification_counts()
+            service = self._get_admin_service()
+            unread_method = getattr(service, "unread_notification_counts", None)
+            counts = unread_method() if callable(unread_method) else service.notification_counts()
             self._update_admin_notification_badge(counts)
         except Exception:
             # Runtime files can be replaced atomically by the agent. Retry on

@@ -449,7 +449,7 @@ class AdminTabView(tk.Frame):
         }
         self._records[child] = record
         for widget in (tab, content, icon, label, badge, underline):
-            widget.bind("<Button-1>", lambda _event, page=child: self.select(page))
+            widget.bind("<Button-1>", lambda _event, page=child: self._click_select(page))
             widget.bind("<Enter>", lambda _event, page=child: self._hover(page, True))
             widget.bind("<Leave>", lambda _event, page=child: self._hover(page, False))
             widget.bind("<Shift-MouseWheel>", self._scroll_tabs)
@@ -457,6 +457,10 @@ class AdminTabView(tk.Frame):
         child.pack_forget()
         if self._selected is None:
             self._activate(child, emit=False)
+
+    def _click_select(self, child: tk.Widget) -> None:
+        self.select(child)
+        self.event_generate("<<NotebookTabClicked>>", when="tail")
 
     def tabs(self) -> tuple[str, ...]:
         return tuple(str(child) for child in self._records)
@@ -661,7 +665,7 @@ class AdminPanel(tk.Toplevel):
         tk.Button(
             header,
             text="↻  Actualizar",
-            command=self.refresh_all,
+            command=self._refresh_and_mark_notifications_read,
             font=("Segoe UI", 11, "bold"),
             bg=self.BLUE,
             fg="white",
@@ -771,6 +775,7 @@ class AdminPanel(tk.Toplevel):
         self._build_blacklist()
         self._build_commands()
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+        self.notebook.bind("<<NotebookTabClicked>>", self._on_notification_tab_clicked)
 
     def _configure_ttk_styles(self) -> None:
         style = ttk.Style(self)
@@ -1143,6 +1148,13 @@ class AdminPanel(tk.Toplevel):
             self._refresh_fixed_turns()
         elif self.notebook.select() == str(self.blacklist_tab):
             self._refresh_blacklist()
+
+    def _on_notification_tab_clicked(self, _event=None) -> None:
+        selected = self.notebook.select()
+        for tab, key in self._tab_notification_keys.items():
+            if selected == str(tab):
+                self.mark_notifications_read([key])
+                break
 
     def _build_operation(self) -> None:
         form = tk.Frame(self.operation_tab, bg="white")
@@ -1547,6 +1559,25 @@ class AdminPanel(tk.Toplevel):
         except Exception as exc:
             messagebox.showerror("Administración", f"No pude actualizar el panel:\n{exc}", parent=self)
 
+    def _refresh_and_mark_notifications_read(self) -> None:
+        self.refresh_all()
+        self.mark_notifications_read()
+
+    def mark_notifications_read(self, keys: list[str] | None = None) -> None:
+        method = getattr(self.service, "mark_notifications_read", None)
+        if callable(method):
+            counts = method(keys)
+        else:
+            counts = dict(self._last_notification_counts or {})
+            selected = set(keys or self._tab_notification_keys.values())
+            for key in selected:
+                counts[key] = 0
+            counts["total"] = sum(
+                max(0, int(counts.get(key, 0) or 0))
+                for key in self._tab_notification_keys.values()
+            )
+        self._apply_notification_counts(counts)
+
     def _apply_notification_counts(self, counts: dict[str, int]) -> None:
         normalized = {
             key: max(0, int(counts.get(key, 0) or 0))
@@ -1580,6 +1611,9 @@ class AdminPanel(tk.Toplevel):
         self.on_notifications_changed(dict(normalized))
 
     def _notification_counts_for_stats(self, stats: dict[str, int]) -> dict[str, int]:
+        method = getattr(self.service, "unread_notification_counts", None)
+        if callable(method):
+            return method(stats)
         method = getattr(self.service, "notification_counts", None)
         if callable(method):
             return method(stats)

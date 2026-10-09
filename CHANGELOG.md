@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.28 - 2026-10-09
+
+- Convierte los contadores rojos de Administración en notificaciones leídas/no leídas sin alterar los contadores operativos reales.
+- Al abrir Administración desde su botón o insignia, la alerta actual queda marcada como leída.
+- El botón superior `Actualizar` marca todas las alertas visibles como leídas además de refrescar el panel.
+- Al pulsar una pestaña con insignia se marca como leída sólo esa sección.
+- La lectura se conserva en el runtime y una reserva, caso humano o inscripción de torneo nueva vuelve a encender la notificación.
+
 ## 0.2.27 - 2026-10-09
 
 - Elimina la pregunta genérica de fecha cuando la conversación ya permite entender semánticamente que una consulta con hora concreta se refiere a hoy.
