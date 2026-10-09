@@ -141648,8 +141648,19 @@ ya resolvió. Respondé el JSON final completo con el mismo schema.'''
     # Seguimos sin interpretar lenguaje con regex: el adjudicador temporal
     # aislado devuelve evidencia literal y Python sólo materializa su receipt.
     prior_day_for_turn = _canonical_v200_prior_day(state)
+    decision_booking_for_day = (
+        decision.get("booking")
+        if isinstance((decision or {}).get("booking"), dict)
+        else {}
+    )
+    missing_day_requires_semantic_review = not str(
+        decision_booking_for_day.get("day") or ""
+    ).strip()
     current_turn_day_receipt = {"mode": "not_required", "validated": False}
-    if prior_day_for_turn and structured_operations.intersection(booking_operations):
+    if (
+        structured_operations.intersection(booking_operations)
+        and (prior_day_for_turn or missing_day_requires_semantic_review)
+    ):
         current_turn_day_receipt = await _canonical_v200_adjudicate_current_turn_day(
             message,
             user_messages,
@@ -145663,7 +145674,17 @@ async def _canonical_v200_adjudicate_current_turn_day(
         ],
         "prior_canonical_day": prior_day or None,
         "orchestrator_day_candidate": orchestrator_day or None,
-        "operation": "query_availability",
+        "orchestrator_booking_candidate": {
+            "time": incoming_booking.get("time"),
+            "daypart": incoming_booking.get("daypart"),
+            "time_specificity": incoming_booking.get("time_specificity"),
+            "time_source": incoming_booking.get("time_source"),
+            "time_evidence": incoming_booking.get("time_evidence"),
+            "resource_type": incoming_booking.get("resource_type"),
+        },
+        "operation": str((decision or {}).get("operation") or "query_availability"),
+        "goal_reconstruction": dict((decision or {}).get("goal_reconstruction") or {}),
+        "recent_messages": list((state or {}).get("recent_messages") or [])[-10:],
     }
 
     system = r'''Sos un ADJUDICADOR TEMPORAL focused de CANCHERIA.
@@ -145674,6 +145695,7 @@ El turno actual puede contener varias transcripciones de audio e incluso repetic
 
 Clasificá en exactamente uno de estos modos:
 - current_turn_explicit_day: el turno actual nombra/expresa un día o fecha propio (ej. hoy, mañana, pasado mañana, domingo, 5/10, jueves de la semana que viene).
+- current_turn_pragmatic_today: el turno actual pide disponibilidad o avanza una reserva para una hora concreta, omite fecha y, al interpretar el diálogo como lo haría una persona razonable en el instante local actual, se refiere inequívocamente a hoy. Esto incluye pedidos naturales como "Hola, ¿tenés cancha para las 21?" cuando no existe ninguna señal de otro día.
 - references_previous_day: el turno actual NO nombra un día nuevo, pero semánticamente continúa el mismo día anterior (ej. "y a la noche?", "y fútbol?", "y de padel?", "¿y tenis?", "a las 21?").
 - no_day_context: no expresa día nuevo ni referencia clara al día anterior.
 - ambiguous: contiene varias fechas incompatibles para ESTA consulta de disponibilidad o no puede resolverse con seguridad.
@@ -145685,10 +145707,12 @@ REGLAS DE CÁLCULO:
 4. Si el turno actual dice explícitamente "hoy" y el estado dice domingo, mode DEBE ser current_turn_explicit_day: el domingo histórico no tiene autoridad.
 5. Si el turno actual dice "pasado mañana", relative_days DEBE ser 2.
 6. No inventes un día sólo porque prior_canonical_day existe.
+7. current_turn_pragmatic_today es comprensión pragmática, no un default mecánico: usalo sólo cuando el pedido actual de cancha/reserva con hora concreta signifique naturalmente hoy. En ese modo devolvé semantic_kind="relative_days", relative_days=0 y evidence con un fragmento LITERAL del pedido que contiene la intención y la hora.
+8. Si el turno menciona o implica semánticamente otro día, una recurrencia, un rango de fechas o ambigüedad real, NO uses current_turn_pragmatic_today.
 
 Respondé SOLO JSON:
 {
-  "mode": "current_turn_explicit_day|references_previous_day|no_day_context|ambiguous",
+  "mode": "current_turn_explicit_day|current_turn_pragmatic_today|references_previous_day|no_day_context|ambiguous",
   "semantic_kind": "relative_days|absolute_date|null",
   "relative_days": null,
   "resolved_date": null,
@@ -145729,11 +145753,18 @@ Respondé SOLO JSON:
     validated = confidence >= 0.70
     resolved_day = None
 
-    if mode == "current_turn_explicit_day":
+    if mode in {"current_turn_explicit_day", "current_turn_pragmatic_today"}:
         validated = bool(
             validated
             and _canonical_v200_literal_evidence(current_turn, evidence)
         )
+        if mode == "current_turn_pragmatic_today":
+            validated = bool(
+                validated
+                and str(audit.get("semantic_kind") or "").strip().casefold()
+                == "relative_days"
+                and audit.get("relative_days") == 0
+            )
         if validated:
             resolved_day = _canonical_v200_materialize_explicit_day(audit)
             validated = bool(resolved_day)
@@ -145793,7 +145824,7 @@ def _canonical_v213_apply_current_turn_day_receipt(
     if not (
         receipt.get("validated") is True
         and str(receipt.get("mode") or "").strip().casefold()
-        == "current_turn_explicit_day"
+        in {"current_turn_explicit_day", "current_turn_pragmatic_today"}
     ):
         return decision
 
@@ -145811,6 +145842,33 @@ def _canonical_v213_apply_current_turn_day_receipt(
         booking["day_source"] = "current_turn_v213"
         booking["day_evidence"] = evidence
         payload["booking"] = booking
+
+        day_field_names = {"day", "dia", "new_day"}
+        remaining_missing = [
+            str(value).strip()
+            for value in (payload.get("missing_fields") or [])
+            if str(value).strip()
+            and str(value).strip().casefold() not in day_field_names
+        ]
+        if str(payload.get("operation") or "").strip() == "ask_missing" and not remaining_missing:
+            if not booking.get("time"):
+                remaining_missing.append("time")
+            if not booking.get("resource_type"):
+                remaining_missing.append("resource_type")
+        payload["missing_fields"] = remaining_missing
+
+        reconstruction = dict(payload.get("goal_reconstruction") or {})
+        if reconstruction:
+            known_fields = dict(reconstruction.get("known_fields") or {})
+            known_fields["day"] = resolved_day
+            reconstruction["known_fields"] = known_fields
+            reconstruction["missing_fields"] = [
+                str(value).strip()
+                for value in (reconstruction.get("missing_fields") or [])
+                if str(value).strip()
+                and str(value).strip().casefold() not in day_field_names
+            ]
+            payload["goal_reconstruction"] = reconstruction
 
         resolution = dict(payload.get("context_resolution") or {})
         replace_fields = [
@@ -145871,7 +145929,7 @@ async def _canonical_v184_execute_availability(
     if (
         current_day_receipt.get("validated") is True
         and str(current_day_receipt.get("mode") or "").strip().casefold()
-        == "current_turn_explicit_day"
+        in {"current_turn_explicit_day", "current_turn_pragmatic_today"}
         and str(current_day_receipt.get("resolved_day") or "").strip()
     ):
         patched_decision = _canonical_v213_apply_current_turn_day_receipt(
@@ -145960,7 +146018,9 @@ async def _canonical_v184_execute_availability(
     )
     mode = str(audit.get("mode") or "").strip().casefold()
 
-    if audit.get("validated") and mode == "current_turn_explicit_day":
+    if audit.get("validated") and mode in {
+        "current_turn_explicit_day", "current_turn_pragmatic_today"
+    }:
         resolved_day = str(audit.get("resolved_day") or "").strip()
         patched_decision = copy.deepcopy(decision if isinstance(decision, dict) else {})
         booking = dict(patched_decision.get("booking") or {})
@@ -147305,7 +147365,7 @@ def run_agent_v2_invariant_evals() -> Dict[str, Any]:
 
 AGENT_V2_UNIFIED_AGENTIC_CORE = "v227-partial-cash-context-binding"
 AGENT_V2_UNIFIED_CONVERSATION_KERNEL = "v227-partial-cash-context-binding"
-AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-09_fresh_goal_self_review_v231"
+AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-09_pragmatic_today_semantic_review_v232"
 
 # V195 marker is defined immediately above. V194 marker intentionally retired.
 

@@ -857,6 +857,149 @@ def test_fresh_booking_goal_is_reviewed_by_ai_before_execution(monkeypatch) -> N
     assert decision["_v231_goal_self_reviewed"] is True
 
 
+def test_focused_ai_recovers_pragmatic_today_when_goal_review_omits_day(
+    monkeypatch,
+) -> None:
+    """La relectura temporal IA evita el fallback genérico de fecha."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    real_datetime = datetime.datetime
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = real_datetime(2026, 10, 9, 16, 52)
+            if tz is None:
+                return value
+            if hasattr(tz, "localize"):
+                return tz.localize(value)
+            return value.replace(tzinfo=tz)
+
+    incomplete = {
+        "operation": "create_booking",
+        "confidence": 0.94,
+        "intent_mode": "transaction",
+        "booking": {
+            "day": None,
+            "day_source": "none",
+            "time": "21:00",
+            "time_specificity": "exact",
+            "time_source": "current_turn",
+            "time_evidence": "las 21",
+            "references_previous_time": False,
+            "resource_type": None,
+            "duration_hours": 1.0,
+        },
+        "goal_reconstruction": {
+            "goal": "crear_reserva",
+            "known_fields": {"time": "21:00"},
+            "missing_fields": ["day", "resource_type"],
+            "ready_for_execution": False,
+        },
+        "missing_fields": ["day", "resource_type"],
+        "actions": [],
+    }
+    calls = []
+
+    async def fake_openai(*_args, **kwargs):
+        payload = json.loads(kwargs["messages"][1]["content"])
+        calls.append(payload)
+        if "current_local_datetime" in payload:
+            content = {
+                "mode": "current_turn_pragmatic_today",
+                "semantic_kind": "relative_days",
+                "relative_days": 0,
+                "resolved_date": None,
+                "evidence": "tenes cancha para las 21",
+                "confidence": 0.99,
+                "reason": "El pedido natural con hora concreta se refiere a hoy",
+            }
+        else:
+            content = incomplete
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=json.dumps(content)),
+                finish_reason="stop",
+            )],
+            usage=None,
+        )
+
+    async def no_resource(*_args, **_kwargs):
+        return {"explicit": False, "resource_type": None, "evidence": None}
+
+    monkeypatch.setattr(legacy.datetime, "datetime", FrozenDateTime)
+    monkeypatch.setattr(legacy, "call_openai_async", fake_openai)
+    monkeypatch.setattr(legacy, "register_cost", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v205_current_turn_resource_receipt",
+        no_resource,
+    )
+
+    state = legacy._canonical_v183_default_state("fresh-pragmatic-today")
+    decision = asyncio.run(
+        legacy._canonical_v184_orchestrate(
+            "Hola tenes cancha para las 21",
+            ["Hola tenes cancha para las 21"],
+            state,
+        )
+    )
+
+    assert len(calls) == 3
+    assert calls[2]["orchestrator_booking_candidate"]["time"] == "21:00"
+    assert decision["booking"]["day"] == "Viernes 09/10"
+    assert decision["booking"]["time"] == "21:00"
+    assert decision["missing_fields"] == ["resource_type"]
+    assert decision["goal_reconstruction"]["missing_fields"] == ["resource_type"]
+    assert decision["_v213_current_turn_day_receipt"]["mode"] == (
+        "current_turn_pragmatic_today"
+    )
+
+    result = asyncio.run(
+        legacy._canonical_v184_execute_booking(
+            "Hola tenes cancha para las 21",
+            ["Hola tenes cancha para las 21"],
+            state,
+            decision,
+            {"nombre": "Sebastian"},
+            "fresh-pragmatic-today",
+        )
+    )
+    assert result["status"] == "waiting_user"
+    assert "Qué querés reservar" in result["response"]
+    assert "Qué día" not in result["response"]
+
+
+def test_pragmatic_today_receipt_replaces_day_fallback_in_ask_missing() -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    decision = {
+        "operation": "ask_missing",
+        "booking": {
+            "day": None,
+            "time": "21:00",
+            "resource_type": None,
+        },
+        "missing_fields": ["day", "resource_type"],
+    }
+    receipt = {
+        "mode": "current_turn_pragmatic_today",
+        "validated": True,
+        "resolved_day": "Viernes 09/10",
+        "evidence": "tenes cancha para las 21",
+    }
+
+    patched = legacy._canonical_v213_apply_current_turn_day_receipt(
+        decision,
+        receipt,
+    )
+
+    assert patched["booking"]["day"] == "Viernes 09/10"
+    assert patched["missing_fields"] == ["resource_type"]
+
+
 def test_exact_hour_renderer_wins_over_full_day_schedule(monkeypatch) -> None:
     """Una tool rica no puede hacer que se vuelva a pedir la hora exacta."""
     from cancheria.legacy_bridge import load_legacy_module

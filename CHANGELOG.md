@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.27 - 2026-10-09
+
+- Elimina la pregunta genérica de fecha cuando la conversación ya permite entender semánticamente que una consulta con hora concreta se refiere a hoy.
+- Extiende la revisión temporal con IA a objetivos nuevos sin fecha histórica, usando el turno completo, el estado, la hora entendida y el instante local.
+- Conserva día y hora reconstruidos y pregunta únicamente el deporte cuando ese es el único dato realmente faltante.
+- Agrega regresiones para `Hola tenes cancha para las 21` tanto en `create_booking` como en `ask_missing`.
+
 ## 0.2.26 - 2026-10-09
 
 - Incorpora `WhatsApp Business` a la blacklist predeterminada, incluso cuando el archivo de blacklist del negocio está vacío.
