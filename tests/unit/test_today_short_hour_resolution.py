@@ -164,7 +164,7 @@ def test_artificial_2255_canonical_flow_queries_real_calendar_tool_at_23(
 def test_exact_time_without_day_defaults_to_today_and_asks_only_sport(
     monkeypatch,
 ) -> None:
-    """Reproduce el chat real de las 12:22 sin API ni escritura persistente."""
+    """Ejecuta el goal completo que reconstruyó la IA, sin parche de campos."""
     from cancheria.legacy_bridge import load_legacy_module
 
     legacy = load_legacy_module()
@@ -205,17 +205,12 @@ def test_exact_time_without_day_defaults_to_today_and_asks_only_sport(
 
     message = "Hola tenes cancha para las 4"
     state = legacy._canonical_v183_default_state("artificial-test")
-    state["active_flow"] = "booking"
-    state["booking"].update({
-        "day": "Miércoles 07/10",
-        "time": "18:00",
-        "duration_hours": 1.0,
-    })
     decision = {
-        "operation": "query_availability",
+        "operation": "create_booking",
         "confidence": 0.99,
+        "intent_mode": "transaction",
         "booking": {
-            "day": "Miércoles 07/10",
+            "day": "Jueves 08/10",
             "time": "16:00",
             "time_specificity": "exact",
             "time_source": "current_turn",
@@ -225,22 +220,21 @@ def test_exact_time_without_day_defaults_to_today_and_asks_only_sport(
             "duration_hours": 1.0,
         },
         "context_resolution": {
-            "relation": "continue_previous_availability",
-            "inherit_fields": ["day", "duration_hours"],
-            "replace_fields": ["time"],
+            "relation": "new_request",
+            "inherit_fields": [],
+            "replace_fields": [],
         },
-        "missing_fields": [],
-        "_v213_current_turn_day_receipt": {
-            "mode": "no_day_context",
-            # Reproduce el log real del 08/10 13:48: no había fecha explícita,
-            # pero la confianza del adjudicador quedó debajo del umbral.
-            "validated": False,
-            "prior_day": "Miércoles 07/10",
+        "goal_reconstruction": {
+            "goal": "crear_reserva",
+            "known_fields": {"day": "Jueves 08/10", "time": "16:00"},
+            "missing_fields": ["resource_type"],
+            "ready_for_execution": False,
         },
+        "missing_fields": ["resource_type"],
     }
 
     result = asyncio.run(
-        legacy._canonical_v184_execute_availability(
+        legacy._canonical_v184_execute_booking(
             message,
             [message],
             state,
@@ -255,6 +249,8 @@ def test_exact_time_without_day_defaults_to_today_and_asks_only_sport(
     assert result["observations"] == []
     assert "Qué querés reservar" in result["response"]
     assert "Qué día" not in result["response"]
+    assert decision.get("_v223_implicit_today") is None
+    assert decision.get("_v228_exact_slot_booking_goal") is None
 
 
 def test_resource_choice_question_uses_or_between_options() -> None:
@@ -265,85 +261,6 @@ def test_resource_choice_question_uses_or_between_options() -> None:
 
     assert " o " in question
     assert " y " not in question
-
-
-def test_answering_today_keeps_exact_time_from_pending_day_question() -> None:
-    from cancheria.legacy_bridge import load_legacy_module
-
-    legacy = load_legacy_module()
-    state = legacy._canonical_v183_default_state("artificial-test")
-    state["active_flow"] = "booking"
-    state["booking"].update({
-        "time": "16:00",
-        "time_specificity": "exact",
-        "resource_type": "Futbol 5",
-        "duration_hours": 1.0,
-    })
-    state["pending"] = {
-        "field": "dia",
-        "time": "16:00",
-        "time_specificity": "exact",
-        "resource_type": "Futbol 5",
-        "duration_hours": 1.0,
-    }
-    decision = {
-        "operation": "query_availability",
-        "booking": {
-            "day": "Jueves 08/10",
-            "time": None,
-            "time_specificity": "none",
-        },
-        "context_resolution": {
-            "relation": "continue_previous_availability",
-            "inherit_fields": [],
-            "replace_fields": ["day", "time"],
-        },
-        "_v213_current_turn_day_receipt": {
-            "mode": "current_turn_explicit_day",
-            "validated": True,
-            "resolved_day": "Jueves 08/10",
-            "evidence": "Hoy",
-        },
-        "_v188_actions": [{
-            "operation": "query_availability",
-            "booking": {"day": "Jueves 08/10", "time": None},
-            "context_resolution": {"replace_fields": ["day", "time"]},
-        }],
-    }
-
-    fixed = legacy._canonical_v223_restore_pending_time_after_day(decision, state)
-
-    assert fixed["booking"]["time"] == "16:00"
-    assert fixed["booking"]["time_specificity"] == "exact"
-    assert fixed["booking"]["references_previous_time"] is True
-    assert "time" not in fixed["context_resolution"]["replace_fields"]
-    assert "time" in fixed["context_resolution"]["inherit_fields"]
-    assert fixed["_v188_actions"][0]["booking"]["time"] == "16:00"
-
-
-def test_explicit_future_day_is_never_replaced_by_implicit_today() -> None:
-    from cancheria.legacy_bridge import load_legacy_module
-
-    legacy = load_legacy_module()
-    decision = {
-        "operation": "query_availability",
-        "booking": {
-            "day": "Viernes 09/10",
-            "time": "16:00",
-            "time_specificity": "exact",
-            "time_source": "current_turn",
-            "time_evidence": "mañana a las 4",
-        },
-    }
-
-    untouched = legacy._canonical_v223_apply_implicit_today_for_exact_time(
-        decision,
-        {"mode": "not_required", "validated": False},
-        prior_day="",
-    )
-
-    assert untouched is decision
-    assert untouched["booking"]["day"] == "Viernes 09/10"
 
 
 def test_canonical_pending_booking_wins_over_stale_legacy_draft(monkeypatch) -> None:
@@ -394,132 +311,6 @@ def test_canonical_pending_booking_wins_over_stale_legacy_draft(monkeypatch) -> 
     assert hydrated["pending"]["field"] == "resource_type"
 
 
-def test_answering_only_sport_completes_hold_and_requests_receipt(monkeypatch) -> None:
-    """Reproduce los dos turnos del 08/10 sin API, WhatsApp ni archivos reales."""
-    from cancheria.legacy_bridge import load_legacy_module
-
-    legacy = load_legacy_module()
-    state = legacy._canonical_v183_default_state("artificial-test")
-    state["active_flow"] = "booking"
-    state["booking"].update({
-        "day": "Jueves 08/10",
-        "time": "16:00",
-        "time_specificity": "exact",
-        "duration_hours": 1.0,
-    })
-    state["pending"] = {
-        "type": "booking_question",
-        "field": "resource_type",
-        "day": "Jueves 08/10",
-        "time": "16:00",
-        "time_specificity": "exact",
-        "duration_hours": 1.0,
-        "operation": "create_booking",
-        "source": "canonical_v225_booking_question",
-        "goal_context": ["crear_reserva"],
-    }
-    decision = {
-        "operation": "query_availability",
-        "confidence": 0.9,
-        "booking": {
-            "day": "Jueves 08/10",
-            "time": None,
-            "resource_type": "Futbol 5",
-            "resource_type_source": "current_turn",
-            "resource_type_evidence": "Futbol",
-            "duration_hours": 1.0,
-        },
-        "missing_fields": [],
-        "context_resolution": {
-            "relation": "continue_previous_availability",
-            "inherit_fields": [],
-            "replace_fields": ["resource_type"],
-        },
-        "_v205_current_turn_resource_receipt": {
-            "explicit": True,
-            "resource_type": "Futbol 5",
-            "evidence": "Futbol",
-        },
-        "_v213_current_turn_day_receipt": {
-            "mode": "references_previous_day",
-            "validated": False,
-        },
-        "_v188_actions": [{
-            "operation": "query_availability",
-            "confidence": 0.9,
-            "booking": {"day": "Jueves 08/10", "time": None},
-        }],
-    }
-
-    fixed = legacy._canonical_v225_complete_pending_booking_resource(decision, state)
-    assert fixed["operation"] == "create_booking"
-    assert fixed["booking"]["day"] == "Jueves 08/10"
-    assert fixed["booking"]["time"] == "16:00"
-    assert fixed["booking"]["resource_type"] == "Futbol 5"
-    assert fixed["_v188_actions"][0]["operation"] == "create_booking"
-
-    async def fake_tool(name, args, *unused_args, **unused_kwargs):
-        if name == "consultar_disponibilidad":
-            return {
-                "observation_id": "availability-test",
-                "tool": name,
-                "ok": True,
-                "status": "success",
-                "data": {
-                    "dia": "Jueves 08/10",
-                    "hora": "16:00",
-                    "canchas_libres": ["Cancha 1", "Cancha 2"],
-                    "auto_assigned_court": "Cancha 1",
-                },
-            }
-        return {
-            "observation_id": "booking-test",
-            "tool": name,
-            "ok": True,
-            "status": "success",
-            "data": {
-                "reservation_id": "R-ARTIFICIAL",
-                "dia": "Jueves 08/10",
-                "hora": "16:00",
-                "cancha": "Cancha 1",
-                "duracion_horas": 1.0,
-                "precio_total": 20000,
-                "senia_monto": 10000,
-                "monto_pendiente": 10000,
-            },
-        }
-
-    monkeypatch.setattr(legacy, "ejecutar_tool_agent_v2", fake_tool)
-    monkeypatch.setattr(legacy, "_canonical_v183_save", lambda *args, **kwargs: None)
-    monkeypatch.setattr(legacy, "get_conversation_state", lambda *args, **kwargs: {})
-    monkeypatch.setattr(legacy, "aplicar_observation_agent_v2", lambda *args, **kwargs: {})
-    monkeypatch.setattr(
-        legacy,
-        "construir_world_state_agent_v2",
-        lambda *args, **kwargs: {"message": "Futbol", "facts": {}},
-    )
-
-    result = asyncio.run(
-        legacy._canonical_v183_execute_booking(
-            "Futbol",
-            ["Futbol"],
-            state,
-            fixed,
-            {"nombre": "Sebastian"},
-            "artificial-test",
-        )
-    )
-
-    assert result["handled"] is True
-    assert [item["tool"] for item in result["observations"]] == [
-        "consultar_disponibilidad",
-        "crear_reserva",
-    ]
-    assert result["plan"]["steps"][1]["args"]["hora"] == "16:00"
-    assert "16hs-17hs" in result["response"]
-    assert "comprobante" in result["response"].casefold()
-
-
 def test_expired_hold_ai_recovery_rebuilds_exact_slot_and_asks_only_sport(
     monkeypatch,
 ) -> None:
@@ -543,11 +334,11 @@ def test_expired_hold_ai_recovery_rebuilds_exact_slot_and_asks_only_sport(
     async def fake_openai(*_args, **kwargs):
         captured_payloads.append(json.loads(kwargs["messages"][1]["content"]))
         content = json.dumps({
-            "operation": "query_availability",
+            "operation": "create_booking",
             "confidence": 0.96,
-            "intent_mode": "information",
+            "intent_mode": "transaction",
             "booking": {
-                "day": None,
+                "day": "Jueves 08/10",
                 "time": "21:00",
                 "daypart": None,
                 "time_specificity": "exact",
@@ -559,9 +350,15 @@ def test_expired_hold_ai_recovery_rebuilds_exact_slot_and_asks_only_sport(
             },
             "context_resolution": {
                 "relation": "new_request",
-                "effective_operation": "query_availability",
+                "effective_operation": "create_booking",
                 "inherit_fields": [],
                 "replace_fields": ["time"],
+            },
+            "goal_reconstruction": {
+                "goal": "crear_reserva",
+                "known_fields": {"day": "Jueves 08/10", "time": "21:00"},
+                "missing_fields": ["resource_type"],
+                "ready_for_execution": False,
             },
             "missing_fields": ["resource_type"],
             "actions": [],
@@ -640,68 +437,181 @@ def test_expired_hold_ai_recovery_rebuilds_exact_slot_and_asks_only_sport(
     assert saved_pending["time"] == "21:00"
 
 
-def test_today_answer_inherits_21_from_json_and_operational_pending() -> None:
-    """'Hoy' completa fecha; no puede reemplazar la hora del mensaje anterior."""
+def test_ai_reconstructs_complete_goal_when_hour_arrives_last(monkeypatch) -> None:
+    """La IA reúne el historial completo; Python no promueve campos por orden."""
     from cancheria.legacy_bridge import load_legacy_module
 
     legacy = load_legacy_module()
-    state = legacy._canonical_v183_default_state("artificial-test")
-    state["active_flow"] = "booking"
-    state["booking"].update({
-        "time": "21:00",
-        "time_specificity": "exact",
-        "time_source": "current_turn",
-        "time_evidence": "21",
-        "duration_hours": 1.0,
-    })
-    state["pending"] = {
-        "type": "booking_question",
-        "field": "dia",
-        "time": "21:00",
-        "time_specificity": "exact",
-        "duration_hours": 1.0,
-        "operation": "query_availability",
-        "source": "canonical_v223_availability_question",
-    }
-    decision = {
-        "operation": "query_availability",
-        "confidence": 0.9,
+    captured = {}
+    ai_decision = {
+        "operation": "create_booking",
+        "confidence": 0.98,
         "intent_mode": "continuation",
         "booking": {
-            "day": "Jueves 08/10",
+            "day": "Viernes 09/10",
             "time": "21:00",
+            "daypart": None,
             "time_specificity": "exact",
             "time_source": "current_turn",
-            "time_evidence": "Hoy",
+            "time_evidence": "21",
             "references_previous_time": False,
-            "resource_type": None,
+            "resource_type": "Futbol 5",
             "duration_hours": 1.0,
         },
         "context_resolution": {
             "relation": "continue_previous_availability",
-            "effective_operation": "query_availability",
-            "inherit_fields": [],
-            "replace_fields": ["day", "time"],
+            "effective_operation": "create_booking",
+            "inherit_fields": ["day", "resource_type", "duration_hours"],
+            "replace_fields": ["time"],
+            "evidence": "21",
+        },
+        "goal_reconstruction": {
+            "goal": "crear_reserva",
+            "known_fields": {
+                "day": "Viernes 09/10",
+                "time": "21:00",
+                "resource_type": "Futbol 5",
+            },
+            "missing_fields": [],
+            "ready_for_execution": True,
+            "summary": "Reserva lista para validar",
         },
         "missing_fields": [],
         "actions": [],
     }
-    decision["_v187_raw_booking"] = dict(decision["booking"])
 
-    rebound = legacy._canonical_v228_rebind_answered_pending_context(
-        decision, state, "Hoy", ["Hoy"]
-    )
-    assert rebound["booking"]["time"] == "21:00"
-    assert rebound["booking"]["time_source"] == "canonical_state"
-    assert rebound["booking"]["references_previous_time"] is True
-    assert "time" in rebound["context_resolution"]["inherit_fields"]
-    assert "time" not in rebound["context_resolution"]["replace_fields"]
+    async def fake_openai(*_args, **kwargs):
+        captured["system"] = kwargs["messages"][0]["content"]
+        captured["payload"] = json.loads(kwargs["messages"][1]["content"])
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=json.dumps(ai_decision)),
+                finish_reason="stop",
+            )],
+            usage=None,
+        )
 
-    restored = legacy._canonical_v223_restore_pending_time_after_day(rebound, state)
-    advanced = legacy._canonical_v228_advance_exact_slot_booking_goal(
-        restored, state
+    async def no_resource(*_args, **_kwargs):
+        return {"explicit": False, "resource_type": None, "evidence": None}
+
+    async def references_prior_day(*_args, **_kwargs):
+        return {
+            "mode": "references_previous_day",
+            "validated": True,
+            "resolved_day": "Viernes 09/10",
+            "evidence": None,
+        }
+
+    monkeypatch.setattr(legacy, "call_openai_async", fake_openai)
+    monkeypatch.setattr(legacy, "register_cost", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(legacy, "_canonical_v205_current_turn_resource_receipt", no_resource)
+    monkeypatch.setattr(legacy, "_canonical_v200_adjudicate_current_turn_day", references_prior_day)
+
+    state = legacy._canonical_v183_default_state("artificial-test")
+    state["booking"].update({
+        "day": "Viernes 09/10",
+        "resource_type": "Futbol 5",
+        "duration_hours": 1.0,
+    })
+    state["pending"] = {"field": "hora", "type": "booking_question"}
+    state["recent_messages"] = [
+        {"role": "user", "content": "Quiero fútbol mañana"},
+        {"role": "assistant", "content": "¿Qué hora te sirve?"},
+    ]
+
+    decision = asyncio.run(
+        legacy._canonical_v184_orchestrate("21", ["21"], state)
     )
-    assert advanced["operation"] == "create_booking"
-    assert advanced["booking"]["day"] == "Jueves 08/10"
-    assert advanced["booking"]["time"] == "21:00"
-    assert advanced["missing_fields"] == ["resource_type"]
+
+    assert decision["operation"] == "create_booking"
+    assert decision["booking"]["day"] == "Viernes 09/10"
+    assert decision["booking"]["time"] == "21:00"
+    assert decision["booking"]["resource_type"] == "Futbol 5"
+    assert decision["goal_reconstruction"]["ready_for_execution"] is True
+    assert decision.get("_v229_pending_field_completed") is None
+    assert captured["payload"]["recent_messages"] == state["recent_messages"]
+    assert captured["payload"]["operational_history"]["pending_action"]["field"] == "hora"
+    assert "no existe una secuencia programada" in captured["system"].casefold()
+
+
+def test_ai_reconstructs_complete_goal_when_day_arrives_last(monkeypatch) -> None:
+    """La misma reconstrucción funciona sin codificar una secuencia inversa."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    ai_decision = {
+        "operation": "create_booking",
+        "confidence": 0.98,
+        "intent_mode": "continuation",
+        "booking": {
+            "day": "Viernes 09/10",
+            "time": "21:00",
+            "daypart": None,
+            "time_specificity": "exact",
+            "time_source": "canonical_state",
+            "time_evidence": None,
+            "references_previous_time": True,
+            "resource_type": "Futbol 5",
+            "duration_hours": 1.0,
+        },
+        "context_resolution": {
+            "relation": "continue_previous_availability",
+            "effective_operation": "create_booking",
+            "inherit_fields": ["time", "resource_type", "duration_hours"],
+            "replace_fields": ["day"],
+            "evidence": "Mañana",
+        },
+        "goal_reconstruction": {
+            "goal": "crear_reserva",
+            "known_fields": {
+                "day": "Viernes 09/10",
+                "time": "21:00",
+                "resource_type": "Futbol 5",
+            },
+            "missing_fields": [],
+            "ready_for_execution": True,
+            "summary": "Reserva lista para validar",
+        },
+        "missing_fields": [],
+        "actions": [],
+    }
+
+    async def fake_openai(*_args, **_kwargs):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=json.dumps(ai_decision)),
+                finish_reason="stop",
+            )],
+            usage=None,
+        )
+
+    async def no_resource(*_args, **_kwargs):
+        return {"explicit": False, "resource_type": None, "evidence": None}
+
+    monkeypatch.setattr(legacy, "call_openai_async", fake_openai)
+    monkeypatch.setattr(legacy, "register_cost", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(legacy, "_canonical_v205_current_turn_resource_receipt", no_resource)
+
+    state = legacy._canonical_v183_default_state("artificial-test")
+    state["booking"].update({
+        "time": "21:00",
+        "time_specificity": "exact",
+        "resource_type": "Futbol 5",
+        "duration_hours": 1.0,
+    })
+    state["pending"] = {"field": "dia", "type": "booking_question"}
+    state["recent_messages"] = [
+        {"role": "user", "content": "Quiero fútbol a las 21"},
+        {"role": "assistant", "content": "¿Qué día te gustaría reservar?"},
+    ]
+
+    decision = asyncio.run(
+        legacy._canonical_v184_orchestrate("Mañana", ["Mañana"], state)
+    )
+
+    assert decision["operation"] == "create_booking"
+    assert decision["booking"]["day"] == "Viernes 09/10"
+    assert decision["booking"]["time"] == "21:00"
+    assert decision["booking"]["resource_type"] == "Futbol 5"
+    assert decision["missing_fields"] == []
+    assert decision.get("_v229_pending_field_completed") is None

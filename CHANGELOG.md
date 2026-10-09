@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.13 - 2026-10-09
+
+- Centraliza en la IA la reconstrucción del objetivo vigente usando el turno actual, el historial JSON, el estado canónico y las acciones operativas.
+- Elimina del camino activo los parches Python que promovían operaciones o completaban día, hora y deporte según el campo pendiente.
+- Incorpora `goal_reconstruction` al contrato del Orchestrator para declarar datos conocidos, faltantes y si el objetivo está listo para ejecutarse.
+- Conserva validaciones deterministas únicamente para hechos operativos: disponibilidad real, calendario, pagos, IDs y procedencia verificable.
+- Agrega regresiones que comprueban la reconstrucción por IA cuando distintos datos llegan en mensajes separados, sin codificar una secuencia de campos.
+
 ## 0.2.12 - 2026-10-09
 
 - Reconstruye el objetivo de reserva con IA usando el turno actual, el historial JSON del contacto, la última decisión y las acciones operativas persistidas.

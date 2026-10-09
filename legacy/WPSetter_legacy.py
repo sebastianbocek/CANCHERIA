@@ -139556,102 +139556,6 @@ def _canonical_v184_compact_state(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _canonical_v228_rebind_answered_pending_context(
-    decision: Dict[str, Any],
-    state: Dict[str, Any],
-    message: str,
-    user_messages: List[str],
-) -> Dict[str, Any]:
-    """Reasigna provenance sin reinterpretar el lenguaje del cliente.
-
-    Si una acción operativa persistida preguntó únicamente el día y guardó una
-    hora exacta, la respuesta siguiente no puede convertir esa hora anterior en
-    un dato del turno físico actual. El Orchestrator sigue decidiendo intención
-    y fecha; esta función sólo enlaza la hora con la evidencia transaccional que
-    realmente la originó.
-    """
-    if not isinstance(decision, dict):
-        return decision
-    pending = dict((state or {}).get("pending") or {})
-    pending_field = _agent_v2_v105_normalize_missing_field(pending.get("field"))
-    if pending_field != "dia":
-        return decision
-
-    saved_booking = dict((state or {}).get("booking") or {})
-    saved_hour = normalizar_hora_detectada(
-        pending.get("time") or saved_booking.get("time")
-    )
-    saved_specificity = str(
-        pending.get("time_specificity")
-        or saved_booking.get("time_specificity")
-        or ""
-    ).strip().casefold()
-    booking = dict(decision.get("booking") or {})
-    declared_hour = normalizar_hora_detectada(booking.get("time"))
-    if (
-        not hora_es_valida(saved_hour)
-        or saved_specificity != "exact"
-        or declared_hour != saved_hour
-    ):
-        return decision
-
-    current_turn = _canonical_v200_current_turn_text(message, user_messages)
-    evidence = str(booking.get("time_evidence") or "").strip()
-    evidence_is_current = bool(
-        evidence
-        and _canonical_v200_literal_evidence(current_turn, evidence)
-        and (
-            extraer_horas_reales_de_texto(evidence)
-            or extraer_rango_horario_de_texto(evidence)
-            or _canonical_v187_clock_evidence_supports_hour(evidence, declared_hour)
-        )
-    )
-    if evidence_is_current:
-        return decision
-
-    patched = copy.deepcopy(decision)
-
-    def patch_payload(payload: Dict[str, Any]) -> None:
-        payload_booking = dict(payload.get("booking") or {})
-        if normalizar_hora_detectada(payload_booking.get("time")) != saved_hour:
-            return
-        payload_booking.update({
-            "time": saved_hour,
-            "time_specificity": "exact",
-            "time_source": "canonical_state",
-            "time_evidence": None,
-            "references_previous_time": True,
-        })
-        payload["booking"] = payload_booking
-        resolution = dict(payload.get("context_resolution") or {})
-        resolution["replace_fields"] = [
-            str(value).strip()
-            for value in (resolution.get("replace_fields") or [])
-            if str(value).strip() and str(value).strip() != "time"
-        ]
-        inherit_fields = [
-            str(value).strip()
-            for value in (resolution.get("inherit_fields") or [])
-            if str(value).strip()
-        ]
-        if "time" not in inherit_fields:
-            inherit_fields.append("time")
-        resolution["inherit_fields"] = inherit_fields
-        payload["context_resolution"] = resolution
-        payload["_v228_prior_turn_time_rebound"] = True
-
-    patch_payload(patched)
-    for action in patched.get("actions") or []:
-        if isinstance(action, dict):
-            patch_payload(action)
-    print(
-        "   🧠 [CANONICAL V228 CONTEXT LEDGER] "
-        f"respuesta a pending={pending_field}; hora previa verificada={saved_hour} preservada"
-    )
-    return patched
-
-
-
 # ============================================================================
 # V187 — TRANSACCIONES CANÓNICAS: EVIDENCIA TEMPORAL + SILENT HANDOFF
 # ============================================================================
@@ -140777,10 +140681,11 @@ REGLAS OBLIGATORIAS:
     latest_user_turn + recent_messages + canonical_state + operational_history.
     No vuelvas a pedir ningún dato ya aportado en ese conjunto. Las acciones
     operativas sirven como evidencia de qué dato estaba pendiente.
-12. Una consulta para un slot exacto inicia un objetivo de reserva. Si ya están
-    día y hora pero hay varios deportes configurados y falta resource_type,
-    devolvé create_booking con missing_fields=[\"resource_type\"]. Python preguntará
-    solamente el deporte y, al recibirlo, verificará y creará el hold.
+12. Reconstruí el objetivo conversacional completo antes de decidir. Los datos
+    pueden haber sido aportados en cualquier mensaje y no existe un orden de
+    campos impuesto por Python. Devolvé en booking todo lo que la conversación
+    ya permita conocer, y en missing_fields solamente lo que siga realmente
+    ausente. Si el objetivo de reserva queda completo, devolvé create_booking.
 
 OPERATIONS válidas en esta recuperación:
 greeting, query_availability, create_booking, create_recurring_booking,
@@ -140913,14 +140818,6 @@ Respondé SOLO JSON:
             recovered, day_receipt
         )
         recovered["_v213_current_turn_day_receipt"] = day_receipt
-        recovered = _canonical_v223_apply_implicit_today_for_exact_time(
-            recovered,
-            day_receipt,
-            prior_day=_canonical_v200_prior_day(state),
-        )
-        recovered = _canonical_v228_advance_exact_slot_booking_goal(
-            recovered, state
-        )
         recovered["_v204_expired_hold_semantic_recovery"] = True
         print(
             "   ✅ [CANONICAL V204 EXPIRED HOLD RECOVERY] "
@@ -140961,33 +140858,15 @@ def _canonical_v201_apply_semantic_continuation(
     if not prior.get("active"):
         return decision
 
-    # relation=continue_previous_availability ya es una decisión semántica del
-    # único Orchestrator. Su operación efectiva canónica es query_availability.
-    # Para un booking ya materializado como hold pendiente, una resolución AI
-    # continue_previous_booking que REEMPLAZA resource_type representa una
-    # mutación del hold, no una lectura general. Python no lee el mensaje: sólo
-    # materializa la relación/campos estructurados que decidió la IA.
-    raw_replace_fields = {
-        str(value or "").strip()
-        for value in (resolution.get("replace_fields") or [])
-        if str(value or "").strip()
-    }
-    pending_hold_focus = _canonical_v203_pending_hold_focus(state)
-    if relation == "continue_previous_availability":
-        effective_operation = "query_availability"
-    elif (
-        relation == "continue_previous_booking"
-        and pending_hold_focus.get("active")
-        and "resource_type" in raw_replace_fields
-    ):
-        effective_operation = "replace_pending_booking"
-        resolution["effective_operation"] = effective_operation
-    else:
-        effective_operation = str(
-            resolution.get("effective_operation")
-            or decision.get("operation")
-            or ""
-        ).strip()
+    # La relación explica cómo se conectan los turnos, pero no decide la
+    # operación. ``effective_operation`` y ``operation`` son el resultado de la
+    # misma reconstrucción IA; Python no los vuelve a derivar a partir del tipo
+    # de continuidad ni de un campo pendiente.
+    effective_operation = str(
+        resolution.get("effective_operation")
+        or decision.get("operation")
+        or ""
+    ).strip()
     if effective_operation not in CANONICAL_V184_OPERATIONS:
         return decision
 
@@ -141218,8 +141097,27 @@ REGLAS ESTRICTAS:
 2B. CORRECCIÓN DE HOLD PENDIENTE — PRIORIDAD TRANSACCIONAL: si semantic_focus.active_pending_booking.active=true y el usuario modifica CUALQUIER dato del turno que YA está bloqueado esperando comprobante (día, hora/rango, duración, deporte/tipo de cancha o quincho), NO lo conviertas en query_availability general ni en handoff. Es una mutación del mismo hold. Usá operation=replace_pending_booking, intent_mode=continuation, context_resolution.relation=continue_previous_booking, effective_operation=replace_pending_booking; incluí en replace_fields TODAS las dimensiones modificadas e inherit_fields sólo las que siguen iguales. Conservá reservation_id del hold real únicamente si está presente en semantic_focus/CANONICAL_STATE. Ejemplos: hold Fútbol 5 Lunes 05/10 21:00 + usuario "Necesito de pádel no de fútbol" => reemplaza resource_type y conserva día/hora/duración. Hold Tenis 17:00 por 1 hora + usuario "puede ser la cancha de 14 a 16 mejor" => reemplaza time y duration_hours, con time="14:00", duration_hours=2.0, time_specificity="exact", time_source="current_turn" y time_evidence literal; conserva día, Tenis y cualquier quincho que el usuario no haya pedido modificar. Python verificará el estado deseado completo y reemplazará atómicamente el hold.
 2B1. TERCER TIEMPO: si el hold tiene quincho/parrilla y el usuario cambia la hora o duración de LA CANCHA sin indicar un horario explícito distinto para el quincho, el quincho sigue vinculado al turno y comienza inmediatamente cuando termina el nuevo bloque de cancha. No copies como horario fijo la hora histórica del quincho. Si el usuario sí fija o pide conservar expresamente una hora para el quincho, estructurá ese horario explícito y respetalo.
 2C. PRECONDICIÓN ABSOLUTA DE REEMPLAZO: replace_pending_booking SÓLO es válido cuando semantic_focus.active_pending_booking.active=true EN ESTE TURNO. Si active=false, aunque recent_messages o last_verified_availability mencionen un hold/deporte anterior, ese hold es histórico/expirado y NO puede mutarse. Un mensaje autosuficiente con su propio día/hora/deporte debe evaluarse como pedido nuevo del turno actual (por ejemplo query_availability o create_booking según su significado), nunca como corrección de un hold inexistente.
-2D. RECONSTRUCCIÓN CONTEXTUAL OBLIGATORIA: antes de preguntar un dato o listar disponibilidad general, reconstruí el objetivo vigente usando EN CONJUNTO latest_user_turn, recent_messages, CANONICAL_STATE y operational_history. Una respuesta elíptica completa solamente la dimensión que contesta; no borra día, hora, deporte o duración aportados por mensajes anteriores ni hechos ya materializados por una acción operativa. Nunca preguntes nuevamente un campo que ya tenga evidencia en ese conjunto. Si existe contradicción, gana el turno actual; si no existe, preservá el dato anterior y declaralo con time_source=canonical_state/references_previous_time=true cuando corresponda.
-2E. OBJETIVO DE RESERVA CON SLOT EXACTO: una consulta de disponibilidad para un día y una hora exactos inicia un objetivo de reserva accionable. Si el negocio tiene varios tipos de cancha y todavía falta resource_type, no respondas con disponibilidad general ni vuelvas a pedir día/hora: usá create_booking con resource_type=null y missing_fields=["resource_type"]. Cuando el usuario conteste ese deporte, completá el mismo objetivo para que Python verifique disponibilidad, cree el hold y solicite el comprobante.
+2D. RECONSTRUCCIÓN DEL GOAL — AUTORIDAD DE LA IA: antes de elegir una operación,
+reconstruí el objetivo vigente usando EN CONJUNTO latest_user_turn,
+latest_user_messages, recent_messages, CANONICAL_STATE, semantic_focus y
+operational_history. No existe una secuencia programada de día/hora/deporte ni
+un campo que deba venir primero. Determiná por significado conversacional qué
+datos pertenecen al mismo objetivo, cuáles ya están conocidos, cuáles fueron
+reemplazados por el turno actual y cuáles faltan realmente para ejecutarlo.
+Una pending_action es evidencia de lo que el agente venía intentando completar,
+no una orden rígida ni una autorización para borrar los demás datos.
+2E. MATERIALIZACIÓN DEL GOAL: volcá en booking la reconstrucción completa, no
+sólo los datos del último mensaje. Completá goal_reconstruction con el goal
+vigente, sus datos conocidos y sus faltantes. Si el usuario está avanzando una
+reserva y el goal ya contiene todo lo necesario, devolvé create_booking para
+que Python valide disponibilidad y cree el hold. Si falta algo, mantené ese
+mismo goal y preguntá sólo lo que la IA concluyó que falta. No reinicies con
+disponibilidad general ni repitas un dato presente en el contexto.
+2F. TEMPORALIDAD CONTEXTUAL: resolvé referencias como hoy/mañana y fechas u
+horas omitidas a partir de toda la conversación y del instante actual. Una
+fecha válida anterior se conserva si el turno actual no la contradice. Si la
+conversación nunca fijó fecha, inferila solamente cuando el significado natural
+del pedido sea inequívoco; si existe ambigüedad real, dejala como faltante.
 3. Un mensaje puede venir en varias burbujas; latest_user_messages forman UN turno físico.
 3A. MULTI-INTENT: detectá TODAS las preguntas/acciones independientes del turno. No respondas sólo la primera.
     - El campo top-level operation representa la PRIMERA/principal.
@@ -141348,6 +141246,13 @@ Respondé SOLO JSON con esta forma:
     "declines_booking": false,
     "information_only_boundary": false
   },
+  "goal_reconstruction": {
+    "goal": null,
+    "known_fields": {},
+    "missing_fields": [],
+    "ready_for_execution": false,
+    "summary": null
+  },
   "missing_fields": [],
   "handoff_reason": null,
   "reason": "breve",
@@ -141401,7 +141306,7 @@ Respondé SOLO JSON con esta forma:
                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)},
             ],
             temperature=0.0,
-            max_tokens=1800 if retry else 1600,
+            max_tokens=2200 if retry else 1900,
             response_format={"type": "json_object"},
         )
         register_cost(resp)
@@ -141449,7 +141354,7 @@ Respondé SOLO JSON con esta forma:
         decision["confidence"] = 0.0
     for key in (
         "booking", "recurrence", "reservation", "event", "info",
-        "context_resolution", "conversation_style",
+        "context_resolution", "conversation_style", "goal_reconstruction",
     ):
         if not isinstance(decision.get(key), dict):
             decision[key] = {}
@@ -141640,14 +141545,6 @@ Respondé SOLO JSON con esta forma:
     decision["_v187_raw_reservation"] = copy.deepcopy(decision.get("reservation") or {})
     decision["_v187_raw_event"] = copy.deepcopy(decision.get("event") or {})
 
-    # V228: el ledger operativo corrige exclusivamente la procedencia de datos
-    # ya verificados en un turno anterior. No clasifica palabras ni inventa una
-    # hora: consume el pending persistido que explica por qué el usuario está
-    # respondiendo ahora sólo la fecha.
-    decision = _canonical_v228_rebind_answered_pending_context(
-        decision, state, message, user_messages
-    )
-
     # V186: NO EXISTE HORA DEFAULT EN EL CAMINO CANÓNICO DE DISPONIBILIDAD.
     # Una hora exacta sólo conserva autoridad si viene del turno físico actual
     # con evidencia literal que contiene una expresión real de reloj, o si el
@@ -141751,6 +141648,7 @@ Respondé SOLO JSON con esta forma:
         "info": copy.deepcopy(decision.get("info") or {}),
         "context_resolution": copy.deepcopy(decision.get("context_resolution") or {}),
         "conversation_style": copy.deepcopy(decision.get("conversation_style") or {}),
+        "goal_reconstruction": copy.deepcopy(decision.get("goal_reconstruction") or {}),
         "missing_fields": list(decision.get("missing_fields") or []),
         "handoff_reason": decision.get("handoff_reason"),
         "reason": decision.get("reason"),
@@ -142675,6 +142573,15 @@ async def _canonical_v184_execute_availability(
                 "day": state["availability"]["day"],
                 "daypart": daypart,
                 "resource_type": merged.get("resource_type"),
+                "duration_hours": merged.get("duration_hours"),
+                "operation": str(decision.get("operation") or "query_availability"),
+                "source": "canonical_ai_goal_reconstruction",
+                "goal_context": [
+                    str(
+                        (decision.get("goal_reconstruction") or {}).get("goal")
+                        or _canonical_v184_goal(str(decision.get("operation") or "query_availability"))
+                    )
+                ],
             }
         )
         _canonical_v183_save(telefono, state)
@@ -145755,395 +145662,6 @@ def _canonical_v213_apply_current_turn_day_receipt(
     return patched
 
 
-# ============================================================================
-# V226 — HORA EXACTA SIN FECHA = HOY + CONTINUIDAD DEL SLOT PENDIENTE
-# ============================================================================
-# Incidente 08/10/2026 12:22:
-#   "Hola tenes cancha para las 4" -> "¿Qué día te gustaría?" -> "Hoy"
-#   -> listado del día completo.
-#
-# El transformer/orchestrator ya había producido 16:00 con provenance del turno
-# actual. V200 eliminó correctamente un día histórico, pero el executor pidió
-# otro día y no conservó la hora. Para consultas de disponibilidad, la política
-# operativa es ahora explícita: una hora exacta del turno actual sin otra fecha
-# significa HOY. Si una conversación vieja ya había alcanzado la pregunta por
-# el día, completar ese pending conserva el slot validado.
-# ============================================================================
-
-
-def _canonical_v223_apply_implicit_today_for_exact_time(
-    decision: Dict[str, Any],
-    day_receipt: Dict[str, Any],
-    *,
-    prior_day: str = "",
-) -> Dict[str, Any]:
-    """Materializa HOY sin releer lenguaje cuando ya existe hora exacta actual."""
-    if not isinstance(decision, dict):
-        return decision
-    if str(decision.get("operation") or "").strip() not in {
-        "query_availability", "create_booking",
-    }:
-        return decision
-
-    booking = dict(decision.get("booking") or {})
-    hour = normalizar_hora_detectada(booking.get("time"))
-    exact_current_turn = bool(
-        str(booking.get("time_specificity") or "").strip().casefold() == "exact"
-        and hora_es_valida(hour)
-        and str(booking.get("time_source") or "").strip().casefold() == "current_turn"
-        and str(booking.get("time_evidence") or "").strip()
-    )
-    if not exact_current_turn:
-        return decision
-
-    receipt = day_receipt if isinstance(day_receipt, dict) else {}
-    mode = str(receipt.get("mode") or "").strip().casefold()
-    no_day_authorized = bool(
-        # ``no_day_context`` no afirma ninguna fecha y, por definición, no
-        # necesita materializar evidencia literal. Si el transformer ya validó
-        # una hora exacta del turno actual, la política comercial es HOY aunque
-        # la confianza del adjudicador de día haya quedado debajo de 0.70.
-        mode == "no_day_context"
-        or (
-            mode == "not_required"
-            and not str(prior_day or "").strip()
-            and not str(booking.get("day") or "").strip()
-        )
-    )
-    if not no_day_authorized:
-        return decision
-
-    today = _agent_v2_v103_normalized_day(
-        datetime.datetime.now(TIMEZONE).date().isoformat()
-    )
-    patched = copy.deepcopy(decision)
-
-    def patch_payload(payload: Dict[str, Any]) -> None:
-        payload_booking = dict(payload.get("booking") or {})
-        payload_booking.update({
-            "day": today,
-            "day_source": "implicit_today_exact_time_v223",
-            "day_evidence": None,
-            "time": hour,
-        })
-        payload["booking"] = payload_booking
-        resolution = dict(payload.get("context_resolution") or {})
-        replace_fields = [
-            str(value).strip()
-            for value in (resolution.get("replace_fields") or [])
-            if str(value).strip() and str(value).strip() != "day"
-        ]
-        if "day" not in replace_fields:
-            replace_fields.append("day")
-        resolution["replace_fields"] = replace_fields
-        resolution["inherit_fields"] = [
-            str(value).strip()
-            for value in (resolution.get("inherit_fields") or [])
-            if str(value).strip() and str(value).strip() != "day"
-        ]
-        payload["context_resolution"] = resolution
-        payload["_v223_implicit_today"] = True
-
-    patch_payload(patched)
-    if isinstance(patched.get("actions"), list):
-        for action in patched["actions"]:
-            if (
-                isinstance(action, dict)
-                and str(action.get("operation") or "")
-                in {"query_availability", "create_booking"}
-            ):
-                patch_payload(action)
-
-    print(
-        "   📍 [CANONICAL V226 IMPLICIT TODAY] "
-        f"hora exacta actual={hour} sin fecha → day={today}"
-    )
-    return patched
-
-
-def _canonical_v228_advance_exact_slot_booking_goal(
-    decision: Dict[str, Any],
-    state: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Materializa la política de conversación elegida por el Orchestrator.
-
-    CANCHERIA es un agente de reservas: cuando la IA ya estructuró día + hora
-    exacta y el único dato ausente es el tipo de cancha, el siguiente paso es
-    preguntar ese dato, no mostrar una grilla general. Esta capa no inspecciona
-    palabras; opera sólo sobre el objetivo semántico y hechos estructurados.
-    """
-    if not isinstance(decision, dict):
-        return decision
-    if str(decision.get("operation") or "").strip() != "query_availability":
-        return decision
-    booking = dict(decision.get("booking") or {})
-    day = str(booking.get("day") or "").strip()
-    hour = normalizar_hora_detectada(booking.get("time"))
-    specificity = str(booking.get("time_specificity") or "").strip().casefold()
-    resource_type = _canonical_configured_court_type(booking.get("resource_type"))
-    configured = list(_configured_court_type_labels())
-    if (
-        _parse_fecha_row(day) is None
-        or not hora_es_valida(hour)
-        or specificity != "exact"
-        or resource_type
-        or len(configured) <= 1
-    ):
-        return decision
-
-    patched = copy.deepcopy(decision)
-
-    def patch_payload(payload: Dict[str, Any]) -> None:
-        payload["operation"] = "create_booking"
-        payload["intent_mode"] = "continuation" if (state or {}).get("pending") else "transaction"
-        payload["confidence"] = max(float(payload.get("confidence") or 0.0), 0.90)
-        payload["missing_fields"] = ["resource_type"]
-        payload_booking = dict(payload.get("booking") or {})
-        payload_booking.update({
-            "day": day,
-            "time": hour,
-            "time_specificity": "exact",
-            "resource_type": None,
-        })
-        payload["booking"] = payload_booking
-        resolution = dict(payload.get("context_resolution") or {})
-        resolution["effective_operation"] = "create_booking"
-        resolution.setdefault(
-            "relation",
-            "continue_previous_availability" if (state or {}).get("pending") else "new_request",
-        )
-        payload["context_resolution"] = resolution
-        payload["_v228_exact_slot_booking_goal"] = True
-
-    patch_payload(patched)
-    for key in ("actions", "_v188_actions"):
-        rows = patched.get(key)
-        if not isinstance(rows, list):
-            continue
-        for action in rows:
-            if (
-                isinstance(action, dict)
-                and str(action.get("operation") or "").strip()
-                == "query_availability"
-            ):
-                patch_payload(action)
-                break
-    print(
-        "   🎯 [CANONICAL V228 EXACT SLOT GOAL] "
-        f"day={day} time={hour}; falta únicamente resource_type"
-    )
-    return patched
-
-
-def _canonical_v223_restore_pending_time_after_day(
-    decision: Dict[str, Any],
-    state: Dict[str, Any],
-) -> Dict[str, Any]:
-    """Completa una respuesta de día sin perder la hora guardada en el pending."""
-    if not isinstance(decision, dict):
-        return decision
-    pending = dict((state or {}).get("pending") or {})
-    if str(pending.get("field") or "").strip() not in {"dia", "day"}:
-        return decision
-
-    receipt = dict(decision.get("_v213_current_turn_day_receipt") or {})
-    receipt_authorized = bool(
-        receipt.get("validated") is True
-        and str(receipt.get("mode") or "").strip().casefold()
-        == "current_turn_explicit_day"
-        and str(receipt.get("resolved_day") or "").strip()
-    )
-    # Cuando no había día previo, V213 históricamente no ejecutaba su
-    # adjudicador. Aun así, el ÚNICO Orchestrator puede haber resuelto el día en
-    # el turno actual. Lo aceptamos sólo dentro de un pending que pidió día y si
-    # el receipt semántico crudo conserva exactamente ese mismo día.
-    decision_booking = dict(decision.get("booking") or {})
-    raw_booking = dict(decision.get("_v187_raw_booking") or {})
-    ai_day = str(decision_booking.get("day") or "").strip()
-    raw_ai_day = str(raw_booking.get("day") or "").strip()
-    orchestrator_authorized = bool(
-        _parse_fecha_row(ai_day) is not None
-        and raw_ai_day == ai_day
-    )
-    if not (receipt_authorized or orchestrator_authorized):
-        return decision
-
-    saved_booking = dict((state or {}).get("booking") or {})
-    saved_hour = normalizar_hora_detectada(
-        pending.get("time") or saved_booking.get("time")
-    )
-    saved_specificity = str(
-        pending.get("time_specificity")
-        or saved_booking.get("time_specificity")
-        or ""
-    ).strip().casefold()
-    if not hora_es_valida(saved_hour) or saved_specificity != "exact":
-        return decision
-
-    patched = copy.deepcopy(decision)
-    resolved_day = (
-        str(receipt.get("resolved_day") or "").strip()
-        if receipt_authorized
-        else ai_day
-    )
-
-    def patch_payload(payload: Dict[str, Any]) -> None:
-        payload_booking = dict(payload.get("booking") or {})
-        payload_booking.update({
-            "day": resolved_day,
-            "time": saved_hour,
-            "time_specificity": "exact",
-            "time_source": "canonical_state",
-            "time_evidence": None,
-            "references_previous_time": True,
-        })
-        if not payload_booking.get("resource_type"):
-            payload_booking["resource_type"] = (
-                pending.get("resource_type") or saved_booking.get("resource_type")
-            )
-        if payload_booking.get("duration_hours") in (None, ""):
-            payload_booking["duration_hours"] = (
-                pending.get("duration_hours")
-                or saved_booking.get("duration_hours")
-                or DEFAULT_TURN_DURATION_HOURS
-            )
-        payload["booking"] = payload_booking
-        resolution = dict(payload.get("context_resolution") or {})
-        resolution["replace_fields"] = [
-            str(value).strip()
-            for value in (resolution.get("replace_fields") or [])
-            if str(value).strip() and str(value).strip() != "time"
-        ]
-        inherit_fields = [
-            str(value).strip()
-            for value in (resolution.get("inherit_fields") or [])
-            if str(value).strip()
-        ]
-        if "time" not in inherit_fields:
-            inherit_fields.append("time")
-        resolution["inherit_fields"] = inherit_fields
-        payload["context_resolution"] = resolution
-        payload["_v223_pending_time_restored"] = True
-
-    patch_payload(patched)
-    actions = patched.get("_v188_actions")
-    if isinstance(actions, list) and actions:
-        patch_payload(actions[0])
-    if isinstance(patched.get("actions"), list) and patched["actions"]:
-        patch_payload(patched["actions"][0])
-
-    print(
-        "   🧷 [CANONICAL V223 PENDING SLOT CONTINUITY] "
-        f"día completado={resolved_day} + hora preservada={saved_hour}"
-    )
-    return patched
-
-
-def _canonical_v225_complete_pending_booking_resource(
-    decision: Dict[str, Any],
-    state: Dict[str, Any],
-) -> Dict[str, Any]:
-    """Convierte la respuesta del deporte faltante en el write ya iniciado.
-
-    No interpreta texto. Consume exclusivamente el pending transaccional que
-    creó el fast path y el receipt V205, aislado y con evidencia literal del
-    turno actual. Así "Futbol" completa hoy/16:00 en vez de degradar el flujo a
-    una nueva consulta de disponibilidad de día completo.
-    """
-    if not isinstance(decision, dict):
-        return decision
-    state = state if isinstance(state, dict) else {}
-    pending = dict(state.get("pending") or {})
-    if not (
-        str(pending.get("field") or "").strip() == "resource_type"
-        and str(pending.get("operation") or "").strip() == "create_booking"
-        and str(pending.get("source") or "").strip().startswith("canonical_")
-    ):
-        return decision
-
-    receipt = dict(decision.get("_v205_current_turn_resource_receipt") or {})
-    resource_type = _canonical_configured_court_type(receipt.get("resource_type"))
-    if not (receipt.get("explicit") is True and resource_type):
-        return decision
-
-    # Una fecha/hora explícita nueva representa otro pedido y nunca debe ser
-    # sustituida por el pending anterior. V213/V187 ya adjudicaron esas fuentes.
-    day_receipt = dict(decision.get("_v213_current_turn_day_receipt") or {})
-    if (
-        day_receipt.get("validated") is True
-        and str(day_receipt.get("mode") or "").strip().casefold()
-        == "current_turn_explicit_day"
-    ):
-        return decision
-    incoming = dict(decision.get("booking") or {})
-    incoming_hour = normalizar_hora_detectada(incoming.get("time"))
-    if (
-        hora_es_valida(incoming_hour)
-        and str(incoming.get("time_source") or "").strip().casefold()
-        == "current_turn"
-    ):
-        return decision
-
-    stored = dict(state.get("booking") or {})
-    day = str(pending.get("day") or stored.get("day") or "").strip()
-    hour = normalizar_hora_detectada(
-        pending.get("time") or stored.get("time")
-    )
-    if not day or not hora_es_valida(hour):
-        return decision
-    duration = normalizar_duracion_horas(
-        pending.get("duration_hours")
-        or stored.get("duration_hours")
-        or DEFAULT_TURN_DURATION_HOURS,
-        DEFAULT_TURN_DURATION_HOURS,
-    )
-
-    patched = copy.deepcopy(decision)
-
-    def patch_payload(payload: Dict[str, Any]) -> None:
-        payload["operation"] = "create_booking"
-        payload["intent_mode"] = "transactional_action"
-        payload["confidence"] = max(float(payload.get("confidence") or 0.0), 0.90)
-        payload["missing_fields"] = []
-        booking = dict(payload.get("booking") or {})
-        booking.update({
-            "day": day,
-            "time": hour,
-            "time_specificity": "exact",
-            "time_source": "canonical_state",
-            "time_evidence": None,
-            "references_previous_time": True,
-            "resource_type": resource_type,
-            "resource_type_source": "current_turn",
-            "resource_type_evidence": receipt.get("evidence"),
-            "duration_hours": duration,
-        })
-        payload["booking"] = booking
-        resolution = dict(payload.get("context_resolution") or {})
-        resolution.update({
-            "relation": "answers_pending_booking_question",
-            "effective_operation": "create_booking",
-            "inherit_fields": ["day", "time", "duration_hours"],
-            "replace_fields": ["resource_type"],
-        })
-        payload["context_resolution"] = resolution
-        payload["_v225_pending_booking_completed"] = True
-
-    patch_payload(patched)
-    actions = patched.get("_v188_actions")
-    if isinstance(actions, list) and actions:
-        patch_payload(actions[0])
-    raw_actions = patched.get("actions")
-    if isinstance(raw_actions, list) and raw_actions:
-        patch_payload(raw_actions[0])
-
-    print(
-        "   ✅ [CANONICAL V225 PENDING BOOKING COMPLETED] "
-        f"day={day} time={hour} resource_type={resource_type} → create_booking"
-    )
-    return patched
-
-
 async def _canonical_v184_execute_availability(
     message: str,
     user_messages: List[str],
@@ -146156,44 +145674,14 @@ async def _canonical_v184_execute_availability(
 ) -> Optional[Dict[str, Any]]:
     prior_day = _canonical_v200_prior_day(state)
 
-    # V213: si el turno ya fue adjudicado antes de V201, reutilizamos ese
-    # receipt. No hacemos una segunda interpretación ni permitimos que el atajo
-    # de continuidad restaure el día histórico.
+    # V213 sólo valida una fecha explícita del turno actual. La decisión del
+    # goal, sus campos conocidos y sus faltantes pertenece al Orchestrator IA;
+    # este executor no completa ni reordena campos semánticos.
     current_day_receipt = (
         decision.get("_v213_current_turn_day_receipt")
         if isinstance((decision or {}).get("_v213_current_turn_day_receipt"), dict)
         else {}
     )
-    implicit_today_decision = _canonical_v223_apply_implicit_today_for_exact_time(
-        decision,
-        current_day_receipt,
-        prior_day=prior_day,
-    )
-    if implicit_today_decision is not decision:
-        advanced_decision = _canonical_v228_advance_exact_slot_booking_goal(
-            implicit_today_decision, state
-        )
-        if str(advanced_decision.get("operation") or "") == "create_booking":
-            return await _canonical_v184_execute_booking(
-                message,
-                user_messages,
-                state,
-                advanced_decision,
-                prospecto,
-                telefono,
-                page=page,
-                image_path=image_path,
-            )
-        return await _canonical_v184_execute_availability_v200_base(
-            message,
-            user_messages,
-            state,
-            advanced_decision,
-            prospecto,
-            telefono,
-            page=page,
-            image_path=image_path,
-        )
     if (
         current_day_receipt.get("validated") is True
         and str(current_day_receipt.get("mode") or "").strip().casefold()
@@ -147038,8 +146526,9 @@ async def _canonical_v184_execute_decision_v203_single(
 _canonical_v184_execute_decision_v188_single = _canonical_v184_execute_decision_v203_single
 
 
-# V223 se aplica después de todas las normalizaciones del Orchestrator (incluida
-# la construcción de _v188_actions), pero antes de ejecutar la decisión.
+# Compatibilidad de nombre para extensiones posteriores. La salida semántica se
+# conserva exactamente como la reconstruyó la IA; no se completan campos con
+# reglas Python basadas en el pending.
 _canonical_v184_orchestrate_v223_base = _canonical_v184_orchestrate
 
 
@@ -147050,14 +146539,12 @@ async def _canonical_v184_orchestrate(
     *,
     image_path: str = "",
 ) -> Dict[str, Any]:
-    decision = await _canonical_v184_orchestrate_v223_base(
+    return await _canonical_v184_orchestrate_v223_base(
         message,
         user_messages,
         state,
         image_path=image_path,
     )
-    decision = _canonical_v223_restore_pending_time_after_day(decision, state)
-    return _canonical_v225_complete_pending_booking_resource(decision, state)
 
 
 # ============================================================================
@@ -147225,9 +146712,9 @@ async def _canonical_v184_orchestrate(
     return _canonical_v227_bind_cash_to_partial_obligation(decision, state)
 
 
-# V228 corre al final de todas las capas semánticas: si la IA reconstruyó un
-# slot exacto pero dejó el objetivo como lectura general, materializamos el
-# próximo dato faltante del flujo de reserva sin releer texto ni usar fallback.
+# Capa final: conserva la decisión semántica del Orchestrator. Las únicas
+# correcciones posteriores son vínculos a obligaciones transaccionales reales
+# (por ejemplo pagos), nunca reglas de orden de campos de una reserva.
 _canonical_v184_orchestrate_v228_base = _canonical_v184_orchestrate
 
 
@@ -147238,13 +146725,12 @@ async def _canonical_v184_orchestrate(
     *,
     image_path: str = "",
 ) -> Dict[str, Any]:
-    decision = await _canonical_v184_orchestrate_v228_base(
+    return await _canonical_v184_orchestrate_v228_base(
         message,
         user_messages,
         state,
         image_path=image_path,
     )
-    return _canonical_v228_advance_exact_slot_booking_goal(decision, state)
 
 
 # ============================================================================
