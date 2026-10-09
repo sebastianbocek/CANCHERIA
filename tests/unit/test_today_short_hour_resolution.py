@@ -766,3 +766,138 @@ def test_0045_vanished_hold_is_rebuilt_by_two_pass_ai_as_current_goal(
     assert recovered["_v230_goal_self_reviewed"] is True
     assert state["booking"]["day"] is None
     assert state["pending"] is None
+
+
+def test_fresh_booking_goal_is_reviewed_by_ai_before_execution(monkeypatch) -> None:
+    """La auditoría IA también cubre pedidos nuevos sin hold histórico."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    payloads = []
+
+    draft = {
+        "operation": "query_availability",
+        "confidence": 0.9,
+        "intent_mode": "information",
+        "booking": {
+            "day": "Viernes 09/10",
+            "day_source": "natural_context",
+            "time": "21:00",
+            "time_specificity": "exact",
+            "time_source": "current_turn",
+            "time_evidence": "las 21",
+            "references_previous_time": False,
+            "resource_type": None,
+            "duration_hours": 1.0,
+        },
+        "goal_reconstruction": {
+            "goal": "buscar_turno",
+            "known_fields": {"day": "Viernes 09/10", "time": "21:00"},
+            "missing_fields": ["resource_type"],
+            "ready_for_execution": False,
+        },
+        "missing_fields": ["resource_type"],
+        "actions": [],
+    }
+    reviewed = {
+        "operation": "create_booking",
+        "confidence": 0.98,
+        "intent_mode": "transaction",
+        "booking": dict(draft["booking"]),
+        "goal_reconstruction": {
+            "goal": "crear_reserva",
+            "known_fields": {"day": "Viernes 09/10", "time": "21:00"},
+            "missing_fields": ["resource_type"],
+            "ready_for_execution": False,
+            "summary": "El pedido avanza una reserva; falta elegir deporte",
+        },
+        "missing_fields": ["resource_type"],
+        "actions": [],
+    }
+
+    async def fake_openai(*_args, **kwargs):
+        payload = json.loads(kwargs["messages"][1]["content"])
+        payloads.append(payload)
+        content = draft if len(payloads) == 1 else reviewed
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=json.dumps(content)),
+                finish_reason="stop",
+            )],
+            usage=None,
+        )
+
+    async def no_resource(*_args, **_kwargs):
+        return {"explicit": False, "resource_type": None, "evidence": None}
+
+    monkeypatch.setattr(legacy, "call_openai_async", fake_openai)
+    monkeypatch.setattr(legacy, "register_cost", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v205_current_turn_resource_receipt",
+        no_resource,
+    )
+
+    state = legacy._canonical_v183_default_state("fresh-ai-review")
+    decision = asyncio.run(
+        legacy._canonical_v184_orchestrate(
+            "Hola tenes cancha para las 21",
+            ["Hola tenes cancha para las 21"],
+            state,
+        )
+    )
+
+    assert len(payloads) == 2
+    assert "draft_decision" not in payloads[0]
+    assert payloads[1]["draft_decision"]["operation"] == "query_availability"
+    assert decision["operation"] == "create_booking"
+    assert decision["booking"]["day"] == "Viernes 09/10"
+    assert decision["booking"]["time"] == "21:00"
+    assert decision["missing_fields"] == ["resource_type"]
+    assert decision["_v231_goal_self_reviewed"] is True
+
+
+def test_exact_hour_renderer_wins_over_full_day_schedule(monkeypatch) -> None:
+    """Una tool rica no puede hacer que se vuelva a pedir la hora exacta."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    sports = {
+        "Cancha 1": "Futbol 5",
+        "Cancha 2": "Futbol 5",
+        "Cancha 3": "Tenis",
+        "Cancha 4": "Pádel",
+    }
+    monkeypatch.setattr(
+        legacy,
+        "_court_type_for_name",
+        lambda court: sports.get(str(court)),
+    )
+
+    schedule = {
+        court: [f"{hour:02d}:00" for hour in range(10, 24)]
+        for court in sports
+    }
+    observation = {
+        "ok": True,
+        "data": {
+            "dia": "Viernes 09/10",
+            "hora": "21:00",
+            "canchas_libres": list(sports),
+            "canchas_libres_por_franja": schedule,
+            "day_availability": {
+                "canchas_libres_por_franja": schedule,
+            },
+        },
+    }
+
+    response = legacy._canonical_v185_render_availability_response(
+        "Hola tenes cancha para las 21",
+        {},
+        observation,
+    )
+
+    assert "21:00" in response
+    assert "Qué deporte querés reservar" in response
+    assert "Cuál hora" not in response
+    assert "Horarios disponibles" not in response

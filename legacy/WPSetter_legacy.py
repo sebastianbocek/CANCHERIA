@@ -141364,7 +141364,11 @@ Respondé SOLO JSON con esta forma:
   ]
 }'''
 
-    async def _request_orchestrator_json_v202(*, retry: bool = False) -> Dict[str, Any]:
+    async def _request_orchestrator_json_v202(
+        *,
+        retry: bool = False,
+        review_draft: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         # V202: el schema del Orchestrator creció mucho (multi-intent + recurrencia +
         # continuidad). Con 900 tokens una respuesta JSON podía quedar cortada y
         # json.loads terminaba enviando el turno al legacy aunque la IA hubiera
@@ -141379,11 +141383,28 @@ Respondé SOLO JSON con esta forma:
             if retry
             else ""
         )
+        review_rule = ""
+        request_payload = dict(payload)
+        if isinstance(review_draft, dict):
+            request_payload["draft_decision"] = copy.deepcopy(review_draft)
+            review_rule = r'''
+
+SEGUNDA REVISIÓN SEMÁNTICA DEL GOAL DE RESERVA:
+draft_decision es una hipótesis de la primera pasada, no una autoridad. Releé
+independientemente el turno físico, recent_messages, canonical_state,
+semantic_focus, operational_history, now y las restricciones del negocio.
+Corregí la operación y reconstruí booking + goal_reconstruction completos.
+Verificá especialmente que ningún día, hora, franja, duración o deporte ya
+conocido desaparezca y que missing_fields contenga solamente datos realmente
+ausentes. Si el objetivo pragmático es avanzar una reserva, conducilo hacia el
+hold y el comprobante; si el usuario marcó un límite genuinamente informativo,
+conservá query_availability. Nunca pidas nuevamente un dato que la conversación
+ya resolvió. Respondé el JSON final completo con el mismo schema.'''
         resp = await call_openai_async(
             model=OPENAI_MODEL,
             messages=[
-                {"role": "system", "content": system + retry_rule},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)},
+                {"role": "system", "content": system + retry_rule + review_rule},
+                {"role": "user", "content": json.dumps(request_payload, ensure_ascii=False, default=str)},
             ],
             temperature=0.0,
             max_tokens=2200 if retry else 1900,
@@ -141423,6 +141444,48 @@ Respondé SOLO JSON con esta forma:
             "_canonical_internal_error": f"{type(exc).__name__}: {exc}",
             "_suppress_legacy_fallback": True,
         }
+
+    # V231: la reconstrucción en dos pasadas ya no queda limitada al caso
+    # excepcional de un hold vencido. Todo goal de booking recibe una auditoría
+    # semántica independiente antes de tocar estado o calendario. Python no
+    # promueve query_availability a create_booking ni completa campos: la
+    # segunda IA puede confirmar o corregir íntegramente el primer borrador.
+    draft_operations = {str(decision.get("operation") or "").strip()}
+    draft_operations.update(
+        str(action.get("operation") or "").strip()
+        for action in (decision.get("actions") or [])
+        if isinstance(action, dict)
+    )
+    booking_goal_operations = {
+        "query_availability", "create_booking", "create_recurring_booking",
+        "replace_pending_booking", "ask_missing",
+    }
+    if draft_operations.intersection(booking_goal_operations):
+        first_draft = copy.deepcopy(decision)
+        try:
+            reviewed = await _request_orchestrator_json_v202(
+                review_draft=first_draft,
+            )
+            reviewed_operation = str(reviewed.get("operation") or "").strip()
+            if reviewed_operation in CANONICAL_V184_OPERATIONS:
+                decision = reviewed
+                decision["_v231_goal_self_reviewed"] = True
+                print(
+                    "   🔎 [CANONICAL V231 GOAL SELF-REVIEW] "
+                    f"{first_draft.get('operation')} → {reviewed_operation}"
+                )
+        except Exception as review_exc:
+            # La primera decisión sigue siendo un JSON válido. Una caída de la
+            # auditoría no autoriza inventar otro significado ni volver al
+            # legacy; conservamos el borrador semántico original.
+            decision = first_draft
+            decision["_v231_goal_review_error"] = (
+                f"{type(review_exc).__name__}: {review_exc}"
+            )
+            print(
+                "   ⚠️ [CANONICAL V231 GOAL SELF-REVIEW] "
+                f"auditoría no disponible; conservo borrador IA: {review_exc}"
+            )
 
     operation = str(decision.get("operation") or "delegate_legacy").strip()
     if operation not in CANONICAL_V184_OPERATIONS:
@@ -142356,8 +142419,20 @@ def _canonical_v185_render_availability_response(
         world,
     )
 
-    # 1) Parrilla por día/franja: conserva la plantilla clásica con saludo,
-    # canchas, tipos, precios, horarios y CTA.
+    # 1) Slot exacto: una Observation puede incluir simultáneamente el slot
+    # consultado y la grilla completa del día. La hora validada es el alcance
+    # factual de esta respuesta y por eso se presenta antes que la agenda
+    # general; no se reinterpreta el mensaje ni se inventa una hora.
+    exact = build_agent_v2_exact_slot_confirmation_message(obs)
+    if exact:
+        print(
+            "   ✅ [CANONICAL V231 EXACT SLOT RENDERER] "
+            "hora consultada preservada sobre grilla general"
+        )
+        return exact
+
+    # 2) Parrilla por día/franja: conserva la plantilla clásica con saludo,
+    # canchas, tipos, precios, horarios y CTA cuando no existe un slot exacto.
     has_schedule = bool(data.get("canchas_libres_por_franja"))
     nested = data.get("day_availability")
     has_nested_schedule = bool(
@@ -142377,16 +142452,6 @@ def _canonical_v185_render_availability_response(
                 "plantilla clásica rica reutilizada"
             )
             return rendered
-
-    # 2) Slot exacto: usa la confirmación comercial verificada, nunca la frase
-    # seca del fallback genérico.
-    exact = build_agent_v2_exact_slot_confirmation_message(obs)
-    if exact:
-        print(
-            "   ✅ [CANONICAL V186 EXACT SLOT RENDERER] "
-            "plantilla exacta comercial reutilizada"
-        )
-        return exact
 
     # 3) Último respaldo determinista basado exclusivamente en Observation.
     return _agent_v2_format_availability_observation(data)
@@ -147199,7 +147264,7 @@ def run_agent_v2_invariant_evals() -> Dict[str, Any]:
 
 AGENT_V2_UNIFIED_AGENTIC_CORE = "v227-partial-cash-context-binding"
 AGENT_V2_UNIFIED_CONVERSATION_KERNEL = "v227-partial-cash-context-binding"
-AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-09_ai_goal_self_review_v230"
+AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-09_fresh_goal_self_review_v231"
 
 # V195 marker is defined immediately above. V194 marker intentionally retired.
 

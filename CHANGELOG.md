@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.15 - 2026-10-09
+
+- Extiende la revisión semántica en dos pasadas de IA a todos los objetivos de reserva, incluso cuando el contacto no tiene un hold anterior.
+- La segunda IA recibe el primer borrador como hipótesis y reconstruye operación, datos conocidos y faltantes antes de ejecutar tools.
+- Evita que una consulta con fecha y hora exactas se degrade a disponibilidad general o vuelva a preguntar la hora.
+- Cuando la tool devuelve simultáneamente el slot consultado y la agenda completa, presenta primero el resultado exacto y pregunta únicamente la dimensión todavía faltante.
+- Agrega regresiones del incidente real `Hola tenes cancha para las 21` en un contacto sin estado previo y del renderer con slot exacto más grilla diaria.
+
 ## 0.2.14 - 2026-10-09
 
 - Separa por completo un hold vencido del objetivo conversacional vigente antes de volver a interpretar el mensaje.
