@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.26 - 2026-10-09
+
+- Incorpora `WhatsApp Business` a la blacklist predeterminada, incluso cuando el archivo de blacklist del negocio está vacío.
+- Si ese contacto abre un chat pendiente, CANCHERIA no responde ni procesa la conversación como una reserva: sale del chat y vuelve al filtro `Todos`.
+- Mantiene la protección tanto en la detección temprana por identidad del chat como en la validación posterior por nombre del contacto.
+
 ## 0.2.25 - 2026-10-09
 
 - Compacta exclusivamente la pestaña `Horas` para recuperar seis horarios completos visibles simultáneamente en el tamaño habitual del panel.

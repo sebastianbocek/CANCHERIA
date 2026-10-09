@@ -1083,6 +1083,7 @@ def _loads_llm_json_object(raw: str) -> Dict[str, Any]:
 # ================================
 STATE_FILE = BOT_STATE_FILE
 BLACKLIST_FILE = str(runtime_file("blacklist_numbers.json"))
+DEFAULT_BLACKLIST_ENTRIES = frozenset({"name:whatsapp business"})
 WAITLIST_FILE = str(runtime_file("waitlist.json"))
 CLIENT_MEMORY_FILE = str(runtime_file("client_memory.json"))
 OPERATIONS_METRICS_FILE = str(runtime_file("operations_metrics.jsonl"))
@@ -82914,19 +82915,30 @@ def _blacklist_label(entry: str) -> str:
 
 
 def cargar_blacklist() -> List[str]:
+    entries = set(DEFAULT_BLACKLIST_ENTRIES)
     try:
         if os.path.exists(BLACKLIST_FILE):
             with open(BLACKLIST_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            entries = [_blacklist_entry_from_target(item) for item in data]
-            return sorted({entry for entry in entries if entry})
+            entries.update(
+                entry
+                for item in data
+                if (entry := _blacklist_entry_from_target(item))
+            )
     except Exception as e:
         print(f"⚠️ [BLACKLIST] Error leyendo blacklist: {e}")
-    return []
+    return sorted(entry for entry in entries if entry)
 
 
 def guardar_blacklist(numeros: List[str]):
-    numeros_norm = sorted({_blacklist_entry_from_target(n) for n in numeros if _blacklist_entry_from_target(n)})
+    numeros_norm = sorted(
+        DEFAULT_BLACKLIST_ENTRIES
+        | {
+            entry
+            for numero in numeros
+            if (entry := _blacklist_entry_from_target(numero))
+        }
+    )
     try:
         with open(BLACKLIST_FILE, "w", encoding="utf-8") as f:
             json.dump(numeros_norm, f, ensure_ascii=False, indent=2)
@@ -82957,6 +82969,8 @@ def bloquear_numero(telefono: str) -> bool:
 def desbloquear_numero(telefono: str) -> bool:
     entry = _blacklist_entry_from_target(telefono)
     if not entry:
+        return False
+    if entry in DEFAULT_BLACKLIST_ENTRIES:
         return False
     numeros = cargar_blacklist()
     nuevos = [n for n in numeros if n != entry]
@@ -98911,6 +98925,7 @@ async def automation_loop(page, profile):
         if telefono_en_blacklist(telefono or ""):
             print(f"🚫 [BLACKLIST] {telefono} bloqueado → escapando sin responder")
             await escape_chat(page)
+            await click_todos(page)
             await asyncio.sleep(2)
             continue
 
@@ -99051,6 +99066,7 @@ async def automation_loop(page, profile):
         if _normalizar_nombre_blacklist(prospecto.get("nombre")) == "whatsapp business":
             print("[BLACKLIST POR DEFECTO] WhatsApp Business -> escapo sin procesar la conversacion")
             await escape_chat(page)
+            await click_todos(page)
             await asyncio.sleep(2)
             continue
 
