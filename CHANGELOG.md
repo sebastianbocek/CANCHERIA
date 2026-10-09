@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.17 - 2026-10-09
+
+- Agrega el selector visual de calendario al campo `Fecha` de la pestaña `Operación`.
+- Permite abrirlo desde la etiqueta `Fecha 📅`, con doble clic sobre el campo o mediante el botón de calendario.
+- Reutiliza el mismo componente y formato ISO que las pestañas `Horas` y `Torneos`.
+- Mantiene intactas las acciones de bloqueo y desbloqueo de una cancha o de toda la agenda.
+
 ## 0.2.16 - 2026-10-09
 
 - Comprueba silenciosamente si existe una versión nueva cuando el operador interactúa con cualquier control de la aplicación.

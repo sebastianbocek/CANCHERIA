@@ -310,6 +310,28 @@ def test_admin_panel_exposes_hours_tab_and_click_editing():
     assert '"No quedan horarios futuros para esta fecha."' in source
 
 
+def test_admin_operation_date_reuses_visual_calendar_picker():
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "cancheria"
+        / "desktop"
+        / "admin_panel.py"
+    ).read_text(encoding="utf-8")
+
+    operation = source.split("def _build_operation(self) -> None:", 1)[1].split(
+        "def _build_cases(self) -> None:", 1
+    )[0]
+    assert 'text="Fecha 📅"' in operation
+    assert "self.block_day_entry" in operation
+    assert '"Fecha del bloqueo de agenda"' in operation
+    assert 'block_date_label.bind("<Button-1>", open_block_calendar)' in operation
+    assert 'self.block_day_entry.bind("<Double-Button-1>", open_block_calendar)' in operation
+    assert "command=open_block_calendar" in operation
+
+
 def test_admin_hours_tab_builds_with_colored_slot_buttons():
     import tkinter as tk
 

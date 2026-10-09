@@ -238,9 +238,44 @@ class AdminPanel(tk.Toplevel):
         form = tk.Frame(self.operation_tab, bg="white")
         form.pack(anchor="nw", padx=24, pady=24)
         tk.Label(form, text="Bloqueo de agenda", font=("Segoe UI", 14, "bold"), fg=self.NAVY, bg="white").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 14))
-        tk.Label(form, text="Fecha (AAAA-MM-DD o ‘mañana’)", bg="white", fg=self.NAVY).grid(row=1, column=0, sticky="w")
+        block_date_label = tk.Label(
+            form,
+            text="Fecha 📅",
+            bg="white",
+            fg=self.BLUE,
+            font=("Segoe UI", 10, "bold"),
+            cursor="hand2",
+        )
+        block_date_label.grid(row=1, column=0, sticky="w")
         self.block_day_var = tk.StringVar(value=dt_today())
-        tk.Entry(form, textvariable=self.block_day_var, width=24).grid(row=2, column=0, sticky="w", padx=(0, 10), pady=(3, 12))
+        block_date_field = tk.Frame(form, bg="white")
+        block_date_field.grid(
+            row=2, column=0, sticky="w", padx=(0, 10), pady=(3, 12)
+        )
+        self.block_day_entry = tk.Entry(
+            block_date_field,
+            textvariable=self.block_day_var,
+            width=19,
+        )
+        self.block_day_entry.pack(side="left")
+        open_block_calendar = lambda _event=None: self._show_date_picker(
+            self.block_day_var,
+            self.block_day_entry,
+            "Fecha del bloqueo de agenda",
+        )
+        block_date_label.bind("<Button-1>", open_block_calendar)
+        self.block_day_entry.bind("<Double-Button-1>", open_block_calendar)
+        tk.Button(
+            block_date_field,
+            text="📅",
+            command=open_block_calendar,
+            relief="flat",
+            bg=self.BLUE,
+            fg="white",
+            cursor="hand2",
+            padx=7,
+            pady=2,
+        ).pack(side="left", padx=(4, 0))
         tk.Label(form, text="Cancha (vacío = todas)", bg="white", fg=self.NAVY).grid(row=1, column=1, sticky="w")
         self.block_court_var = tk.StringVar(value="")
         ttk.Combobox(form, textvariable=self.block_court_var, values=["", *self.service.courts()], width=24, state="readonly").grid(row=2, column=1, sticky="w", padx=(0, 10), pady=(3, 12))
