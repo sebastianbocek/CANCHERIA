@@ -105,6 +105,7 @@ import hashlib
 import difflib
 import threading
 from cancheria.paths import PROJECT_ROOT, runtime_dir, runtime_file, ensure_runtime_layout
+from cancheria.desktop.ai_control import ensure_ai_control, read_ai_control, write_ai_paused
 from cancheria.browser_runtime import persistent_context_options
 from cancheria.config import legacy_config as _legacy_config_module
 from cancheria.config.court_sports import sport_icon as _configured_court_sport_icon
@@ -1274,6 +1275,26 @@ class BotState:
 
 bot_state = BotState()
 bot_state.load()
+ensure_ai_control(default_paused=not bot_state.is_active)
+
+
+def sync_ai_control_state() -> bool:
+    """Apply the shared desktop pause state without stopping WhatsApp."""
+    paused = bool(
+        read_ai_control(default_paused=not bot_state.is_active).get("paused", False)
+    )
+    active = not paused
+    if bot_state.is_active == active:
+        return False
+    bot_state.is_active = active
+    bot_state.last_state_change = datetime.datetime.now()
+    bot_state.save()
+    print(
+        "▶️ [CONTROL GUI] IA reanudada; respuestas automáticas activas."
+        if active
+        else "⏸️ [CONTROL GUI] IA pausada; WhatsApp permanece abierto."
+    )
+    return True
 
 
 def get_pause_control_number() -> str:
@@ -87905,12 +87926,14 @@ async def manejar_comando_autorizado(page, telefono: str, user_messages: List[st
         bot_state.is_active = True
         bot_state.last_state_change = datetime.datetime.now()
         bot_state.save()
+        write_ai_paused(False, source="whatsapp_admin")
         respuesta = "✅ Agente encendido. Vuelvo a responder clientes."
     elif accion == "pausar_agente":
         set_pause_control_number(telefono)
         bot_state.is_active = False
         bot_state.last_state_change = datetime.datetime.now()
         bot_state.save()
+        write_ai_paused(True, source="whatsapp_admin")
         respuesta = (
             "⏸️ Agente pausado. No voy a responder clientes.\n"
             f"Voy a revisar este chat de control cada {PAUSE_CONTROL_RECHECK_SECONDS // 60} minutos. "
@@ -98056,6 +98079,7 @@ async def monitor_alert_chat_during_pause(page):
                 bot_state.is_active = True
                 bot_state.last_state_change = datetime.datetime.now()
                 bot_state.save()
+                write_ai_paused(False, source="whatsapp_admin")
                 await send_message(page, "✅ Agente encendido. Vuelvo a responder clientes.")
                 await page.goto("https://web.whatsapp.com")
                 await asyncio.sleep(3)
@@ -98787,6 +98811,7 @@ async def automation_loop(page, profile):
             return "restart_browser"
 
         iteracion_count += 1
+        sync_ai_control_state()
 
         # 🔍 MONITOREO PROACTIVO DE SELECTORES (EN SEGUNDO PLANO)
         if iteracion_count % proactive_check_interval == 0:

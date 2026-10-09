@@ -140,6 +140,7 @@ def main() -> int:
             "cancheria.domain.reservations.calendar",
             "cancheria.desktop.update_service",
             "cancheria.desktop.update_helper",
+            "cancheria.desktop.ai_control",
         ):
             try:
                 __import__(module_name)

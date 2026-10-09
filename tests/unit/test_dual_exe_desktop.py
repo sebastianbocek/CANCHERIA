@@ -24,6 +24,15 @@ def test_main_gui_exposes_integrated_admin_panel():
     assert "DesktopAdminService" in text
 
 
+def test_frozen_worker_bundles_shared_ai_pause_control():
+    launcher = (ROOT / "cancheria_desktop.py").read_text(encoding="utf-8")
+    build = (ROOT / "scripts" / "build_fresh_installer.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert '"cancheria.desktop.ai_control"' in launcher
+    assert '"--hidden-import", "cancheria.desktop.ai_control"' in build
+
+
 def test_admin_panel_reuses_whatsapp_admin_operations():
     service = (ROOT / "src" / "cancheria" / "admin" / "desktop_service.py").read_text(encoding="utf-8")
     assert 'legacy_callable("marcar_senia_pagada_admin")' in service

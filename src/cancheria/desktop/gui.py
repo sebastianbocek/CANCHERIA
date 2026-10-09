@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from cancheria import __version__
+from cancheria.desktop.ai_control import ensure_ai_control, read_ai_control, write_ai_paused
 from cancheria.desktop.session_manager import ensure_profile, reset_profile, SessionResetError
 from cancheria.config.openai_credentials import CredentialStatus, verify_openai_api_key
 from cancheria.config.settings import AppSettings
@@ -104,6 +105,9 @@ class CancheriaDesktop(tk.Tk):
         self._announced_update_version = ""
         self.log_queue: queue.Queue[str] = queue.Queue()
         self._closing = False
+        self.ai_paused = bool(
+            ensure_ai_control(self.root_dir, default_paused=False).get("paused", False)
+        )
 
         ensure_profile(self.profile_dir)
 
@@ -181,17 +185,24 @@ class CancheriaDesktop(tk.Tk):
 
         actions = tk.Frame(self, bg=self.BG)
         actions.pack(fill="x", padx=20, pady=(4, 12))
-        for col in range(4):
+        for col in range(5):
             actions.grid_columnconfigure(col, weight=1)
 
         self.btn_on = self._button(actions, "ENCENDER", self.start_agent, self.GREEN)
-        self.btn_pause = self._button(actions, "PAUSA", self.pause_agent, self.ORANGE)
+        self.btn_off = self._button(actions, "APAGAR", self.stop_agent, self.RED)
+        self.btn_ai_pause = self._button(
+            actions,
+            "REANUDAR IA" if self.ai_paused else "PAUSAR IA",
+            self.toggle_ai_pause,
+            self.ORANGE,
+        )
         self.btn_logout = self._button(actions, "CERRAR SESIÓN", self.close_session, self.RED)
         self.btn_new = self._button(actions, "NUEVA SESIÓN", self.new_session, self.BLUE)
         self.btn_on.grid(row=0, column=0, sticky="ew", padx=5)
-        self.btn_pause.grid(row=0, column=1, sticky="ew", padx=5)
-        self.btn_logout.grid(row=0, column=2, sticky="ew", padx=5)
-        self.btn_new.grid(row=0, column=3, sticky="ew", padx=5)
+        self.btn_off.grid(row=0, column=1, sticky="ew", padx=5)
+        self.btn_ai_pause.grid(row=0, column=2, sticky="ew", padx=5)
+        self.btn_logout.grid(row=0, column=3, sticky="ew", padx=5)
+        self.btn_new.grid(row=0, column=4, sticky="ew", padx=5)
 
         secondary = tk.Frame(self, bg=self.BG)
         secondary.pack(fill="x", padx=25, pady=(0, 10))
@@ -363,20 +374,6 @@ class CancheriaDesktop(tk.Tk):
             messagebox.showerror("CANCHERIA", f"No encontré WPSetter.py en:\n{self.root_dir}")
             return
 
-        self._set_status("Verificando API key...", self.ORANGE)
-        self.update_idletasks()
-        credential_check = verify_openai_api_key(AppSettings.from_env().openai_api_key)
-        if credential_check.status != CredentialStatus.VALID:
-            self._set_status("Configuración requerida", self.RED)
-            self._append_log(f"⚠ No se inició: {credential_check.message}")
-            messagebox.showerror(
-                "CANCHERIA · API key",
-                f"{credential_check.message}\n\n"
-                "Abrí CONFIGURACIÓN, pegá una clave válida y guardá nuevamente.\n\n"
-                "https://platform.openai.com/api-keys",
-            )
-            return
-
         ensure_profile(self.profile_dir)
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
@@ -406,9 +403,29 @@ class CancheriaDesktop(tk.Tk):
             messagebox.showerror("CANCHERIA", f"No pude iniciar WPSetter:\n{exc}")
             return
 
-        self._set_status("Encendido", self.GREEN)
+        self._refresh_ai_pause_state()
+        self._set_running_status()
         self._append_log(f"▶ CANCHERIA iniciado con profile: {self.profile_dir.name}")
         threading.Thread(target=self._read_worker_output, args=(self.process,), daemon=True).start()
+        threading.Thread(target=self._verify_api_in_background, daemon=True).start()
+
+    def _verify_api_in_background(self) -> None:
+        """Report credential health without ever blocking WhatsApp startup."""
+        try:
+            credential_check = verify_openai_api_key(AppSettings.from_env().openai_api_key)
+        except Exception as exc:
+            self.log_queue.put(
+                "⚠ No pude verificar la API de OpenAI, pero WhatsApp y las alertas "
+                f"siguen encendidos. Detalle: {exc}"
+            )
+            return
+        if credential_check.status == CredentialStatus.VALID:
+            self.log_queue.put("✓ API de OpenAI verificada correctamente.")
+            return
+        self.log_queue.put(
+            f"⚠ {credential_check.message} WhatsApp y las alertas siguen encendidos; "
+            "la IA no podrá responder hasta guardar una clave válida en CONFIGURACIÓN."
+        )
 
     def _read_worker_output(self, process: subprocess.Popen[str]) -> None:
         stream = process.stdout
@@ -436,9 +453,11 @@ class CancheriaDesktop(tk.Tk):
         if self.process and self.process.poll() is not None:
             code = self.process.returncode
             self._append_log(f"■ Proceso finalizado (código {code}).")
-            if self.status_var.get() == "Encendido":
-                self._set_status("Apagado", self.MUTED if code == 0 else self.RED)
+            self._set_status("Apagado", self.MUTED if code == 0 else self.RED)
             self.process = None
+        elif self.process and self.process.poll() is None:
+            self._refresh_ai_pause_state()
+            self._set_running_status()
         if not self._closing:
             self.after(700, self._poll_process)
 
@@ -478,14 +497,57 @@ class CancheriaDesktop(tk.Tk):
             self.process = None
             time.sleep(0.5)
 
-    def pause_agent(self) -> None:
+    def _refresh_ai_pause_state(self) -> None:
+        self.ai_paused = bool(
+            read_ai_control(
+                self.root_dir,
+                default_paused=getattr(self, "ai_paused", False),
+            ).get("paused", False)
+        )
+        if hasattr(self, "btn_ai_pause"):
+            self.btn_ai_pause.configure(
+                text="REANUDAR IA" if self.ai_paused else "PAUSAR IA"
+            )
+
+    def _set_running_status(self) -> None:
+        if self.ai_paused:
+            self._set_status("Encendido · IA pausada", self.ORANGE)
+        else:
+            self._set_status("Encendido", self.GREEN)
+
+    def stop_agent(self) -> None:
         if not self.process or self.process.poll() is not None:
-            self._set_status("Pausado", self.ORANGE)
+            self._set_status("Apagado", self.MUTED)
             self._append_log("CANCHERIA ya estaba detenido. La sesión de WhatsApp sigue guardada.")
             return
         self._stop_process()
-        self._set_status("Pausado", self.ORANGE)
-        self._append_log("⏸ Pausado. El perfil wa_profile se conserva; ENCENDER retoma la misma sesión.")
+        self._set_status("Apagado", self.MUTED)
+        self._append_log("⏹ Apagado. El perfil wa_profile se conserva; ENCENDER retoma la misma sesión.")
+
+    def toggle_ai_pause(self) -> None:
+        if not self.process or self.process.poll() is not None:
+            self._set_status("Apagado", self.MUTED)
+            self._append_log("Encendé CANCHERIA antes de pausar o reanudar la IA.")
+            return
+        paused = not self.ai_paused
+        try:
+            write_ai_paused(paused, self.root_dir, source="desktop_gui")
+        except OSError as exc:
+            messagebox.showerror(
+                "CANCHERIA · Pausa IA",
+                f"No pude cambiar el estado de la IA:\n{exc}",
+            )
+            return
+        self.ai_paused = paused
+        self._refresh_ai_pause_state()
+        self._set_running_status()
+        if paused:
+            self._append_log(
+                "⏸ IA pausada. WhatsApp permanece abierto; CANCHERIA no responderá "
+                "automáticamente a los clientes."
+            )
+        else:
+            self._append_log("▶ IA reanudada. CANCHERIA vuelve a responder a los clientes.")
 
     def close_session(self) -> None:
         ok = messagebox.askyesno(

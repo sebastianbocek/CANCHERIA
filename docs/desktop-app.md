@@ -4,8 +4,9 @@ The Windows desktop application is a thin operator layer around the existing `WP
 
 ## Controls
 
-- **ENCENDER** starts the worker with `--profile ./wa_profile`.
-- **PAUSA** stops the local automation/browser process while preserving `wa_profile`.
+- **ENCENDER** starts the worker with `--profile ./wa_profile`. OpenAI credential verification runs in the background and never blocks WhatsApp or operational alerts from starting.
+- **APAGAR** stops the local automation/browser process while preserving `wa_profile`.
+- **PAUSAR IA / REANUDAR IA** changes only the automatic-response state while keeping the WhatsApp worker and browser open. The shared state is persisted in `runtime/ai_control.json` and synchronized with the equivalent WhatsApp admin commands.
 - **CERRAR SESIÓN** stops the worker and recreates `wa_profile` empty.
 - **NUEVA SESIÓN** performs the same local profile reset and immediately starts the worker so WhatsApp Web presents a new QR.
 - **Abrir manual** opens the bundled owner/operator PDF.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.20 - 2026-10-09
+
+- `ENCENDER` ya no queda bloqueado por una API key vacía, inválida o temporalmente imposible de verificar: WhatsApp y las alertas operativas arrancan igualmente.
+- La verificación de OpenAI ahora se ejecuta en segundo plano y su resultado se informa en Actividad sin cerrar ni impedir el agente.
+- El antiguo botón `PAUSA` ahora se llama `APAGAR` y detiene completamente CANCHERIA conservando la sesión de WhatsApp.
+- Nuevo botón `PAUSAR IA` / `REANUDAR IA`: detiene y restablece sólo las respuestas automáticas mientras WhatsApp permanece abierto.
+- El estado de pausa queda sincronizado con los comandos de administrador de WhatsApp y se conserva durante actualizaciones.
+
 ## 0.2.19 - 2026-10-09
 
 - Agrega la pestaña `Turnos Fijos` antes de `Blacklist` en el panel de administración.
