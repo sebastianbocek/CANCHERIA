@@ -226,8 +226,8 @@ class HoursDateField(tk.Canvas):
     def __init__(self, parent, variable, on_open, on_submit) -> None:
         super().__init__(
             parent,
-            width=230,
-            height=56,
+            width=218,
+            height=48,
             bg=parent.cget("bg"),
             bd=0,
             highlightthickness=0,
@@ -243,7 +243,7 @@ class HoursDateField(tk.Canvas):
             insertbackground="#142B50",
             font=("Segoe UI", 11),
         )
-        self.create_window(16, 28, window=self.entry, anchor="w", width=155, height=30)
+        self.create_window(16, 24, window=self.entry, anchor="w", width=148, height=28)
         self.bind("<Configure>", self._redraw)
         self.bind("<Button-1>", lambda _event: on_open())
         self.entry.bind("<Return>", lambda _event: on_submit())
@@ -300,7 +300,7 @@ class HoursPill(tk.Canvas):
         super().__init__(
             parent,
             width=width,
-            height=38,
+            height=34,
             bg=parent.cget("bg"),
             bd=0,
             highlightthickness=0,
@@ -323,9 +323,9 @@ class HoursPill(tk.Canvas):
         _hours_rounded_box(self, 1, 1, width - 1, height - 1, 18, fill=self._fill)
         icon_x = 22
         if self._dot:
-            self.create_oval(13, 10, 33, 30, fill=self._dot, outline=self._dot)
+            self.create_oval(13, height / 2 - 9, 31, height / 2 + 9, fill=self._dot, outline=self._dot)
         elif self._calendar:
-            _draw_hours_calendar(self, 22, 19, "#1673FF")
+            _draw_hours_calendar(self, 22, height / 2, "#1673FF")
         else:
             icon_x = 10
         self.create_text(
@@ -887,17 +887,17 @@ class AdminPanel(tk.Toplevel):
             highlightthickness=1,
             bd=0,
         )
-        section.pack(fill="both", expand=True, padx=14, pady=12)
+        section.pack(fill="both", expand=True, padx=14, pady=8)
 
         toolbar = tk.Frame(section, bg="#FFFFFF")
-        toolbar.pack(fill="x", padx=18, pady=(16, 6))
+        toolbar.pack(fill="x", padx=14, pady=(8, 2))
         toolbar.grid_columnconfigure(0, weight=1)
         controls = tk.Frame(toolbar, bg="#FFFFFF")
         controls.grid(row=0, column=0, sticky="w")
         self.hours_controls = controls
 
         date_caption = tk.Frame(controls, bg="#FFFFFF", cursor="hand2")
-        date_caption.pack(side="left", padx=(0, 12))
+        date_caption.pack(side="left", padx=(0, 8))
         date_label = tk.Label(
             date_caption,
             text="Fecha",
@@ -930,7 +930,7 @@ class AdminPanel(tk.Toplevel):
             ),
             self._refresh_hours,
         )
-        date_field.pack(side="left", padx=(0, 12))
+        date_field.pack(side="left", padx=(0, 8))
         date_label.bind(
             "<Button-1>",
             lambda _event: self._show_date_picker(
@@ -958,8 +958,8 @@ class AdminPanel(tk.Toplevel):
             border="#D7E1EF",
             hover_fill="#E8F1FF",
             command=lambda: self._move_hours_date(-1),
-            width=52,
-            height=56,
+            width=48,
+            height=48,
             font=("Segoe UI", 18, "bold"),
         ).pack(side="left", padx=(0, 8))
         HoursTile(
@@ -969,8 +969,8 @@ class AdminPanel(tk.Toplevel):
             foreground="#FFFFFF",
             hover_fill="#0F62E8",
             command=self._set_hours_today,
-            width=90,
-            height=56,
+            width=80,
+            height=48,
             font=("Segoe UI", 11, "bold"),
         ).pack(side="left", padx=(0, 8))
         HoursTile(
@@ -981,10 +981,10 @@ class AdminPanel(tk.Toplevel):
             border="#D7E1EF",
             hover_fill="#E8F1FF",
             command=lambda: self._move_hours_date(1),
-            width=52,
-            height=56,
+            width=48,
+            height=48,
             font=("Segoe UI", 18, "bold"),
-        ).pack(side="left", padx=(0, 12))
+        ).pack(side="left", padx=(0, 8))
         HoursTile(
             controls,
             text="Ver horarios",
@@ -993,8 +993,8 @@ class AdminPanel(tk.Toplevel):
             hover_fill="#0F62E8",
             command=self._refresh_hours,
             icon="calendar",
-            width=165,
-            height=56,
+            width=154,
+            height=48,
             font=("Segoe UI", 10, "bold"),
         ).pack(side="left")
 
@@ -1014,7 +1014,7 @@ class AdminPanel(tk.Toplevel):
             column=0,
             columnspan=2,
             sticky="w",
-            pady=(4, 0),
+            pady=(2, 0),
         )
         self.hours_legend_pills = [
             self._legend_item(self.hours_legend, self.FREE_GREEN, "Disponible", "#E3F8EF", 155),
@@ -1030,9 +1030,9 @@ class AdminPanel(tk.Toplevel):
             highlightthickness=1,
             bd=0,
         )
-        grid_card.pack(fill="both", expand=True, padx=18, pady=(0, 14))
+        grid_card.pack(fill="both", expand=True, padx=14, pady=(0, 8))
         body = tk.Frame(grid_card, bg="#FFFFFF")
-        body.pack(fill="both", expand=True, padx=7, pady=7)
+        body.pack(fill="both", expand=True, padx=4, pady=4)
         self.hours_canvas = tk.Canvas(body, bg="white", highlightthickness=0)
         vertical = ttk.Scrollbar(body, orient="vertical", command=self.hours_canvas.yview, style="Hours.Vertical.TScrollbar")
         horizontal = ttk.Scrollbar(body, orient="horizontal", command=self.hours_canvas.xview, style="Hours.Horizontal.TScrollbar")
@@ -1983,9 +1983,9 @@ class AdminPanel(tk.Toplevel):
             foreground=self.NAVY,
             border="#E5ECF5",
             width=145,
-            height=50,
+            height=38,
             font=("Segoe UI", 10, "bold"),
-        ).grid(row=0, column=0, sticky="nsew", padx=4, pady=3)
+        ).grid(row=0, column=0, sticky="nsew", padx=3, pady=1)
         catalog_method = getattr(self.service, "court_catalog", None)
         catalog = catalog_method() if callable(catalog_method) else []
         identities = {str(item.get("name")): item for item in catalog}
@@ -2001,11 +2001,11 @@ class AdminPanel(tk.Toplevel):
                 foreground=self.NAVY,
                 border="#E5ECF5",
                 width=215,
-                height=50,
+                height=38,
                 font=("Segoe UI", 10, "bold"),
             )
             header.configure(cursor="hand2")
-            header.grid(row=0, column=column, sticky="nsew", padx=4, pady=3)
+            header.grid(row=0, column=column, sticky="nsew", padx=3, pady=1)
             header.bind(
                 "<Button-3>",
                 lambda event, selected_court=court: self._show_court_sport_menu(
@@ -2021,9 +2021,9 @@ class AdminPanel(tk.Toplevel):
                 foreground=self.NAVY,
                 border="#F1F4F8",
                 width=145,
-                height=46,
+                height=34,
                 font=("Segoe UI", 11, "bold"),
-            ).grid(row=row_index, column=0, sticky="nsew", padx=4, pady=3)
+            ).grid(row=row_index, column=0, sticky="nsew", padx=3, pady=1)
             for column, court in enumerate(courts, start=1):
                 cell = cell_map[(time, court)]
                 text, color = self._hour_cell_style(cell)
@@ -2041,9 +2041,9 @@ class AdminPanel(tk.Toplevel):
                     hover_fill=hover,
                     gradient=color == self.FREE_GREEN,
                     width=215,
-                    height=46,
+                    height=34,
                     font=("Segoe UI", 9, "bold"),
-                ).grid(row=row_index, column=column, sticky="nsew", padx=4, pady=3)
+                ).grid(row=row_index, column=column, sticky="nsew", padx=3, pady=1)
 
         if not slots:
             tk.Label(

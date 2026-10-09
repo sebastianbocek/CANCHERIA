@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.25 - 2026-10-09
+
+- Compacta exclusivamente la pestaña `Horas` para recuperar seis horarios completos visibles simultáneamente en el tamaño habitual del panel.
+- Reduce de forma proporcionada márgenes, controles, píldoras, encabezados y alto de las filas sin perder el diseño moderno de `v0.2.24`.
+- Mantiene intactos la disponibilidad real, los callbacks de la grilla, el calendario, el menú contextual y los desplazamientos vertical y horizontal.
+
 ## 0.2.24 - 2026-10-09
 
 - Rediseña exclusivamente la pestaña `Horas` con un contenedor moderno, controles de fecha redondeados y navegación más clara.
