@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.19 - 2026-10-09
+
+- Agrega la pestaña `Turnos Fijos` antes de `Blacklist` en el panel de administración.
+- Permite listar, crear y quitar turnos semanales recurrentes con las mismas operaciones usadas por WhatsApp.
+- Al crear un turno fijo, incorpora inmediatamente la próxima fecha disponible a la agenda compartida de `Horas`.
+- Muestra para cada turno su próxima fecha y si ya está en agenda, está pendiente o el horario se encuentra ocupado.
+- Al quitar una recurrencia conserva la reserva próxima ya generada, evitando cancelaciones accidentales.
+
 ## 0.2.18 - 2026-10-09
 
 - Agrega la pestaña `Blacklist` al panel de administración, ubicada antes de `Comandos y configuración`.

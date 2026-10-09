@@ -80,6 +80,7 @@ class DesktopAdminService:
             "operation": 0,
             "cases": cases,
             "tournaments": tournaments,
+            "fixed_turns": 0,
             "blacklist": 0,
             "commands": 0,
             "total": bookings + cases + tournaments,
@@ -129,6 +130,209 @@ class DesktopAdminService:
         normalized = legacy_callable("_blacklist_entry_from_target")(target)
         label = legacy_callable("_blacklist_label")(normalized)
         return f"{label} fue eliminado de la blacklist."
+
+    @staticmethod
+    def _next_fixed_occurrence(weekday: int, time: str) -> dt.date:
+        now = dt.datetime.now()
+        day = now.date() + dt.timedelta(days=(int(weekday) - now.date().weekday()) % 7)
+        try:
+            slot_time = dt.time.fromisoformat(str(time or "").strip())
+        except ValueError:
+            slot_time = dt.time.max
+        if day == now.date() and dt.datetime.combine(day, slot_time) <= now:
+            day += dt.timedelta(days=7)
+        return day
+
+    def fixed_turns(self) -> list[dict[str, Any]]:
+        """List active weekly turns stored in the shared client memory."""
+        path = self.runtime / "client_memory.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+
+        active_bookings = [
+            dict(row)
+            for row in self.calendar.asegurar_ids_reservas()
+            if str(row.get("estado") or "").strip().lower() in ACTIVE_STATES
+        ]
+        day_names = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
+        result: list[dict[str, Any]] = []
+        for client_key, raw_memory in payload.items():
+            memory = raw_memory if isinstance(raw_memory, dict) else {}
+            fixed = memory.get("turno_fijo") or {}
+            if not isinstance(fixed, dict) or not fixed.get("activo"):
+                continue
+            try:
+                weekday = int(fixed.get("dia_semana"))
+            except (TypeError, ValueError):
+                continue
+            if weekday not in range(7):
+                continue
+            time = self._minutes_to_time(self._time_to_minutes(str(fixed.get("hora") or "")))
+            court = str(fixed.get("cancha") or "").strip()
+            name = str(memory.get("nombre") or "").strip()
+            phone = str(memory.get("telefono") or "").strip()
+            next_day = self._next_fixed_occurrence(weekday, time)
+            slot_rows = [
+                row for row in active_bookings
+                if self._row_matches_date(row, next_day)
+                and str(row.get("hora") or "").strip() == time
+                and str(row.get("cancha") or "").strip().casefold() == court.casefold()
+            ]
+            same_client = any(
+                (phone and str(row.get("telefono") or "").strip() == phone)
+                or (name and str(row.get("nombre") or "").strip().casefold() == name.casefold())
+                for row in slot_rows
+            )
+            calendar_status = (
+                "En agenda" if same_client else "Horario ocupado" if slot_rows else "Pendiente de generar"
+            )
+            result.append({
+                "client_key": str(client_key),
+                "name": name or str(client_key).removeprefix("NOMBRE:"),
+                "phone": phone,
+                "weekday": weekday,
+                "day_name": day_names[weekday],
+                "time": time,
+                "court": court,
+                "next_date": next_day.isoformat(),
+                "calendar_status": calendar_status,
+            })
+        return sorted(
+            result,
+            key=lambda item: (int(item["weekday"]), str(item["time"]), str(item["court"])),
+        )
+
+    def create_fixed_turn(
+        self,
+        *,
+        name: str,
+        phone: str,
+        weekday: int,
+        time: str,
+        court: str,
+    ) -> str:
+        name = str(name or "").strip()
+        phone = str(phone or "").strip()
+        court = str(court or "").strip()
+        if not name and not phone:
+            raise ValueError("Ingresá el nombre o teléfono del cliente.")
+        try:
+            weekday = int(weekday)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Seleccioná un día de la semana válido.") from exc
+        if weekday not in range(7):
+            raise ValueError("Seleccioná un día de la semana válido.")
+        normalized_time = self._minutes_to_time(self._time_to_minutes(time))
+        if court not in self.courts():
+            raise ValueError("Seleccioná una cancha válida.")
+
+        command = {
+            "accion": "agregar_turno_fijo",
+            "nombre": name,
+            "telefono": phone,
+            "dia_semana": weekday,
+            "hora": normalized_time,
+            "cancha": court,
+        }
+        result = legacy_callable("actualizar_turno_fijo_cliente")(command)
+        if not result.get("ok"):
+            raise RuntimeError(self._result_message(result, "No se pudo crear el turno fijo."))
+
+        next_day = self._next_fixed_occurrence(weekday, normalized_time)
+        identity = phone or f"NOMBRE:{name}"
+        existing_slot = [
+            dict(row)
+            for row in self.calendar.asegurar_ids_reservas()
+            if str(row.get("estado") or "").strip().lower() in ACTIVE_STATES
+            and self._row_matches_date(row, next_day)
+            and str(row.get("hora") or "").strip() == normalized_time
+            and str(row.get("cancha") or "").strip().casefold() == court.casefold()
+        ]
+        same_client_exists = any(
+            (phone and str(row.get("telefono") or "").strip() == phone)
+            or (name and str(row.get("nombre") or "").strip().casefold() == name.casefold())
+            for row in existing_slot
+        )
+        created_now = False
+        if same_client_exists:
+            booked, detail = True, (next_day.strftime("%d/%m/%Y"), normalized_time)
+        elif existing_slot:
+            booked, detail = False, ("", "")
+        else:
+            booking_result = legacy_callable("reservar_turno_en_calendario")(
+                identity,
+                {
+                    "nombre": name or identity.removeprefix("NOMBRE:"),
+                    "negocio": name or identity.removeprefix("NOMBRE:"),
+                    "telefono": identity,
+                    "website": "Turno fijo semanal",
+                    "whatsapp_link": "",
+                    "es_cliente": "si",
+                },
+                next_day.strftime("%d/%m/%Y"),
+                normalized_time,
+                cancha=court,
+                estado_reserva=cfg.BOOKING_STATUS_PENDING,
+                senia_estado="pendiente",
+                senia_monto="",
+                duracion_horas=getattr(cfg, "DEFAULT_TURN_DURATION_HOURS", 1.0),
+            )
+            booked = bool(booking_result.get("ok"))
+            detail = (
+                str(booking_result.get("dia") or ""),
+                str(booking_result.get("hora") or normalized_time),
+            )
+            created_now = booked
+        response = self._result_message(result, "Turno fijo creado.")
+        if booked:
+            client_key = legacy_callable("_telefono_memoria_turno_fijo")(command)
+            load_memory = legacy_callable("cargar_memoria_cliente")
+            save_memory = legacy_callable("guardar_memoria_cliente")
+            memory = load_memory(client_key)
+            fixed = dict(memory.get("turno_fijo") or {})
+            fixed["ultima_reserva_fecha"] = next_day.isoformat()
+            fixed["ultima_generacion"] = dt.datetime.now().isoformat(timespec="seconds")
+            memory["turno_fijo"] = fixed
+            save_memory(client_key, memory)
+            agenda_message = (
+                "El próximo turno fue agregado a Horas"
+                if created_now
+                else "El próximo turno ya estaba en Horas"
+            )
+            return (
+                response
+                + f"\n{agenda_message}: "
+                + f"{next_day.strftime('%d/%m/%Y')} a las {detail[1] or normalized_time} en {court}."
+            )
+
+        return (
+            response
+            + f"\nEl turno fijo quedó guardado, pero el {next_day.strftime('%d/%m/%Y')} "
+            + f"a las {normalized_time} en {court} no pudo agregarse a Horas porque no está disponible."
+        )
+
+    def remove_fixed_turn(self, *, client_key: str, name: str = "", phone: str = "") -> str:
+        client_key = str(client_key or "").strip()
+        name = str(name or "").strip()
+        phone = str(phone or "").strip()
+        if not client_key and not name and not phone:
+            raise ValueError("Seleccioná un turno fijo de la tabla.")
+        command = {
+            "accion": "quitar_turno_fijo",
+            "telefono": phone if phone and not phone.startswith("NOMBRE:") else "",
+            "nombre": name or client_key.removeprefix("NOMBRE:"),
+        }
+        result = legacy_callable("actualizar_turno_fijo_cliente")(command)
+        if not result.get("ok"):
+            raise RuntimeError(self._result_message(result, "No se pudo quitar el turno fijo."))
+        return (
+            self._result_message(result, "Turno fijo eliminado.")
+            + "\nLa próxima reserva que ya estaba generada se conserva en Horas."
+        )
 
     def tournaments(self) -> list[dict[str, Any]]:
         result = []

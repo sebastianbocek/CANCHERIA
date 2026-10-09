@@ -265,6 +265,7 @@ def test_notification_counts_sum_only_unresolved_admin_work():
         "operation": 0,
         "cases": 2,
         "tournaments": 0,
+        "fixed_turns": 0,
         "blacklist": 0,
         "commands": 0,
         "total": 5,

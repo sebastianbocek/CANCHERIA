@@ -95,6 +95,7 @@ class AdminPanel(tk.Toplevel):
         self.operation_tab = tk.Frame(self.notebook, bg="white")
         self.cases_tab = tk.Frame(self.notebook, bg="white")
         self.tournaments_tab = tk.Frame(self.notebook, bg="white")
+        self.fixed_turns_tab = tk.Frame(self.notebook, bg="white")
         self.blacklist_tab = tk.Frame(self.notebook, bg="white")
         self.commands_tab = tk.Frame(self.notebook, bg="white")
         self.notebook.add(self.bookings_tab, text="Reservas y pagos")
@@ -102,6 +103,7 @@ class AdminPanel(tk.Toplevel):
         self.notebook.add(self.operation_tab, text="Operación")
         self.notebook.add(self.cases_tab, text="Atención humana")
         self.notebook.add(self.tournaments_tab, text="Torneos")
+        self.notebook.add(self.fixed_turns_tab, text="Turnos Fijos")
         self.notebook.add(self.blacklist_tab, text="Blacklist")
         self.notebook.add(self.commands_tab, text="Comandos y configuración")
         self._tab_titles = {
@@ -110,6 +112,7 @@ class AdminPanel(tk.Toplevel):
             self.operation_tab: "Operación",
             self.cases_tab: "Atención humana",
             self.tournaments_tab: "Torneos",
+            self.fixed_turns_tab: "Turnos Fijos",
             self.blacklist_tab: "Blacklist",
             self.commands_tab: "Comandos y configuración",
         }
@@ -119,6 +122,7 @@ class AdminPanel(tk.Toplevel):
             self.operation_tab: "operation",
             self.cases_tab: "cases",
             self.tournaments_tab: "tournaments",
+            self.fixed_turns_tab: "fixed_turns",
             self.blacklist_tab: "blacklist",
             self.commands_tab: "commands",
         }
@@ -128,6 +132,7 @@ class AdminPanel(tk.Toplevel):
         self._build_operation()
         self._build_cases()
         self._build_tournaments()
+        self._build_fixed_turns()
         self._build_blacklist()
         self._build_commands()
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
@@ -238,6 +243,8 @@ class AdminPanel(tk.Toplevel):
             self._refresh_hours()
         elif self.notebook.select() == str(self.tournaments_tab):
             self._refresh_tournaments()
+        elif self.notebook.select() == str(self.fixed_turns_tab):
+            self._refresh_fixed_turns()
         elif self.notebook.select() == str(self.blacklist_tab):
             self._refresh_blacklist()
 
@@ -420,6 +427,59 @@ class AdminPanel(tk.Toplevel):
         registration_scroll.pack(side="right", fill="y", pady=(0, 10))
         self.registration_tree.pack(fill="both", expand=True, padx=(10, 0), pady=(0, 10))
 
+    def _build_fixed_turns(self) -> None:
+        header = tk.Frame(self.fixed_turns_tab, bg="white")
+        header.pack(fill="x", padx=16, pady=(16, 8))
+        tk.Label(
+            header,
+            text="Turnos semanales recurrentes",
+            font=("Segoe UI", 14, "bold"),
+            fg=self.NAVY,
+            bg="white",
+        ).pack(anchor="w")
+        tk.Label(
+            header,
+            text=(
+                "Usa los mismos turnos fijos de WhatsApp. La próxima fecha se agrega a la agenda de Horas."
+            ),
+            fg=self.MUTED,
+            bg="white",
+        ).pack(anchor="w", pady=(3, 0))
+
+        actions = tk.Frame(self.fixed_turns_tab, bg="white")
+        actions.pack(fill="x", padx=16, pady=(4, 12))
+        self._action_button(
+            actions, "Nuevo turno fijo", self._new_fixed_turn_dialog, self.BLUE
+        ).pack(side="left", padx=3)
+        self._action_button(
+            actions, "Quitar seleccionado", self._remove_fixed_turn, self.RED
+        ).pack(side="left", padx=3)
+        self._action_button(
+            actions, "Actualizar", self._refresh_fixed_turns, self.NAVY
+        ).pack(side="left", padx=3)
+
+        body = tk.Frame(self.fixed_turns_tab, bg="white")
+        body.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+        columns = ("name", "phone", "day", "time", "court", "next", "status")
+        self.fixed_turn_tree = ttk.Treeview(
+            body, columns=columns, show="headings", selectmode="browse"
+        )
+        labels = (
+            "Cliente", "Teléfono", "Día semanal", "Hora", "Cancha", "Próxima fecha", "Agenda Horas"
+        )
+        widths = (180, 145, 110, 75, 130, 105, 145)
+        for key, label, width in zip(columns, labels, widths):
+            self.fixed_turn_tree.heading(key, text=label)
+            self.fixed_turn_tree.column(
+                key,
+                width=width,
+                anchor="w" if key in {"name", "phone"} else "center",
+            )
+        scrollbar = ttk.Scrollbar(body, orient="vertical", command=self.fixed_turn_tree.yview)
+        self.fixed_turn_tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.fixed_turn_tree.pack(side="left", fill="both", expand=True)
+
     def _build_blacklist(self) -> None:
         header = tk.Frame(self.blacklist_tab, bg="white")
         header.pack(fill="x", padx=16, pady=(16, 8))
@@ -538,6 +598,7 @@ class AdminPanel(tk.Toplevel):
             self._refresh_bookings()
             self._refresh_cases()
             self._refresh_tournaments()
+            self._refresh_fixed_turns()
             self._refresh_blacklist()
             self._refresh_hours()
         except Exception as exc:
@@ -547,7 +608,8 @@ class AdminPanel(tk.Toplevel):
         normalized = {
             key: max(0, int(counts.get(key, 0) or 0))
             for key in (
-                "bookings", "hours", "operation", "cases", "tournaments", "blacklist", "commands"
+                "bookings", "hours", "operation", "cases", "tournaments", "fixed_turns",
+                "blacklist", "commands"
             )
         }
         normalized["total"] = sum(normalized.values())
@@ -586,6 +648,7 @@ class AdminPanel(tk.Toplevel):
             "operation": 0,
             "cases": cases,
             "tournaments": 0,
+            "fixed_turns": 0,
             "blacklist": 0,
             "commands": 0,
             "total": bookings + cases,
@@ -650,6 +713,8 @@ class AdminPanel(tk.Toplevel):
                 self._refresh_bookings()
                 self._refresh_cases()
                 self._refresh_tournaments()
+            if self.notebook.select() == str(self.fixed_turns_tab):
+                self._refresh_fixed_turns()
             if self.notebook.select() == str(self.blacklist_tab):
                 self._refresh_blacklist()
         except Exception:
@@ -675,6 +740,147 @@ class AdminPanel(tk.Toplevel):
                 row.get("nombre", ""), row.get("telefono", ""), row.get("estado", ""), row.get("senia_estado", ""),
                 row.get("monto_pendiente", ""),
             ))
+
+    def _refresh_fixed_turns(self) -> None:
+        if not hasattr(self, "fixed_turn_tree"):
+            return
+        method = getattr(self.service, "fixed_turns", None)
+        if not callable(method):
+            return
+        selected_key = ""
+        selection = self.fixed_turn_tree.selection()
+        if selection:
+            selected_key = str(
+                getattr(self, "_fixed_turn_rows", {}).get(selection[0], {}).get("client_key") or ""
+            )
+        self.fixed_turn_tree.delete(*self.fixed_turn_tree.get_children())
+        self._fixed_turn_rows = {}
+        for index, row in enumerate(method()):
+            iid = f"fixed-turn:{index}"
+            normalized = dict(row)
+            self._fixed_turn_rows[iid] = normalized
+            next_date = str(normalized.get("next_date") or "")
+            try:
+                import datetime
+
+                next_date = datetime.date.fromisoformat(next_date).strftime("%d/%m/%Y")
+            except ValueError:
+                pass
+            self.fixed_turn_tree.insert(
+                "",
+                "end",
+                iid=iid,
+                values=(
+                    normalized.get("name", ""),
+                    normalized.get("phone", ""),
+                    normalized.get("day_name", ""),
+                    normalized.get("time", ""),
+                    normalized.get("court", ""),
+                    next_date,
+                    normalized.get("calendar_status", ""),
+                ),
+            )
+            if normalized.get("client_key") == selected_key:
+                self.fixed_turn_tree.selection_set(iid)
+
+    def _new_fixed_turn_dialog(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("Nuevo turno fijo")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        day_names = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
+        courts = self.service.courts()
+        values = {
+            "name": tk.StringVar(),
+            "phone": tk.StringVar(),
+            "day": tk.StringVar(value=day_names[0]),
+            "time": tk.StringVar(value="20:00"),
+            "court": tk.StringVar(value=courts[0]),
+        }
+        fields = (
+            ("Nombre del cliente", "name"),
+            ("Teléfono", "phone"),
+            ("Día semanal", "day"),
+            ("Hora (HH:MM)", "time"),
+            ("Cancha", "court"),
+        )
+        for row_index, (label, key) in enumerate(fields):
+            tk.Label(dialog, text=label).grid(
+                row=row_index, column=0, sticky="w", padx=14, pady=8
+            )
+            if key == "day":
+                ttk.Combobox(
+                    dialog,
+                    textvariable=values[key],
+                    values=day_names,
+                    state="readonly",
+                    width=31,
+                ).grid(row=row_index, column=1, padx=14, pady=8)
+            elif key == "court":
+                ttk.Combobox(
+                    dialog,
+                    textvariable=values[key],
+                    values=courts,
+                    state="readonly",
+                    width=31,
+                ).grid(row=row_index, column=1, padx=14, pady=8)
+            else:
+                tk.Entry(dialog, textvariable=values[key], width=34).grid(
+                    row=row_index, column=1, padx=14, pady=8
+                )
+
+        tk.Label(
+            dialog,
+            text="Completá al menos el nombre o el teléfono.",
+            fg=self.MUTED,
+        ).grid(row=len(fields), column=0, columnspan=2, pady=(2, 6))
+
+        def save() -> None:
+            try:
+                result = self.service.create_fixed_turn(
+                    name=values["name"].get(),
+                    phone=values["phone"].get(),
+                    weekday=day_names.index(values["day"].get()),
+                    time=values["time"].get(),
+                    court=values["court"].get(),
+                )
+                messagebox.showinfo("Turnos Fijos", result, parent=dialog)
+                dialog.destroy()
+                self._refresh_fixed_turns()
+                self._refresh_hours()
+                self._refresh_bookings()
+            except Exception as exc:
+                messagebox.showerror("Turnos Fijos", str(exc), parent=dialog)
+
+        self._action_button(dialog, "Crear turno fijo", save, self.BLUE).grid(
+            row=len(fields) + 1, column=0, columnspan=2, pady=14
+        )
+
+    def _remove_fixed_turn(self) -> None:
+        try:
+            selection = self.fixed_turn_tree.selection()
+            if not selection:
+                raise ValueError("Seleccioná un turno fijo de la tabla.")
+            row = getattr(self, "_fixed_turn_rows", {}).get(selection[0]) or {}
+            label = str(row.get("name") or row.get("phone") or row.get("client_key") or "")
+            if not messagebox.askyesno(
+                "Turnos Fijos",
+                f"¿Querés quitar el turno fijo de {label}?\n\n"
+                "La reserva de la próxima fecha que ya fue generada se conservará en Horas.",
+                parent=self,
+            ):
+                return
+            result = self.service.remove_fixed_turn(
+                client_key=str(row.get("client_key") or ""),
+                name=str(row.get("name") or ""),
+                phone=str(row.get("phone") or ""),
+            )
+            messagebox.showinfo("Turnos Fijos", result, parent=self)
+            self._refresh_fixed_turns()
+            self._refresh_hours()
+            self._refresh_bookings()
+        except Exception as exc:
+            messagebox.showerror("Turnos Fijos", str(exc), parent=self)
 
     def _refresh_blacklist(self) -> None:
         if not hasattr(self, "blacklist_tree"):
