@@ -199,7 +199,8 @@ def test_update_helper_rolls_back_program_files_when_replacement_fails(
 def test_gui_exposes_settings_and_update_action() -> None:
     root = Path(__file__).resolve().parents[2]
     text = (root / "src" / "cancheria" / "desktop" / "gui.py").read_text(encoding="utf-8")
-    assert 'text="⬆ ACTUALIZACIÓN"' in text
+    assert 'text="ACTUALIZACIÓN"' in text
+    assert 'icon="refresh"' in text
     assert 'text="ACTUALIZAR VERSIÓN"' in text
     assert "check_for_update(__version__)" in text
     assert "launch_update_helper" in text

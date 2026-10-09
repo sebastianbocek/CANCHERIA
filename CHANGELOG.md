@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.21 - 2026-10-09
+
+- Rediseño visual completo de la ventana principal con cabecera de marca, barra de estado real, botones redondeados con iconos locales y distribución adaptable.
+- Consola de actividad modernizada con scrollbar, marcas de tiempo visuales y colores por severidad sin alterar los mensajes originales.
+- Perfil activo mostrado dinámicamente y estados Apagado, Encendido, Pausado y Error vinculados al funcionamiento real.
+- Nuevo recurso optimizado del logotipo oficial para conservar nitidez y proporción tanto en Python como en el ejecutable empaquetado.
+- Rediseño visual completo del panel de administración con la identidad moderna de CANCHERIA.
+- Nueva barra personalizada para las ocho pestañas, con iconos, selección azul, hover y desplazamiento horizontal automático en ventanas angostas.
+- Encabezado, tarjetas estadísticas y botones de operación modernizados sin alterar sus datos ni callbacks.
+- Tablas con mayor altura de fila, encabezados coherentes, selección visible y scrollbars en todos los listados extensos.
+- Distribución adaptable validada desde 940×620, incluida la sección de inscripciones de torneos.
+
 ## 0.2.20 - 2026-10-09
 
 - `ENCENDER` ya no queda bloqueado por una API key vacía, inválida o temporalmente imposible de verificar: WhatsApp y las alertas operativas arrancan igualmente.

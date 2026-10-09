@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import signal
 import subprocess
 import sys
 import threading
 import time
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -24,6 +26,206 @@ from cancheria.desktop.update_service import (
     launch_update_helper,
     prepare_update,
 )
+
+
+def _rounded_rectangle(
+    canvas: tk.Canvas,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    radius: float,
+    **kwargs,
+):
+    """Draw a dependency-free rounded rectangle on a Tk canvas."""
+    radius = max(0, min(radius, (x2 - x1) / 2, (y2 - y1) / 2))
+    fill = kwargs.pop("fill", "")
+    outline = kwargs.pop("outline", "")
+    width = float(kwargs.pop("width", 1))
+    tags = kwargs.pop("tags", None)
+
+    def draw_layer(ax1, ay1, ax2, ay2, aradius, color):
+        options = {"fill": color, "outline": color}
+        if tags is not None:
+            options["tags"] = tags
+        items = [
+            canvas.create_rectangle(ax1 + aradius, ay1, ax2 - aradius, ay2, **options),
+            canvas.create_rectangle(ax1, ay1 + aradius, ax2, ay2 - aradius, **options),
+            canvas.create_oval(ax1, ay1, ax1 + 2 * aradius, ay1 + 2 * aradius, **options),
+            canvas.create_oval(ax2 - 2 * aradius, ay1, ax2, ay1 + 2 * aradius, **options),
+            canvas.create_oval(ax1, ay2 - 2 * aradius, ax1 + 2 * aradius, ay2, **options),
+            canvas.create_oval(ax2 - 2 * aradius, ay2 - 2 * aradius, ax2, ay2, **options),
+        ]
+        return items
+
+    items = draw_layer(x1, y1, x2, y2, radius, outline or fill)
+    if fill and outline and width > 0:
+        inset = max(1.0, width)
+        inner_radius = max(0.0, radius - inset)
+        items.extend(
+            draw_layer(
+                x1 + inset,
+                y1 + inset,
+                x2 - inset,
+                y2 - inset,
+                inner_radius,
+                fill,
+            )
+        )
+    elif fill and not outline:
+        items = draw_layer(x1, y1, x2, y2, radius, fill)
+    return items
+
+
+def _draw_icon(canvas: tk.Canvas, name: str, x: float, y: float, color: str) -> None:
+    """Draw compact, offline-safe line icons used by the desktop shell."""
+    line = {"fill": color, "width": 2.6, "capstyle": tk.ROUND, "joinstyle": tk.ROUND}
+    if name == "play":
+        canvas.create_polygon(x - 6, y - 9, x + 9, y, x - 6, y + 9, fill=color, outline=color)
+    elif name == "stop":
+        canvas.create_rectangle(x - 7, y - 7, x + 7, y + 7, fill=color, outline=color)
+    elif name == "pause":
+        canvas.create_rectangle(x - 7, y - 9, x - 2, y + 9, fill=color, outline=color)
+        canvas.create_rectangle(x + 2, y - 9, x + 7, y + 9, fill=color, outline=color)
+    elif name == "logout":
+        canvas.create_line(x - 9, y - 9, x - 9, y + 9, x, y + 9, **line)
+        canvas.create_line(x - 9, y - 9, x, y - 9, **line)
+        canvas.create_line(x - 3, y, x + 10, y, **line)
+        canvas.create_line(x + 5, y - 5, x + 10, y, x + 5, y + 5, **line)
+    elif name == "plus":
+        canvas.create_line(x - 9, y, x + 9, y, **line)
+        canvas.create_line(x, y - 9, x, y + 9, **line)
+    elif name == "gear":
+        canvas.create_oval(x - 8, y - 8, x + 8, y + 8, outline=color, width=2.6)
+        canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill=color, outline=color)
+        for dx, dy in ((0, -12), (0, 12), (-12, 0), (12, 0)):
+            canvas.create_line(x + dx * .55, y + dy * .55, x + dx, y + dy, **line)
+    elif name == "users":
+        canvas.create_oval(x - 5, y - 9, x + 5, y + 1, outline=color, width=2.4)
+        canvas.create_arc(x - 10, y - 1, x + 10, y + 15, start=0, extent=180, style="arc", outline=color, width=2.4)
+        canvas.create_oval(x - 12, y - 6, x - 6, y, outline=color, width=2)
+        canvas.create_oval(x + 6, y - 6, x + 12, y, outline=color, width=2)
+    elif name == "book":
+        canvas.create_line(x, y - 9, x, y + 10, **line)
+        canvas.create_line(x, y - 8, x - 4, y - 10, x - 11, y - 9, x - 11, y + 8, x - 4, y + 7, x, y + 9, **line)
+        canvas.create_line(x, y - 8, x + 4, y - 10, x + 11, y - 9, x + 11, y + 8, x + 4, y + 7, x, y + 9, **line)
+    elif name == "refresh":
+        canvas.create_arc(x - 9, y - 9, x + 9, y + 9, start=35, extent=245, style="arc", outline=color, width=2.5)
+        canvas.create_polygon(x + 8, y - 7, x + 10, y + 1, x + 2, y - 1, fill=color, outline=color)
+    elif name == "terminal":
+        canvas.create_line(x - 9, y - 6, x - 3, y, x - 9, y + 6, **line)
+        canvas.create_line(x, y + 6, x + 9, y + 6, **line)
+    elif name == "profile":
+        canvas.create_oval(x - 5, y - 9, x + 5, y + 1, fill=color, outline=color)
+        canvas.create_arc(x - 10, y - 1, x + 10, y + 15, start=0, extent=180, style="chord", fill=color, outline=color)
+    elif name == "info":
+        canvas.create_oval(x - 9, y - 9, x + 9, y + 9, outline=color, width=2)
+        canvas.create_text(x, y + 1, text="i", fill=color, font=("Segoe UI", 11, "bold"))
+
+
+class ModernButton(tk.Canvas):
+    """Rounded Canvas button that keeps the small API used by the old GUI."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        *,
+        text: str,
+        command,
+        background: str,
+        foreground: str,
+        icon: str,
+        border: str | None = None,
+        active_background: str | None = None,
+        height: int = 58,
+        font=("Segoe UI", 10, "bold"),
+    ) -> None:
+        super().__init__(
+            parent,
+            width=150,
+            height=height,
+            bg=parent.cget("bg"),
+            bd=0,
+            highlightthickness=0,
+            cursor="hand2",
+            takefocus=True,
+        )
+        self._text = text
+        self._command = command
+        self._background = background
+        self._foreground = foreground
+        self._border = border or background
+        self._active_background = active_background or background
+        self._icon = icon
+        self._font = font
+        self._hovered = False
+        self.bind("<Configure>", self._redraw)
+        self.bind("<Enter>", self._enter)
+        self.bind("<Leave>", self._leave)
+        self.bind("<ButtonRelease-1>", self._invoke)
+        self.bind("<Return>", self._invoke)
+        self.bind("<space>", self._invoke)
+
+    def configure(self, cnf=None, **kwargs):  # type: ignore[override]
+        if cnf:
+            kwargs.update(cnf)
+        if "text" in kwargs:
+            self._text = str(kwargs.pop("text"))
+            self._redraw()
+        if kwargs:
+            return super().configure(**kwargs)
+        return None
+
+    config = configure
+
+    def _enter(self, _event=None) -> None:
+        self._hovered = True
+        self._redraw()
+
+    def _leave(self, _event=None) -> None:
+        self._hovered = False
+        self._redraw()
+
+    def _invoke(self, _event=None) -> None:
+        if callable(self._command):
+            self._command()
+
+    def _redraw(self, _event=None) -> None:
+        self.delete("all")
+        width = max(4, self.winfo_width())
+        height = max(4, self.winfo_height())
+        fill = self._active_background if self._hovered else self._background
+        _rounded_rectangle(
+            self,
+            1.5,
+            1.5,
+            width - 1.5,
+            height - 1.5,
+            10,
+            fill=fill,
+            outline=self._border,
+            width=1.3,
+        )
+        label_width = self.create_text(
+            0,
+            0,
+            text=self._text,
+            font=self._font,
+        )
+        bbox = self.bbox(label_width) or (0, 0, 0, 0)
+        self.delete(label_width)
+        text_width = bbox[2] - bbox[0]
+        group_width = text_width + 34
+        icon_x = max(22, (width - group_width) / 2 + 11)
+        _draw_icon(self, self._icon, icon_x, height / 2, self._foreground)
+        self.create_text(
+            icon_x + 22,
+            height / 2,
+            text=self._text,
+            fill=self._foreground,
+            font=self._font,
+            anchor="w",
+        )
 
 
 def _is_install_root(path: Path) -> bool:
@@ -72,14 +274,16 @@ def install_root() -> Path:
 
 
 class CancheriaDesktop(tk.Tk):
-    BG = "#f7f9fc"
-    PANEL = "#ffffff"
-    NAVY = "#061632"
-    BLUE = "#1677ff"
-    MUTED = "#6b7280"
-    GREEN = "#14804a"
-    ORANGE = "#b45309"
-    RED = "#b42318"
+    BG = "#F4F8FF"
+    PANEL = "#FFFFFF"
+    NAVY = "#0B1930"
+    BLUE = "#1673FF"
+    MUTED = "#64748B"
+    BORDER = "#DCE7F5"
+    GREEN = "#139B51"
+    ORANGE = "#F59E0B"
+    RED = "#DC2626"
+    DARK_RED = "#B91C1C"
     UPDATE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000
     UPDATE_STARTUP_DELAY_MS = 350
     UPDATE_STARTUP_RETRY_MS = 30_000
@@ -112,8 +316,8 @@ class CancheriaDesktop(tk.Tk):
         ensure_profile(self.profile_dir)
 
         self.title("CANCHERIA")
-        self.geometry("920x720")
-        self.minsize(820, 620)
+        self.geometry("1080x800")
+        self.minsize(900, 680)
         self.configure(bg=self.BG)
         try:
             self.iconbitmap(str(self.root_dir / "assets" / "cancheria.ico"))
@@ -141,104 +345,154 @@ class CancheriaDesktop(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
-        header = tk.Frame(self, bg=self.PANEL, bd=0, highlightthickness=0)
-        header.pack(fill="x", padx=18, pady=(18, 10))
+        header = tk.Canvas(
+            self,
+            height=270,
+            bg=self.BG,
+            bd=0,
+            highlightthickness=0,
+        )
+        header.pack(fill="x", padx=20, pady=(16, 10))
+        header.bind("<Configure>", self._draw_header_background)
 
-        logo_path = self.root_dir / "assets" / "cancheria-logo.png"
+        logo_path = self.root_dir / "assets" / "cancheria-logo-cropped.png"
+        if not logo_path.exists():
+            logo_path = self.root_dir / "assets" / "cancheria-logo.png"
         self._logo = None
         if logo_path.exists():
             try:
                 img = tk.PhotoImage(file=str(logo_path))
-                # Original is large. Tk's integer subsampling keeps the app dependency-free.
-                factor = max(1, int(max(img.width() / 470, img.height() / 250)))
+                factor = max(1, int(max(img.width() / 390, img.height() / 250)))
                 if factor > 1:
                     img = img.subsample(factor, factor)
                 self._logo = img
-                tk.Label(header, image=img, bg=self.PANEL).pack(pady=(12, 0))
+                self.logo_label = tk.Label(header, image=img, bg=self.PANEL, bd=0)
+                self.logo_label.place(relx=.5, y=12, anchor="n")
             except Exception:
                 pass
 
         if self._logo is None:
-            tk.Label(
+            self.logo_label = tk.Label(
                 header,
                 text="CANCHERIA",
-                font=("Segoe UI", 28, "bold"),
+                font=("Segoe UI", 30, "bold"),
                 fg=self.NAVY,
                 bg=self.PANEL,
-            ).pack(pady=(22, 4))
+                bd=0,
+            )
+            self.logo_label.place(relx=.5, rely=.47, anchor="center")
 
-        tk.Label(
+        self.header_subtitle = tk.Label(
             header,
             text="Agente de reservas · Panel de escritorio",
-            font=("Segoe UI", 11),
-            fg=self.MUTED,
+            font=("Segoe UI", 13, "bold"),
+            fg="#294A78",
             bg=self.PANEL,
-        ).pack(pady=(0, 12))
+            bd=0,
+        )
+        self.header_subtitle.place(relx=.5, rely=1.0, y=-23, anchor="s")
 
-        status_row = tk.Frame(self, bg=self.BG)
-        status_row.pack(fill="x", padx=24, pady=(2, 8))
-        tk.Label(status_row, text="Estado:", font=("Segoe UI", 11, "bold"), bg=self.BG, fg=self.NAVY).pack(side="left")
+        status_row = tk.Frame(
+            self,
+            bg=self.PANEL,
+            highlightbackground=self.BORDER,
+            highlightthickness=1,
+            bd=0,
+        )
+        status_row.pack(fill="x", padx=20, pady=(0, 10), ipady=12)
+        left_status = tk.Frame(status_row, bg=self.PANEL)
+        left_status.pack(side="left", padx=18)
+        self.status_dot = tk.Canvas(
+            left_status,
+            width=18,
+            height=18,
+            bg=self.PANEL,
+            highlightthickness=0,
+        )
+        self.status_dot.pack(side="left", padx=(0, 10))
+        self._draw_status_dot("#94A3B8")
+        tk.Label(
+            left_status,
+            text="Estado:",
+            font=("Segoe UI", 11, "bold"),
+            bg=self.PANEL,
+            fg=self.NAVY,
+        ).pack(side="left")
         self.status_var = tk.StringVar(value="Apagado")
-        self.status_label = tk.Label(status_row, textvariable=self.status_var, font=("Segoe UI", 11, "bold"), bg=self.BG, fg=self.MUTED)
-        self.status_label.pack(side="left", padx=(8, 0))
-        tk.Label(status_row, text="Perfil: wa_profile", font=("Segoe UI", 10), bg=self.BG, fg=self.MUTED).pack(side="right")
+        self.status_label = tk.Label(
+            left_status,
+            textvariable=self.status_var,
+            font=("Segoe UI", 11, "bold"),
+            bg="#E8EEF6",
+            fg=self.MUTED,
+            padx=12,
+            pady=3,
+        )
+        self.status_label.pack(side="left", padx=(9, 0))
+        profile = tk.Frame(status_row, bg=self.PANEL)
+        profile.pack(side="right", padx=18)
+        profile_icon = tk.Canvas(profile, width=26, height=26, bg=self.PANEL, highlightthickness=0)
+        profile_icon.pack(side="left", padx=(0, 8))
+        _draw_icon(profile_icon, "profile", 13, 13, "#7890B2")
+        tk.Label(
+            profile,
+            text=f"Perfil: {self.profile_dir.name}",
+            font=("Segoe UI", 10),
+            bg=self.PANEL,
+            fg="#486487",
+        ).pack(side="left")
 
         actions = tk.Frame(self, bg=self.BG)
-        actions.pack(fill="x", padx=20, pady=(4, 12))
+        actions.pack(fill="x", padx=16, pady=(0, 10))
         for col in range(5):
             actions.grid_columnconfigure(col, weight=1)
 
-        self.btn_on = self._button(actions, "ENCENDER", self.start_agent, self.GREEN)
-        self.btn_off = self._button(actions, "APAGAR", self.stop_agent, self.RED)
+        self.btn_on = self._button(actions, "ENCENDER", self.start_agent, self.GREEN, "play")
+        self.btn_off = self._button(actions, "APAGAR", self.stop_agent, self.RED, "stop")
         self.btn_ai_pause = self._button(
             actions,
             "REANUDAR IA" if self.ai_paused else "PAUSAR IA",
             self.toggle_ai_pause,
             self.ORANGE,
+            "pause",
         )
-        self.btn_logout = self._button(actions, "CERRAR SESIÓN", self.close_session, self.RED)
-        self.btn_new = self._button(actions, "NUEVA SESIÓN", self.new_session, self.BLUE)
-        self.btn_on.grid(row=0, column=0, sticky="ew", padx=5)
-        self.btn_off.grid(row=0, column=1, sticky="ew", padx=5)
-        self.btn_ai_pause.grid(row=0, column=2, sticky="ew", padx=5)
-        self.btn_logout.grid(row=0, column=3, sticky="ew", padx=5)
-        self.btn_new.grid(row=0, column=4, sticky="ew", padx=5)
+        self.btn_logout = self._button(actions, "CERRAR SESIÓN", self.close_session, self.DARK_RED, "logout")
+        self.btn_new = self._button(actions, "NUEVA SESIÓN", self.new_session, self.BLUE, "plus")
+        self.btn_on.grid(row=0, column=0, sticky="ew", padx=4)
+        self.btn_off.grid(row=0, column=1, sticky="ew", padx=4)
+        self.btn_ai_pause.grid(row=0, column=2, sticky="ew", padx=4)
+        self.btn_logout.grid(row=0, column=3, sticky="ew", padx=4)
+        self.btn_new.grid(row=0, column=4, sticky="ew", padx=4)
 
         secondary = tk.Frame(self, bg=self.BG)
-        secondary.pack(fill="x", padx=25, pady=(0, 10))
-        tk.Button(
+        secondary.pack(fill="x", padx=16, pady=(0, 10))
+        for col, weight in enumerate((1, 1, 1, 1, 1)):
+            secondary.grid_columnconfigure(col, weight=weight)
+        self.btn_config = ModernButton(
             secondary,
             text="CONFIGURACIÓN",
             command=self.open_configurator,
-            font=("Segoe UI", 10, "bold"),
-            bg=self.BLUE,
-            fg="white",
-            activebackground=self.BLUE,
-            activeforeground="white",
-            relief="flat",
-            bd=0,
-            padx=14,
-            pady=8,
-            cursor="hand2",
-        ).pack(side="left")
+            background="#EAF3FF",
+            foreground="#1263D8",
+            border="#BBD8FF",
+            active_background="#DCEBFF",
+            icon="gear",
+            height=54,
+        )
+        self.btn_config.grid(row=0, column=0, sticky="ew", padx=4)
         admin_button_holder = tk.Frame(secondary, bg=self.BG)
-        admin_button_holder.pack(side="left", padx=(8, 0))
-        self.btn_admin = tk.Button(
+        admin_button_holder.grid(row=0, column=1, sticky="nsew", padx=4)
+        self.btn_admin = ModernButton(
             admin_button_holder,
             text="ADMINISTRACIÓN",
             command=self.open_admin_panel,
-            font=("Segoe UI", 10, "bold"),
-            bg=self.NAVY,
-            fg="white",
-            activebackground=self.NAVY,
-            activeforeground="white",
-            relief="flat",
-            bd=0,
-            padx=14,
-            pady=8,
-            cursor="hand2",
+            background=self.NAVY,
+            foreground="white",
+            active_background="#142B50",
+            icon="users",
+            height=54,
         )
-        self.btn_admin.pack()
+        self.btn_admin.pack(fill="both", expand=True)
         self.admin_notification_badge = tk.Label(
             admin_button_holder,
             text="",
@@ -250,37 +504,32 @@ class CancheriaDesktop(tk.Tk):
             cursor="hand2",
         )
         self.admin_notification_badge.bind("<Button-1>", lambda _event: self.open_admin_panel())
-        tk.Button(
+        self.btn_manual = ModernButton(
             secondary,
             text="Abrir manual",
             command=self.open_manual,
-            font=("Segoe UI", 10, "bold"),
-            bg=self.PANEL,
-            fg=self.NAVY,
-            activebackground="#eef4ff",
-            relief="solid",
-            bd=1,
-            padx=14,
-            pady=7,
-            cursor="hand2",
-        ).pack(side="left", padx=(8, 0))
-        update_button_holder = tk.Frame(secondary, bg=self.BG)
-        update_button_holder.pack(side="left", padx=(8, 0))
-        self.btn_settings = tk.Button(
-            update_button_holder,
-            text="⬆ ACTUALIZACIÓN",
-            command=self.open_settings,
-            font=("Segoe UI", 10, "bold"),
-            bg=self.PANEL,
-            fg=self.NAVY,
-            activebackground="#eef4ff",
-            relief="solid",
-            bd=1,
-            padx=14,
-            pady=7,
-            cursor="hand2",
+            background=self.PANEL,
+            foreground=self.NAVY,
+            border="#C7D5E8",
+            active_background="#EEF4FF",
+            icon="book",
+            height=54,
         )
-        self.btn_settings.pack()
+        self.btn_manual.grid(row=0, column=2, sticky="ew", padx=4)
+        update_button_holder = tk.Frame(secondary, bg=self.BG)
+        update_button_holder.grid(row=0, column=3, sticky="nsew", padx=4)
+        self.btn_settings = ModernButton(
+            update_button_holder,
+            text="ACTUALIZACIÓN",
+            command=self.open_settings,
+            background=self.PANEL,
+            foreground="#1263D8",
+            border="#BBD8FF",
+            active_background="#EEF4FF",
+            icon="refresh",
+            height=54,
+        )
+        self.btn_settings.pack(fill="both", expand=True)
         self.update_notification_badge = tk.Label(
             update_button_holder,
             text="",
@@ -294,68 +543,152 @@ class CancheriaDesktop(tk.Tk):
         self.update_notification_badge.bind(
             "<Button-1>", lambda _event: self.open_settings()
         )
+        info_holder = tk.Frame(secondary, bg=self.BG)
+        info_holder.grid(row=0, column=4, sticky="ew", padx=(10, 0))
+        info_icon = tk.Canvas(info_holder, width=24, height=24, bg=self.BG, highlightthickness=0)
+        info_icon.pack(side="left")
+        _draw_icon(info_icon, "info", 12, 12, "#7890B2")
         tk.Label(
-            secondary,
-            text="Reservas, agenda y versión del sistema.",
-            font=("Segoe UI", 9),
+            info_holder,
+            text="Reservas, agenda y versión\ndel sistema.",
+            justify="left",
+            font=("Segoe UI", 8),
             bg=self.BG,
             fg=self.MUTED,
-        ).pack(side="left", padx=14)
+        ).pack(side="left", padx=(4, 0))
 
-        log_panel = tk.Frame(self, bg=self.PANEL, bd=1, relief="solid")
-        log_panel.pack(fill="both", expand=True, padx=24, pady=(0, 18))
+        log_panel = tk.Frame(
+            self,
+            bg=self.PANEL,
+            highlightbackground=self.BORDER,
+            highlightthickness=1,
+            bd=0,
+        )
+        log_panel.pack(fill="both", expand=True, padx=20, pady=(0, 16))
+        log_header = tk.Frame(log_panel, bg=self.PANEL)
+        log_header.pack(fill="x", padx=14, pady=(10, 7))
+        terminal_box = tk.Canvas(log_header, width=32, height=32, bg=self.PANEL, highlightthickness=0)
+        terminal_box.pack(side="left")
+        _rounded_rectangle(terminal_box, 1, 1, 31, 31, 7, fill=self.NAVY, outline=self.NAVY)
+        _draw_icon(terminal_box, "terminal", 16, 16, "white")
         tk.Label(
-            log_panel,
+            log_header,
             text="Actividad",
-            font=("Segoe UI", 11, "bold"),
+            font=("Segoe UI", 12, "bold"),
             fg=self.NAVY,
             bg=self.PANEL,
-            anchor="w",
-        ).pack(fill="x", padx=12, pady=(10, 5))
+        ).pack(side="left", padx=(9, 0))
+        event_hint = tk.Frame(log_header, bg=self.PANEL)
+        event_hint.pack(side="right")
+        tk.Label(event_hint, text="●", font=("Segoe UI", 10), fg=self.BLUE, bg=self.PANEL).pack(side="left")
+        tk.Label(
+            event_hint,
+            text="Panel de eventos del sistema",
+            font=("Segoe UI", 9),
+            fg="#6681A5",
+            bg=self.PANEL,
+        ).pack(side="left", padx=(5, 0))
+
+        console = tk.Frame(log_panel, bg=self.NAVY)
+        console.pack(fill="both", expand=True, padx=12, pady=(0, 12))
         self.log = tk.Text(
-            log_panel,
+            console,
             height=16,
             wrap="word",
-            bg="#07111f",
-            fg="#dce7f7",
+            bg=self.NAVY,
+            fg="#E2E8F0",
             insertbackground="white",
-            font=("Consolas", 9),
-            relief="flat",
-            padx=10,
-            pady=10,
-        )
-        self.log.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        self.log.configure(state="disabled")
-        self._append_log("CANCHERIA listo. Presioná ENCENDER para usar la sesión guardada o NUEVA SESIÓN para escanear un QR nuevo.")
-
-    def _button(self, parent: tk.Widget, label: str, command, color: str) -> tk.Button:
-        return tk.Button(
-            parent,
-            text=label,
-            command=command,
-            font=("Segoe UI", 10, "bold"),
-            bg=color,
-            fg="white",
-            activebackground=color,
-            activeforeground="white",
+            selectbackground="#214777",
+            font=("Cascadia Mono", 9),
             relief="flat",
             bd=0,
             padx=12,
-            pady=12,
-            cursor="hand2",
+            pady=10,
+        )
+        log_scroll = ttk.Scrollbar(console, orient="vertical", command=self.log.yview)
+        self.log.configure(yscrollcommand=log_scroll.set)
+        log_scroll.pack(side="right", fill="y")
+        self.log.pack(side="left", fill="both", expand=True)
+        self.log.tag_configure("timestamp", foreground="#8FB8E8")
+        self.log.tag_configure("info", foreground="#7CC4FF")
+        self.log.tag_configure("success", foreground="#4ADE80")
+        self.log.tag_configure("warning", foreground="#FBBF24")
+        self.log.tag_configure("error", foreground="#F87171")
+        self.log.tag_configure("normal", foreground="#E2E8F0")
+        self.log.configure(state="disabled")
+        self._append_log("CANCHERIA listo. Presioná ENCENDER para usar la sesión guardada o NUEVA SESIÓN para escanear un QR nuevo.")
+
+    def _draw_header_background(self, event=None) -> None:
+        canvas = event.widget if event is not None else None
+        if not isinstance(canvas, tk.Canvas):
+            return
+        width = max(10, canvas.winfo_width())
+        height = max(10, canvas.winfo_height())
+        canvas.delete("header_decor")
+        _rounded_rectangle(
+            canvas,
+            1,
+            1,
+            width - 1,
+            height - 1,
+            18,
+            fill=self.PANEL,
+            outline=self.BORDER,
+            width=1,
+            tags="header_decor",
+        )
+        canvas.create_polygon(2, 2, width * .18, 2, width * .08, height * .46, 2, height * .72, fill="#D8ECFF", outline="", tags="header_decor")
+        canvas.create_polygon(width - 2, height - 2, width * .78, height - 2, width - 2, height * .42, fill="#D7EBFF", outline="", tags="header_decor")
+        canvas.create_polygon(width - 2, height * .2, width - 2, height * .72, width * .88, height - 2, width * .94, height * .35, fill="#EAF4FF", outline="", tags="header_decor")
+        for offset in (0, 15, 30):
+            canvas.create_arc(width * .04 + offset, height * .38, width * .30 + offset, height * 1.18, start=52, extent=94, style="arc", outline="#E8F3FF", width=2, tags="header_decor")
+        canvas.tag_lower("header_decor")
+
+    def _button(self, parent: tk.Widget, label: str, command, color: str, icon: str) -> ModernButton:
+        return ModernButton(
+            parent,
+            text=label,
+            command=command,
+            background=color,
+            foreground="white",
+            active_background=color,
+            icon=icon,
+            height=62,
+            font=("Segoe UI", 10, "bold"),
         )
 
     def _append_log(self, text: str) -> None:
         if not text:
             return
+        clean = text.rstrip()
+        lowered = clean.casefold()
+        if any(token in lowered for token in ("error", "falló", "fallo", "excepción", "exception", "❌")):
+            tag = "error"
+        elif any(token in lowered for token in ("advertencia", "atención", "⚠", "cancelada")):
+            tag = "warning"
+        elif any(token in lowered for token in ("correctamente", "iniciado", "reanudada", "abierto", "✓", "✅")):
+            tag = "success"
+        elif any(token in lowered for token in ("listo", "perfil", "preparando", "▶", "[gui]")):
+            tag = "info"
+        else:
+            tag = "normal"
         self.log.configure(state="normal")
-        self.log.insert("end", text.rstrip() + "\n")
+        if not re.match(r"^\s*\[\d{1,2}:\d{2}(?::\d{2})?\]", clean):
+            self.log.insert("end", f"[{datetime.now():%H:%M:%S}] ", "timestamp")
+        self.log.insert("end", clean + "\n", tag)
         self.log.see("end")
         self.log.configure(state="disabled")
 
     def _set_status(self, text: str, color: str) -> None:
         self.status_var.set(text)
         self.status_label.configure(fg=color)
+        self._draw_status_dot(color)
+
+    def _draw_status_dot(self, color: str) -> None:
+        if not hasattr(self, "status_dot"):
+            return
+        self.status_dot.delete("all")
+        self.status_dot.create_oval(2, 2, 16, 16, fill=color, outline=color)
 
     def _worker_command(self) -> list[str]:
         profile = str(self.profile_dir.resolve())

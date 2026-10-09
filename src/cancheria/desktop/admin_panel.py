@@ -34,16 +34,262 @@ listar torneos · configurar torneo ... · editar torneo ... · borrar torneo ..
 """
 
 
+class AdminTabView(tk.Frame):
+    """Scrollable, theme-independent tab bar that preserves Notebook's API."""
+
+    ACTIVE_BG = "#1673FF"
+    ACTIVE_FG = "#FFFFFF"
+    INACTIVE_BG = "#F8FAFC"
+    INACTIVE_FG = "#243858"
+    HOVER_BG = "#DBEAFE"
+    HOVER_FG = "#1D4ED8"
+    BORDER = "#E2E8F0"
+
+    TAB_ICONS = {
+        "Reservas y pagos": "▣",
+        "Horas": "◷",
+        "Operación": "⚙",
+        "Atención humana": "●",
+        "Torneos": "♛",
+        "Turnos Fijos": "▦",
+        "Blacklist": "⊘",
+        "Comandos y configuración": "☷",
+    }
+
+    def __init__(self, master: tk.Misc, **kwargs) -> None:
+        super().__init__(
+            master,
+            bg="#FFFFFF",
+            highlightbackground=self.BORDER,
+            highlightthickness=1,
+            bd=0,
+            **kwargs,
+        )
+        self._records: dict[tk.Widget, dict] = {}
+        self._selected: tk.Widget | None = None
+
+        self._navigation = tk.Frame(self, bg=self.INACTIVE_BG, height=58)
+        self._navigation.pack(fill="x")
+        self._navigation.pack_propagate(False)
+        self._canvas = tk.Canvas(
+            self._navigation,
+            bg=self.INACTIVE_BG,
+            height=56,
+            highlightthickness=0,
+            bd=0,
+        )
+        self._scrollbar = ttk.Scrollbar(
+            self._navigation,
+            orient="horizontal",
+            command=self._canvas.xview,
+            style="Admin.Horizontal.TScrollbar",
+        )
+        self._canvas.configure(xscrollcommand=self._scrollbar.set)
+        self._strip = tk.Frame(self._canvas, bg=self.INACTIVE_BG)
+        self._strip_window = self._canvas.create_window(
+            (0, 0), window=self._strip, anchor="nw"
+        )
+        self._canvas.pack(fill="both", expand=True)
+        self._strip.bind("<Configure>", self._on_strip_configure)
+        self._canvas.bind("<Configure>", self._on_canvas_configure)
+        self._canvas.bind("<Shift-MouseWheel>", self._scroll_tabs)
+
+    def add(self, child: tk.Widget, text: str = "") -> None:
+        tab = tk.Frame(
+            self._strip,
+            bg=self.INACTIVE_BG,
+            highlightbackground=self.BORDER,
+            highlightthickness=1,
+            bd=0,
+            cursor="hand2",
+        )
+        tab.pack(side="left", fill="both", expand=True)
+        content = tk.Frame(tab, bg=self.INACTIVE_BG, cursor="hand2")
+        content.pack(fill="both", expand=True, padx=15, pady=(13, 10))
+        icon = tk.Label(
+            content,
+            text=self.TAB_ICONS.get(text, "•"),
+            font=("Segoe UI Symbol", 13, "bold"),
+            fg=self.INACTIVE_FG,
+            bg=self.INACTIVE_BG,
+            cursor="hand2",
+        )
+        icon.pack(side="left", padx=(0, 8))
+        label = tk.Label(
+            content,
+            text=text,
+            font=("Segoe UI", 10, "bold"),
+            fg=self.INACTIVE_FG,
+            bg=self.INACTIVE_BG,
+            cursor="hand2",
+        )
+        label.pack(side="left")
+        badge = tk.Label(
+            content,
+            bg=self.INACTIVE_BG,
+            bd=0,
+            cursor="hand2",
+        )
+        underline = tk.Frame(tab, bg=self.INACTIVE_BG, height=4)
+        underline.pack(fill="x", side="bottom")
+
+        record = {
+            "tab": tab,
+            "content": content,
+            "icon_label": icon,
+            "text_label": label,
+            "badge_label": badge,
+            "underline": underline,
+            "text": text,
+            "image": "",
+        }
+        self._records[child] = record
+        for widget in (tab, content, icon, label, badge, underline):
+            widget.bind("<Button-1>", lambda _event, page=child: self.select(page))
+            widget.bind("<Enter>", lambda _event, page=child: self._hover(page, True))
+            widget.bind("<Leave>", lambda _event, page=child: self._hover(page, False))
+            widget.bind("<Shift-MouseWheel>", self._scroll_tabs)
+
+        child.pack_forget()
+        if self._selected is None:
+            self._activate(child, emit=False)
+
+    def tabs(self) -> tuple[str, ...]:
+        return tuple(str(child) for child in self._records)
+
+    def select(self, tab_id=None):
+        if tab_id is None:
+            return str(self._selected) if self._selected is not None else ""
+        child = self._resolve(tab_id)
+        if child is not None:
+            self._activate(child, emit=True)
+        return str(self._selected) if self._selected is not None else ""
+
+    def tab(self, tab_id, option: str | None = None, **kwargs):
+        child = self._resolve(tab_id)
+        if child is None:
+            raise tk.TclError(f"unknown tab {tab_id}")
+        record = self._records[child]
+        if option is not None:
+            return record.get(option, "")
+        if "text" in kwargs:
+            record["text"] = kwargs["text"]
+            record["text_label"].configure(text=kwargs["text"])
+        if "image" in kwargs:
+            image = kwargs["image"]
+            record["image"] = image
+            if image:
+                record["badge_label"].configure(image=image)
+                if not record["badge_label"].winfo_manager():
+                    record["badge_label"].pack(side="left", padx=(8, 0))
+            else:
+                record["badge_label"].configure(image="")
+                record["badge_label"].pack_forget()
+        return None
+
+    def _resolve(self, tab_id) -> tk.Widget | None:
+        if tab_id in self._records:
+            return tab_id
+        target = str(tab_id)
+        for child in self._records:
+            if str(child) == target:
+                return child
+        return None
+
+    def _activate(self, child: tk.Widget, *, emit: bool) -> None:
+        if child == self._selected:
+            return
+        previous = self._selected
+        if previous is not None:
+            previous.pack_forget()
+        self._selected = child
+        child.pack(fill="both", expand=True)
+        for page in self._records:
+            self._paint_tab(page, active=page == child)
+        self.after_idle(lambda: self._scroll_selected_into_view(child))
+        if emit:
+            self.event_generate("<<NotebookTabChanged>>", when="tail")
+
+    def _paint_tab(self, child: tk.Widget, *, active: bool, hover: bool = False) -> None:
+        record = self._records[child]
+        if active:
+            bg, fg, underline = self.ACTIVE_BG, self.ACTIVE_FG, self.ACTIVE_BG
+        elif hover:
+            bg, fg, underline = self.HOVER_BG, self.HOVER_FG, self.HOVER_BG
+        else:
+            bg, fg, underline = self.INACTIVE_BG, self.INACTIVE_FG, self.INACTIVE_BG
+        for key in ("tab", "content", "icon_label", "text_label", "badge_label"):
+            record[key].configure(bg=bg)
+        record["icon_label"].configure(fg=fg)
+        record["text_label"].configure(fg=fg)
+        record["underline"].configure(bg=underline)
+
+    def _hover(self, child: tk.Widget, entering: bool) -> None:
+        if child != self._selected:
+            self._paint_tab(child, active=False, hover=entering)
+
+    def _on_strip_configure(self, _event=None) -> None:
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+        self._refresh_scrollbar()
+
+    def _on_canvas_configure(self, event) -> None:
+        requested = self._tabs_requested_width()
+        self._canvas.itemconfigure(self._strip_window, width=max(event.width, requested))
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+        self._refresh_scrollbar(event.width, requested)
+
+    def _refresh_scrollbar(self, width: int | None = None, requested: int | None = None) -> None:
+        width = width if width is not None else self._canvas.winfo_width()
+        requested = requested if requested is not None else self._tabs_requested_width()
+        if requested > max(1, width):
+            if not self._scrollbar.winfo_manager():
+                self._scrollbar.pack(side="bottom", fill="x")
+                self._navigation.configure(height=70)
+        else:
+            self._scrollbar.pack_forget()
+            self._navigation.configure(height=58)
+            self._canvas.xview_moveto(0)
+
+    def _tabs_requested_width(self) -> int:
+        return sum(
+            max(1, int(record["tab"].winfo_reqwidth()))
+            for record in self._records.values()
+        )
+
+    def _scroll_tabs(self, event) -> str:
+        direction = -1 if event.delta > 0 else 1
+        self._canvas.xview_scroll(direction * 3, "units")
+        return "break"
+
+    def _scroll_selected_into_view(self, child: tk.Widget) -> None:
+        record = self._records.get(child)
+        if not record:
+            return
+        tab = record["tab"]
+        strip_width = max(1, self._strip.winfo_width())
+        canvas_width = max(1, self._canvas.winfo_width())
+        left = tab.winfo_x()
+        right = left + tab.winfo_width()
+        current_left = self._canvas.canvasx(0)
+        current_right = current_left + canvas_width
+        if left < current_left:
+            self._canvas.xview_moveto(left / strip_width)
+        elif right > current_right:
+            self._canvas.xview_moveto(max(0.0, (right - canvas_width) / strip_width))
+
+
 class AdminPanel(tk.Toplevel):
-    NAVY = "#061632"
-    BLUE = "#1677ff"
-    GREEN = "#14804a"
-    ORANGE = "#b45309"
-    RED = "#b42318"
+    NAVY = "#142B50"
+    BLUE = "#1673FF"
+    GREEN = "#07864C"
+    ORANGE = "#F97316"
+    RED = "#DC2626"
     FREE_GREEN = "#079455"
-    PAST_GRAY = "#667085"
-    MUTED = "#6b7280"
-    BG = "#f7f9fc"
+    PAST_GRAY = "#64748B"
+    MUTED = "#64748B"
+    BORDER = "#E2E8F0"
+    SURFACE = "#FFFFFF"
+    BG = "#F5F7FB"
 
     def __init__(
         self,
@@ -60,8 +306,8 @@ class AdminPanel(tk.Toplevel):
         self._last_notification_counts: dict[str, int] | None = None
         self._initial_notification_tab_selected = False
         self.title("CANCHERIA · Administración")
-        self.geometry("1180x740")
-        self.minsize(980, 620)
+        self.geometry("1240x780")
+        self.minsize(940, 620)
         self.configure(bg=self.BG)
         self.transient(parent)
 
@@ -73,31 +319,96 @@ class AdminPanel(tk.Toplevel):
         self._schedule_notification_poll()
 
     def _build(self) -> None:
-        header = tk.Frame(self, bg="white")
-        header.pack(fill="x", padx=16, pady=(16, 8))
-        tk.Label(header, text="Panel de administración", font=("Segoe UI", 20, "bold"), fg=self.NAVY, bg="white").pack(side="left", padx=16, pady=14)
-        tk.Button(header, text="Actualizar", command=self.refresh_all, bg=self.BLUE, fg="white", relief="flat", padx=16, pady=8).pack(side="right", padx=16)
+        self._configure_ttk_styles()
+        header = tk.Frame(
+            self,
+            bg=self.SURFACE,
+            highlightbackground=self.BORDER,
+            highlightthickness=1,
+        )
+        header.pack(fill="x", padx=20, pady=(18, 10))
+        tk.Label(
+            header,
+            text="Panel de administración",
+            font=("Segoe UI", 24, "bold"),
+            fg=self.NAVY,
+            bg=self.SURFACE,
+        ).pack(side="left", padx=24, pady=18)
+        tk.Button(
+            header,
+            text="↻  Actualizar",
+            command=self.refresh_all,
+            font=("Segoe UI", 11, "bold"),
+            bg=self.BLUE,
+            fg="white",
+            activebackground="#0F62E8",
+            activeforeground="white",
+            relief="flat",
+            bd=0,
+            padx=20,
+            pady=11,
+            cursor="hand2",
+        ).pack(side="right", padx=20)
 
         cards = tk.Frame(self, bg=self.BG)
-        cards.pack(fill="x", padx=18, pady=(0, 10))
-        labels = (("active", "Reservas activas"), ("pending", "Pagos pendientes"), ("today", "Turnos de hoy"), ("cases", "Casos humanos"))
-        for index, (key, label) in enumerate(labels):
+        cards.pack(fill="x", padx=15, pady=(0, 12))
+        labels = (
+            ("active", "Reservas activas", "▣", "#10B981", "#E1F7EE"),
+            ("pending", "Pagos pendientes", "▤", "#7C3AED", "#F0EAFE"),
+            ("today", "Turnos de hoy", "◷", "#1673FF", "#E7F0FF"),
+            ("cases", "Casos humanos", "●", "#EF4444", "#FEEBEC"),
+        )
+        for index, (key, label, icon, icon_color, icon_bg) in enumerate(labels):
             cards.grid_columnconfigure(index, weight=1)
-            card = tk.Frame(cards, bg="white", bd=1, relief="solid")
-            card.grid(row=0, column=index, sticky="ew", padx=5)
-            tk.Label(card, textvariable=self.summary_vars[key], font=("Segoe UI", 23, "bold"), fg=self.BLUE, bg="white").pack(pady=(10, 0))
-            tk.Label(card, text=label, font=("Segoe UI", 9), fg=self.MUTED, bg="white").pack(pady=(0, 10))
+            card = tk.Frame(
+                cards,
+                bg=self.SURFACE,
+                highlightbackground=self.BORDER,
+                highlightthickness=1,
+                bd=0,
+                height=112,
+            )
+            card.grid(row=0, column=index, sticky="nsew", padx=5)
+            card.grid_propagate(False)
+            icon_holder = tk.Frame(card, bg=icon_bg, width=64, height=64)
+            icon_holder.pack(side="left", padx=(20, 15), pady=20)
+            icon_holder.pack_propagate(False)
+            tk.Label(
+                icon_holder,
+                text=icon,
+                font=("Segoe UI Symbol", 24, "bold"),
+                fg=icon_color,
+                bg=icon_bg,
+            ).pack(expand=True)
+            values = tk.Frame(card, bg=self.SURFACE)
+            values.pack(side="left", fill="y", pady=16)
+            tk.Label(
+                values,
+                textvariable=self.summary_vars[key],
+                font=("Segoe UI", 24, "bold"),
+                fg=self.BLUE,
+                bg=self.SURFACE,
+                anchor="w",
+            ).pack(anchor="w")
+            tk.Label(
+                values,
+                text=label,
+                font=("Segoe UI", 10),
+                fg=self.MUTED,
+                bg=self.SURFACE,
+                anchor="w",
+            ).pack(anchor="w", pady=(2, 0))
 
-        self.notebook = ttk.Notebook(self)
-        self.notebook.pack(fill="both", expand=True, padx=22, pady=(0, 18))
-        self.bookings_tab = tk.Frame(self.notebook, bg="white")
-        self.hours_tab = tk.Frame(self.notebook, bg="white")
-        self.operation_tab = tk.Frame(self.notebook, bg="white")
-        self.cases_tab = tk.Frame(self.notebook, bg="white")
-        self.tournaments_tab = tk.Frame(self.notebook, bg="white")
-        self.fixed_turns_tab = tk.Frame(self.notebook, bg="white")
-        self.blacklist_tab = tk.Frame(self.notebook, bg="white")
-        self.commands_tab = tk.Frame(self.notebook, bg="white")
+        self.notebook = AdminTabView(self)
+        self.notebook.pack(fill="both", expand=True, padx=20, pady=(0, 18))
+        self.bookings_tab = tk.Frame(self.notebook, bg=self.SURFACE)
+        self.hours_tab = tk.Frame(self.notebook, bg=self.SURFACE)
+        self.operation_tab = tk.Frame(self.notebook, bg=self.SURFACE)
+        self.cases_tab = tk.Frame(self.notebook, bg=self.SURFACE)
+        self.tournaments_tab = tk.Frame(self.notebook, bg=self.SURFACE)
+        self.fixed_turns_tab = tk.Frame(self.notebook, bg=self.SURFACE)
+        self.blacklist_tab = tk.Frame(self.notebook, bg=self.SURFACE)
+        self.commands_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.notebook.add(self.bookings_tab, text="Reservas y pagos")
         self.notebook.add(self.hours_tab, text="Horas")
         self.notebook.add(self.operation_tab, text="Operación")
@@ -137,29 +448,94 @@ class AdminPanel(tk.Toplevel):
         self._build_commands()
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
+    def _configure_ttk_styles(self) -> None:
+        style = ttk.Style(self)
+        style.configure(
+            "Admin.Treeview",
+            background=self.SURFACE,
+            fieldbackground=self.SURFACE,
+            foreground="#334155",
+            bordercolor=self.BORDER,
+            lightcolor=self.BORDER,
+            darkcolor=self.BORDER,
+            borderwidth=1,
+            relief="flat",
+            rowheight=34,
+            font=("Segoe UI", 10),
+        )
+        style.configure(
+            "Admin.Treeview.Heading",
+            background="#F8FAFC",
+            foreground="#475569",
+            bordercolor=self.BORDER,
+            lightcolor=self.BORDER,
+            darkcolor=self.BORDER,
+            relief="flat",
+            padding=(8, 10),
+            font=("Segoe UI", 10, "bold"),
+        )
+        style.map(
+            "Admin.Treeview",
+            background=[("selected", "#DBEAFE")],
+            foreground=[("selected", "#1D4ED8")],
+        )
+        style.map(
+            "Admin.Treeview.Heading",
+            background=[("active", "#EEF4FF")],
+            foreground=[("active", self.NAVY)],
+        )
+        style.configure(
+            "Admin.Vertical.TScrollbar",
+            background="#CBD5E1",
+            troughcolor="#F8FAFC",
+            bordercolor="#F8FAFC",
+            arrowcolor=self.MUTED,
+        )
+        style.configure(
+            "Admin.Horizontal.TScrollbar",
+            background="#CBD5E1",
+            troughcolor="#F8FAFC",
+            bordercolor="#F8FAFC",
+            arrowcolor=self.MUTED,
+        )
+
     def _action_button(self, parent: tk.Widget, text: str, command, color: str) -> tk.Button:
-        return tk.Button(parent, text=text, command=command, bg=color, fg="white", activebackground=color, activeforeground="white", relief="flat", padx=12, pady=7, cursor="hand2")
+        return tk.Button(
+            parent,
+            text=text,
+            command=command,
+            font=("Segoe UI", 10, "bold"),
+            bg=color,
+            fg="white",
+            activebackground=color,
+            activeforeground="white",
+            relief="flat",
+            bd=0,
+            padx=15,
+            pady=11,
+            cursor="hand2",
+        )
 
     def _build_bookings(self) -> None:
-        actions = tk.Frame(self.bookings_tab, bg="white")
-        actions.pack(fill="x", padx=10, pady=10)
-        self._action_button(actions, "Nueva reserva", self._new_booking_dialog, self.BLUE).pack(side="left", padx=3)
-        self._action_button(actions, "Confirmar seña", lambda: self._booking_action("deposit"), self.GREEN).pack(side="left", padx=3)
-        self._action_button(actions, "Confirmar total", lambda: self._booking_action("total"), self.GREEN).pack(side="left", padx=3)
-        self._action_button(actions, "Liberar pendiente", lambda: self._booking_action("release"), self.ORANGE).pack(side="left", padx=3)
-        self._action_button(actions, "Cancelar", lambda: self._booking_action("cancel"), self.RED).pack(side="left", padx=3)
+        actions = tk.Frame(self.bookings_tab, bg=self.SURFACE)
+        actions.pack(fill="x", padx=18, pady=(16, 14))
+        self._action_button(actions, "+  Nueva reserva", self._new_booking_dialog, self.BLUE).pack(side="left", padx=(0, 8))
+        self._action_button(actions, "✓  Confirmar seña", lambda: self._booking_action("deposit"), self.GREEN).pack(side="left", padx=(0, 8))
+        self._action_button(actions, "▣  Confirmar total", lambda: self._booking_action("total"), self.GREEN).pack(side="left", padx=(0, 8))
+        self._action_button(actions, "↗  Liberar pendiente", lambda: self._booking_action("release"), self.ORANGE).pack(side="left", padx=(0, 8))
+        self._action_button(actions, "✕  Cancelar", lambda: self._booking_action("cancel"), self.RED).pack(side="left", padx=(0, 8))
 
         columns = ("id", "fecha", "hora", "cancha", "nombre", "telefono", "estado", "senia", "saldo")
-        self.booking_tree = ttk.Treeview(self.bookings_tab, columns=columns, show="headings", selectmode="browse")
-        headings = {"id": "ID", "fecha": "Fecha", "hora": "Hora", "cancha": "Cancha", "nombre": "Cliente", "telefono": "Teléfono", "estado": "Estado", "senia": "Seña", "saldo": "Saldo"}
+        self.booking_tree = ttk.Treeview(self.bookings_tab, columns=columns, show="headings", selectmode="browse", style="Admin.Treeview")
+        headings = {"id": "#  ID", "fecha": "▣  Fecha", "hora": "◷  Hora", "cancha": "⚽  Cancha", "nombre": "♙  Cliente", "telefono": "☎  Teléfono", "estado": "◇  Estado", "senia": "▤  Seña", "saldo": "$  Saldo"}
         widths = {"id": 55, "fecha": 105, "hora": 65, "cancha": 105, "nombre": 155, "telefono": 125, "estado": 90, "senia": 105, "saldo": 90}
         for key in columns:
             self.booking_tree.heading(key, text=headings[key])
             self.booking_tree.column(key, width=widths[key], anchor="center" if key not in {"nombre", "telefono"} else "w")
-        scrollbar = ttk.Scrollbar(self.bookings_tab, orient="vertical", command=self.booking_tree.yview)
+        scrollbar = ttk.Scrollbar(self.bookings_tab, orient="vertical", command=self.booking_tree.yview, style="Admin.Vertical.TScrollbar")
         self.booking_tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y", pady=(0, 10))
-        self.booking_tree.pack(fill="both", expand=True, padx=(10, 0), pady=(0, 10))
+        self.booking_tree.pack(fill="both", expand=True, padx=(18, 0), pady=(0, 18))
 
     def _build_hours(self) -> None:
         toolbar = tk.Frame(self.hours_tab, bg="white")
@@ -205,8 +581,8 @@ class AdminPanel(tk.Toplevel):
         body = tk.Frame(self.hours_tab, bg="white")
         body.pack(fill="both", expand=True, padx=14, pady=(0, 12))
         self.hours_canvas = tk.Canvas(body, bg="white", highlightthickness=0)
-        vertical = ttk.Scrollbar(body, orient="vertical", command=self.hours_canvas.yview)
-        horizontal = ttk.Scrollbar(body, orient="horizontal", command=self.hours_canvas.xview)
+        vertical = ttk.Scrollbar(body, orient="vertical", command=self.hours_canvas.yview, style="Admin.Vertical.TScrollbar")
+        horizontal = ttk.Scrollbar(body, orient="horizontal", command=self.hours_canvas.xview, style="Admin.Horizontal.TScrollbar")
         self.hours_canvas.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
         vertical.pack(side="right", fill="y")
         horizontal.pack(side="bottom", fill="x")
@@ -302,13 +678,18 @@ class AdminPanel(tk.Toplevel):
         bar.pack(fill="x", padx=10, pady=10)
         self._action_button(bar, "Resolver y reanudar", self._resolve_case, self.GREEN).pack(side="left")
         columns = ("id", "fecha", "cliente", "telefono", "mensaje", "motivo")
-        self.case_tree = ttk.Treeview(self.cases_tab, columns=columns, show="headings", selectmode="browse")
+        body = tk.Frame(self.cases_tab, bg=self.SURFACE)
+        body.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.case_tree = ttk.Treeview(body, columns=columns, show="headings", selectmode="browse", style="Admin.Treeview")
         widths = (55, 140, 130, 125, 270, 360)
         labels = ("ID", "Creado", "Cliente", "Teléfono", "Mensaje", "Motivo")
         for key, label, width in zip(columns, labels, widths):
             self.case_tree.heading(key, text=label)
             self.case_tree.column(key, width=width, anchor="w")
-        self.case_tree.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        scrollbar = ttk.Scrollbar(body, orient="vertical", command=self.case_tree.yview, style="Admin.Vertical.TScrollbar")
+        self.case_tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.case_tree.pack(side="left", fill="both", expand=True)
 
     def _build_tournaments(self) -> None:
         tournament_actions = tk.Frame(self.tournaments_tab, bg="white")
@@ -329,12 +710,15 @@ class AdminPanel(tk.Toplevel):
         tournament_columns = (
             "id", "name", "date", "price", "prize", "confirmed", "holds", "available"
         )
+        tournament_body = tk.Frame(self.tournaments_tab, bg=self.SURFACE)
+        tournament_body.pack(fill="x", padx=10, pady=(0, 8))
         self.tournament_tree = ttk.Treeview(
-            self.tournaments_tab,
+            tournament_body,
             columns=tournament_columns,
             show="headings",
             selectmode="browse",
             height=7,
+            style="Admin.Treeview",
         )
         tournament_labels = (
             "ID", "Torneo", "Fecha", "Inscripción", "Premio",
@@ -348,7 +732,15 @@ class AdminPanel(tk.Toplevel):
                 width=width,
                 anchor="w" if key == "name" else "center",
             )
-        self.tournament_tree.pack(fill="x", padx=10, pady=(0, 8))
+        tournament_scroll = ttk.Scrollbar(
+            tournament_body,
+            orient="vertical",
+            command=self.tournament_tree.yview,
+            style="Admin.Vertical.TScrollbar",
+        )
+        self.tournament_tree.configure(yscrollcommand=tournament_scroll.set)
+        tournament_scroll.pack(side="right", fill="y")
+        self.tournament_tree.pack(side="left", fill="x", expand=True)
         self.tournament_tree.bind(
             "<<TreeviewSelect>>", lambda _event: self._refresh_tournament_registrations()
         )
@@ -363,33 +755,35 @@ class AdminPanel(tk.Toplevel):
             font=("Segoe UI", 11, "bold"),
             fg=self.NAVY,
             bg="white",
-        ).pack(side="left", padx=(3, 14))
+        ).pack(anchor="w", padx=3, pady=(0, 7))
+        registration_actions = tk.Frame(registrations_header, bg=self.SURFACE)
+        registration_actions.pack(fill="x")
         self._action_button(
-            registrations_header,
+            registration_actions,
             "Nueva inscripción",
             lambda: self._registration_dialog(edit=False),
             self.BLUE,
         ).pack(side="left", padx=3)
         self._action_button(
-            registrations_header,
+            registration_actions,
             "Editar datos",
             lambda: self._registration_dialog(edit=True),
             self.ORANGE,
         ).pack(side="left", padx=3)
         self._action_button(
-            registrations_header,
+            registration_actions,
             "Confirmar seña",
             lambda: self._registration_payment(total=False),
             self.GREEN,
         ).pack(side="left", padx=3)
         self._action_button(
-            registrations_header,
+            registration_actions,
             "Confirmar total",
             lambda: self._registration_payment(total=True),
             self.GREEN,
         ).pack(side="left", padx=3)
         self._action_button(
-            registrations_header,
+            registration_actions,
             "Liberar / cancelar",
             self._cancel_registration,
             self.RED,
@@ -403,6 +797,7 @@ class AdminPanel(tk.Toplevel):
             columns=registration_columns,
             show="headings",
             selectmode="browse",
+            style="Admin.Treeview",
         )
         registration_labels = (
             "ID", "Equipo", "Responsable", "Teléfono", "Estado",
@@ -422,6 +817,7 @@ class AdminPanel(tk.Toplevel):
             self.tournaments_tab,
             orient="vertical",
             command=self.registration_tree.yview,
+            style="Admin.Vertical.TScrollbar",
         )
         self.registration_tree.configure(yscrollcommand=registration_scroll.set)
         registration_scroll.pack(side="right", fill="y", pady=(0, 10))
@@ -462,7 +858,7 @@ class AdminPanel(tk.Toplevel):
         body.pack(fill="both", expand=True, padx=16, pady=(0, 16))
         columns = ("name", "phone", "day", "time", "court", "next", "status")
         self.fixed_turn_tree = ttk.Treeview(
-            body, columns=columns, show="headings", selectmode="browse"
+            body, columns=columns, show="headings", selectmode="browse", style="Admin.Treeview"
         )
         labels = (
             "Cliente", "Teléfono", "Día semanal", "Hora", "Cancha", "Próxima fecha", "Agenda Horas"
@@ -475,7 +871,7 @@ class AdminPanel(tk.Toplevel):
                 width=width,
                 anchor="w" if key in {"name", "phone"} else "center",
             )
-        scrollbar = ttk.Scrollbar(body, orient="vertical", command=self.fixed_turn_tree.yview)
+        scrollbar = ttk.Scrollbar(body, orient="vertical", command=self.fixed_turn_tree.yview, style="Admin.Vertical.TScrollbar")
         self.fixed_turn_tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         self.fixed_turn_tree.pack(side="left", fill="both", expand=True)
@@ -533,14 +929,14 @@ class AdminPanel(tk.Toplevel):
         body.pack(fill="both", expand=True, padx=16, pady=(0, 16))
         columns = ("kind", "contact")
         self.blacklist_tree = ttk.Treeview(
-            body, columns=columns, show="headings", selectmode="browse"
+            body, columns=columns, show="headings", selectmode="browse", style="Admin.Treeview"
         )
         self.blacklist_tree.heading("kind", text="Tipo")
         self.blacklist_tree.heading("contact", text="Número o nombre bloqueado")
         self.blacklist_tree.column("kind", width=130, anchor="center")
         self.blacklist_tree.column("contact", width=540, anchor="w")
         self.blacklist_tree.bind("<<TreeviewSelect>>", self._on_blacklist_selected)
-        scrollbar = ttk.Scrollbar(body, orient="vertical", command=self.blacklist_tree.yview)
+        scrollbar = ttk.Scrollbar(body, orient="vertical", command=self.blacklist_tree.yview, style="Admin.Vertical.TScrollbar")
         self.blacklist_tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         self.blacklist_tree.pack(side="left", fill="both", expand=True)
@@ -562,7 +958,7 @@ class AdminPanel(tk.Toplevel):
             padx=16,
             pady=14,
         )
-        scrollbar = ttk.Scrollbar(body, orient="vertical", command=text.yview)
+        scrollbar = ttk.Scrollbar(body, orient="vertical", command=text.yview, style="Admin.Vertical.TScrollbar")
         text.configure(yscrollcommand=scrollbar.set)
         text.tag_configure(
             "title", font=("Segoe UI", 14, "bold"), foreground=self.NAVY, spacing3=10

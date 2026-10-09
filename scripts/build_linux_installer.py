@@ -93,7 +93,7 @@ def build_installer(root: Path) -> tuple[Path, str]:
         f"{digest}  {final_path.name}\n", encoding="ascii"
     )
     update_path = release_dir / UPDATE_ASSETS["linux"]
-    _, update_digest = create_update_archive(payload_root, update_path, "0.2.20", "linux")
+    _, update_digest = create_update_archive(payload_root, update_path, "0.2.21", "linux")
     print(f"Paquete de actualización: {update_path}")
     print(f"SHA-256 actualización: {update_digest.upper()}")
     print("[4/4] Instalador Linux creado correctamente.", flush=True)
