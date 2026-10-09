@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
+from pathlib import Path
 from typing import Callable
 
 from cancheria.admin.desktop_service import DesktopAdminService
@@ -309,6 +310,7 @@ class AdminPanel(tk.Toplevel):
         self.geometry("1240x780")
         self.minsize(940, 620)
         self.configure(bg=self.BG)
+        self._apply_cancheria_icon()
         self.transient(parent)
 
         self.summary_vars = {
@@ -317,6 +319,25 @@ class AdminPanel(tk.Toplevel):
         self._build()
         self.refresh_all()
         self._schedule_notification_poll()
+
+    def _apply_cancheria_icon(self) -> None:
+        """Use the product icon instead of Tk's default feather on Windows."""
+        service_root = getattr(self.service, "root", None)
+        parent_root = getattr(self.master, "root_dir", None)
+        root = Path(service_root or parent_root or Path(__file__).resolve().parents[3])
+        icon_path = root / "assets" / "cancheria.ico"
+        if not icon_path.is_file():
+            return
+        try:
+            # The explicit bitmap fixes this Toplevel. ``default`` also makes
+            # the reservation/tournament dialogs opened from it inherit the
+            # same icon instead of falling back to Tk's feather.
+            self.iconbitmap(str(icon_path))
+            self.iconbitmap(default=str(icon_path))
+        except tk.TclError:
+            # Non-Windows Tk builds can reject .ico while the rest of the
+            # administration panel remains fully usable.
+            pass
 
     def _build(self) -> None:
         self._configure_ttk_styles()

@@ -43,6 +43,9 @@ def test_admin_panel_visual_contract_keeps_all_features_and_callbacks():
     assert 'BORDER = "#E2E8F0"' in source
     assert 'style="Admin.Treeview"' in source
     assert "class AdminTabView" in source
+    assert 'root / "assets" / "cancheria.ico"' in source
+    assert "self.iconbitmap(str(icon_path))" in source
+    assert "self.iconbitmap(default=str(icon_path))" in source
 
 
 def test_custom_tab_bar_selects_all_tabs_and_scrolls_when_narrow():

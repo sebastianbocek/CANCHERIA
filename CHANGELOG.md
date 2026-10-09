@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.22 - 2026-10-09
+
+- La ventana del panel de administración usa explícitamente el icono oficial de CANCHERIA en lugar del icono predeterminado de Tkinter.
+- Los diálogos secundarios abiertos desde Administración heredan también el icono oficial.
+
 ## 0.2.21 - 2026-10-09
 
 - Rediseño visual completo de la ventana principal con cabecera de marca, barra de estado real, botones redondeados con iconos locales y distribución adaptable.
