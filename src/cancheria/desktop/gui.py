@@ -83,6 +83,7 @@ class CancheriaDesktop(tk.Tk):
     UPDATE_STARTUP_DELAY_MS = 350
     UPDATE_STARTUP_RETRY_MS = 30_000
     UPDATE_STARTUP_CHECKS = 3
+    UPDATE_INTERACTION_COOLDOWN_SECONDS = 10.0
 
     def __init__(self) -> None:
         super().__init__()
@@ -97,6 +98,8 @@ class CancheriaDesktop(tk.Tk):
         self._admin_notification_poll_id: str | None = None
         self._update_notification_poll_id: str | None = None
         self._update_check_in_progress = False
+        self._last_interaction_update_check = 0.0
+        self._interaction_update_check_pending = False
         self._startup_update_checks_remaining = self.UPDATE_STARTUP_CHECKS
         self._announced_update_version = ""
         self.log_queue: queue.Queue[str] = queue.Queue()
@@ -114,6 +117,15 @@ class CancheriaDesktop(tk.Tk):
             pass
 
         self._build_ui()
+        # Un solo enlace a nivel de aplicación cubre la ventana principal y
+        # todos sus Toplevel, incluido Administración. Cualquier clic del
+        # operador puede refrescar silenciosamente la insignia sin obligarlo a
+        # abrir primero el apartado Actualización.
+        self.bind_all(
+            "<ButtonRelease-1>",
+            self._on_user_interaction_for_update,
+            add="+",
+        )
         self.after(120, self._drain_log_queue)
         self.after(700, self._poll_process)
         self.after(450, self._show_update_result)
@@ -647,6 +659,33 @@ class CancheriaDesktop(tk.Tk):
             return
         self._start_update_check(show_status=False)
 
+    def _on_user_interaction_for_update(self, _event=None) -> None:
+        """Refresh the update badge from normal GUI activity.
+
+        Tk's application-wide binding includes buttons, tabs and controls in
+        the administration Toplevel. A short monotonic cooldown prevents a
+        burst of clicks from becoming a burst of GitHub requests.
+        """
+        if self._closing:
+            return
+        if self.available_update is not None:
+            self._update_update_notification_badge(self.available_update)
+            return
+
+        now = time.monotonic()
+        if (
+            self._last_interaction_update_check > 0
+            and now - self._last_interaction_update_check
+            < self.UPDATE_INTERACTION_COOLDOWN_SECONDS
+        ):
+            return
+        self._last_interaction_update_check = now
+
+        if self._update_check_in_progress:
+            self._interaction_update_check_pending = True
+            return
+        self._start_update_check(show_status=False)
+
     def _show_update_result(self) -> None:
         if "CANCHERIA_UPDATE_FINISHED" not in os.environ:
             return
@@ -882,6 +921,10 @@ class CancheriaDesktop(tk.Tk):
 
     def _finish_update_check(self, release: ReleaseInfo | None, error: str) -> None:
         self._update_check_in_progress = False
+        interaction_retry = bool(
+            getattr(self, "_interaction_update_check_pending", False)
+        )
+        self._interaction_update_check_pending = False
         if self._startup_update_checks_remaining > 0:
             self._startup_update_checks_remaining -= 1
         if not error:
@@ -904,6 +947,11 @@ class CancheriaDesktop(tk.Tk):
         self._schedule_update_notification_poll(
             self.UPDATE_STARTUP_RETRY_MS if retry_startup else None
         )
+        if interaction_retry and release is None and not self._closing:
+            self.after(
+                150,
+                lambda: self._start_update_check(show_status=False),
+            )
 
     def _install_available_update(self) -> None:
         release = self.available_update

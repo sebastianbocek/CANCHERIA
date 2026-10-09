@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.16 - 2026-10-09
+
+- Comprueba silenciosamente si existe una versión nueva cuando el operador interactúa con cualquier control de la aplicación.
+- El enlace global cubre la ventana principal y todas las pestañas y botones del panel de administración.
+- Actualiza la insignia roja sin exigir que el usuario abra primero el apartado `ACTUALIZACIÓN`.
+- Limita las consultas por interacción a una cada diez segundos para evitar solicitudes repetidas a GitHub.
+- Si el usuario hace clic mientras la comprobación inicial sigue en curso, deja una nueva comprobación en cola y la ejecuta al finalizar.
+
 ## 0.2.15 - 2026-10-09
 
 - Extiende la revisión semántica en dos pasadas de IA a todos los objetivos de reserva, incluso cuando el contacto no tiene un hold anterior.
