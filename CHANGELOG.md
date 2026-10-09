@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.12 - 2026-10-09
+
+- Reconstruye el objetivo de reserva con IA usando el turno actual, el historial JSON del contacto, la última decisión y las acciones operativas persistidas.
+- Impide que una respuesta elíptica como `Hoy` borre una hora exacta ya aportada en el mensaje anterior.
+- Descarta el hold vencido como objeto transaccional, pero conserva el nuevo pedido autosuficiente y lo vuelve a arbitrar con el contexto completo.
+- Interpreta una consulta de slot exacto como objetivo accionable: si sólo falta el deporte, pregunta únicamente el deporte y luego continúa con el hold y el comprobante.
+- Evita la disponibilidad general y la pregunta redundante `¿Qué día te gustaría?` en la secuencia `cancha para las 21` → `Hoy`.
+- Agrega regresiones artificiales del incidente real de las 19:51 y de compatibilidad con estados pendientes creados por versiones anteriores.
+
 ## 0.2.11 - 2026-10-08
 
 - Inicia la comprobación automática de actualizaciones apenas se dibuja la ventana principal.

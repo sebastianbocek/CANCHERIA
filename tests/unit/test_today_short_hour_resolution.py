@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import datetime
 import asyncio
+import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -159,7 +161,7 @@ def test_artificial_2255_canonical_flow_queries_real_calendar_tool_at_23(
     assert "23" in result["response"]
 
 
-def test_exact_time_without_day_defaults_to_today_and_queries_only_16(
+def test_exact_time_without_day_defaults_to_today_and_asks_only_sport(
     monkeypatch,
 ) -> None:
     """Reproduce el chat real de las 12:22 sin API ni escritura persistente."""
@@ -248,14 +250,10 @@ def test_exact_time_without_day_defaults_to_today_and_queries_only_16(
         )
     )
 
-    observation = result["observations"][0]
-    data = observation["data"]
     assert result["handled"] is True
-    assert observation["tool"] == "consultar_disponibilidad"
-    assert observation["ok"] is True
-    assert data["dia"] == "Jueves 08/10"
-    assert data["hora"] == "16:00"
-    assert "16" in result["response"]
+    assert result["status"] == "waiting_user"
+    assert result["observations"] == []
+    assert "Qué querés reservar" in result["response"]
     assert "Qué día" not in result["response"]
 
 
@@ -520,3 +518,190 @@ def test_answering_only_sport_completes_hold_and_requests_receipt(monkeypatch) -
     assert result["plan"]["steps"][1]["args"]["hora"] == "16:00"
     assert "16hs-17hs" in result["response"]
     assert "comprobante" in result["response"].casefold()
+
+
+def test_expired_hold_ai_recovery_rebuilds_exact_slot_and_asks_only_sport(
+    monkeypatch,
+) -> None:
+    """Reproduce el incidente real 08/10 19:51 sin red ni calendario."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    real_datetime = datetime.datetime
+    captured_payloads = []
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = real_datetime(2026, 10, 8, 19, 51)
+            if tz is None:
+                return value
+            if hasattr(tz, "localize"):
+                return tz.localize(value)
+            return value.replace(tzinfo=tz)
+
+    async def fake_openai(*_args, **kwargs):
+        captured_payloads.append(json.loads(kwargs["messages"][1]["content"]))
+        content = json.dumps({
+            "operation": "query_availability",
+            "confidence": 0.96,
+            "intent_mode": "information",
+            "booking": {
+                "day": None,
+                "time": "21:00",
+                "daypart": None,
+                "time_specificity": "exact",
+                "time_source": "current_turn",
+                "time_evidence": "las 21",
+                "references_previous_time": False,
+                "resource_type": None,
+                "duration_hours": 1.0,
+            },
+            "context_resolution": {
+                "relation": "new_request",
+                "effective_operation": "query_availability",
+                "inherit_fields": [],
+                "replace_fields": ["time"],
+            },
+            "missing_fields": ["resource_type"],
+            "actions": [],
+        })
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=content),
+                finish_reason="stop",
+            )],
+            usage=None,
+        )
+
+    async def no_day_context(*_args, **_kwargs):
+        return {
+            "mode": "no_day_context",
+            "validated": True,
+            "resolved_day": None,
+            "evidence": None,
+        }
+
+    monkeypatch.setattr(legacy.datetime, "datetime", FrozenDateTime)
+    monkeypatch.setattr(legacy, "call_openai_async", fake_openai)
+    monkeypatch.setattr(legacy, "register_cost", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        legacy, "_canonical_v200_adjudicate_current_turn_day", no_day_context
+    )
+
+    state = legacy._canonical_v183_default_state("artificial-test")
+    state["recent_messages"] = [
+        {"role": "user", "content": "Necesito cambiar un turno viejo"},
+        {"role": "assistant", "content": "Ese hold ya venció."},
+    ]
+    state["last_decision"] = {"operation": "replace_pending_booking"}
+    recovered = asyncio.run(
+        legacy._canonical_v204_recover_without_active_pending_hold(
+            "Hola tenes cancha para las 21",
+            ["Hola tenes cancha para las 21"],
+            state,
+        )
+    )
+
+    assert recovered["operation"] == "create_booking"
+    assert recovered["booking"]["day"] == "Jueves 08/10"
+    assert recovered["booking"]["time"] == "21:00"
+    assert recovered["missing_fields"] == ["resource_type"]
+    assert captured_payloads[0]["recent_messages"] == state["recent_messages"]
+    assert captured_payloads[0]["operational_history"]["last_decision"] == {
+        "operation": "replace_pending_booking"
+    }
+
+    saved_states = []
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v183_save",
+        lambda _owner, value: saved_states.append(value) or value,
+    )
+    result = asyncio.run(
+        legacy._canonical_v184_execute_booking(
+            "Hola tenes cancha para las 21",
+            ["Hola tenes cancha para las 21"],
+            state,
+            recovered,
+            {"nombre": "Sebastian"},
+            "artificial-test",
+        )
+    )
+    assert result["status"] == "waiting_user"
+    assert "Qué querés reservar" in result["response"]
+    assert "Qué día" not in result["response"]
+    saved_pending = next(
+        item["pending"]
+        for item in reversed(saved_states)
+        if isinstance(item.get("pending"), dict)
+    )
+    assert saved_pending["field"] == "resource_type"
+    assert saved_pending["time"] == "21:00"
+
+
+def test_today_answer_inherits_21_from_json_and_operational_pending() -> None:
+    """'Hoy' completa fecha; no puede reemplazar la hora del mensaje anterior."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    state = legacy._canonical_v183_default_state("artificial-test")
+    state["active_flow"] = "booking"
+    state["booking"].update({
+        "time": "21:00",
+        "time_specificity": "exact",
+        "time_source": "current_turn",
+        "time_evidence": "21",
+        "duration_hours": 1.0,
+    })
+    state["pending"] = {
+        "type": "booking_question",
+        "field": "dia",
+        "time": "21:00",
+        "time_specificity": "exact",
+        "duration_hours": 1.0,
+        "operation": "query_availability",
+        "source": "canonical_v223_availability_question",
+    }
+    decision = {
+        "operation": "query_availability",
+        "confidence": 0.9,
+        "intent_mode": "continuation",
+        "booking": {
+            "day": "Jueves 08/10",
+            "time": "21:00",
+            "time_specificity": "exact",
+            "time_source": "current_turn",
+            "time_evidence": "Hoy",
+            "references_previous_time": False,
+            "resource_type": None,
+            "duration_hours": 1.0,
+        },
+        "context_resolution": {
+            "relation": "continue_previous_availability",
+            "effective_operation": "query_availability",
+            "inherit_fields": [],
+            "replace_fields": ["day", "time"],
+        },
+        "missing_fields": [],
+        "actions": [],
+    }
+    decision["_v187_raw_booking"] = dict(decision["booking"])
+
+    rebound = legacy._canonical_v228_rebind_answered_pending_context(
+        decision, state, "Hoy", ["Hoy"]
+    )
+    assert rebound["booking"]["time"] == "21:00"
+    assert rebound["booking"]["time_source"] == "canonical_state"
+    assert rebound["booking"]["references_previous_time"] is True
+    assert "time" in rebound["context_resolution"]["inherit_fields"]
+    assert "time" not in rebound["context_resolution"]["replace_fields"]
+
+    restored = legacy._canonical_v223_restore_pending_time_after_day(rebound, state)
+    advanced = legacy._canonical_v228_advance_exact_slot_booking_goal(
+        restored, state
+    )
+    assert advanced["operation"] == "create_booking"
+    assert advanced["booking"]["day"] == "Jueves 08/10"
+    assert advanced["booking"]["time"] == "21:00"
+    assert advanced["missing_fields"] == ["resource_type"]
