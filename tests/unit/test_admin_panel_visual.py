@@ -49,6 +49,11 @@ def test_admin_panel_visual_contract_keeps_all_features_and_callbacks():
     assert "self.tournament_panes = tk.PanedWindow" in source
     assert 'widget.bind("<MouseWheel>", self._scroll_hours_vertical' in source
     assert 'widget.bind("<Shift-MouseWheel>", self._scroll_hours_horizontal' in source
+    assert "class HoursDateField(tk.Canvas)" in source
+    assert "class HoursPill(tk.Canvas)" in source
+    assert "class HoursTile(tk.Canvas)" in source
+    assert 'style="Hours.Vertical.TScrollbar"' in source
+    assert "self.hours_summary_pill.set_text(summary)" in source
 
 
 def test_custom_tab_bar_selects_all_tabs_and_scrolls_when_narrow():

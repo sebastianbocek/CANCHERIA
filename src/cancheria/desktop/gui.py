@@ -284,11 +284,10 @@ class CancheriaDesktop(tk.Tk):
     ORANGE = "#F59E0B"
     RED = "#DC2626"
     DARK_RED = "#B91C1C"
-    UPDATE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000
-    UPDATE_STARTUP_DELAY_MS = 350
-    UPDATE_STARTUP_RETRY_MS = 30_000
-    UPDATE_STARTUP_CHECKS = 3
-    UPDATE_INTERACTION_COOLDOWN_SECONDS = 10.0
+    # Las consultas silenciosas se originan sólo en una interacción real del
+    # operador. El intervalo agrupa clics consecutivos para respetar el límite
+    # anónimo de GitHub; BUSCAR ACTUALIZACIONES conserva la consulta manual.
+    UPDATE_INTERACTION_COOLDOWN_SECONDS = 15 * 60.0
 
     def __init__(self) -> None:
         super().__init__()
@@ -301,11 +300,8 @@ class CancheriaDesktop(tk.Tk):
         self.available_update: ReleaseInfo | None = None
         self.admin_service = None
         self._admin_notification_poll_id: str | None = None
-        self._update_notification_poll_id: str | None = None
         self._update_check_in_progress = False
         self._last_interaction_update_check = 0.0
-        self._interaction_update_check_pending = False
-        self._startup_update_checks_remaining = self.UPDATE_STARTUP_CHECKS
         self._announced_update_version = ""
         self.log_queue: queue.Queue[str] = queue.Queue()
         self._closing = False
@@ -338,10 +334,6 @@ class CancheriaDesktop(tk.Tk):
         self.after(700, self._poll_process)
         self.after(450, self._show_update_result)
         self.after(800, self._poll_admin_notifications)
-        self._update_notification_poll_id = self.after(
-            self.UPDATE_STARTUP_DELAY_MS,
-            self._poll_update_notifications,
-        )
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
@@ -1032,34 +1024,13 @@ class CancheriaDesktop(tk.Tk):
         else:
             self.update_notification_badge.place_forget()
 
-    def _schedule_update_notification_poll(self, delay_ms: int | None = None) -> None:
-        if self._closing:
-            return
-        if self._update_notification_poll_id is not None:
-            try:
-                self.after_cancel(self._update_notification_poll_id)
-            except Exception:
-                pass
-        self._update_notification_poll_id = self.after(
-            delay_ms or self.UPDATE_POLL_INTERVAL_MS,
-            self._poll_update_notifications,
-        )
-
-    def _poll_update_notifications(self) -> None:
-        self._update_notification_poll_id = None
-        if self._closing:
-            return
-        if self._update_check_in_progress:
-            self._schedule_update_notification_poll(60_000)
-            return
-        self._start_update_check(show_status=False)
-
     def _on_user_interaction_for_update(self, _event=None) -> None:
         """Refresh the update badge from normal GUI activity.
 
         Tk's application-wide binding includes buttons, tabs and controls in
-        the administration Toplevel. A short monotonic cooldown prevents a
-        burst of clicks from becoming a burst of GitHub requests.
+        the administration Toplevel. There is intentionally no startup or
+        periodic timer: a monotonic cooldown groups normal click bursts into a
+        single GitHub request.
         """
         if self._closing:
             return
@@ -1077,7 +1048,6 @@ class CancheriaDesktop(tk.Tk):
         self._last_interaction_update_check = now
 
         if self._update_check_in_progress:
-            self._interaction_update_check_pending = True
             return
         self._start_update_check(show_status=False)
 
@@ -1316,12 +1286,6 @@ class CancheriaDesktop(tk.Tk):
 
     def _finish_update_check(self, release: ReleaseInfo | None, error: str) -> None:
         self._update_check_in_progress = False
-        interaction_retry = bool(
-            getattr(self, "_interaction_update_check_pending", False)
-        )
-        self._interaction_update_check_pending = False
-        if self._startup_update_checks_remaining > 0:
-            self._startup_update_checks_remaining -= 1
         if not error:
             self.available_update = release
             self._update_update_notification_badge(release)
@@ -1335,18 +1299,6 @@ class CancheriaDesktop(tk.Tk):
                     "Abrí ACTUALIZACIÓN para instalarla."
                 )
         self._render_update_check_result(release, error)
-        retry_startup = (
-            release is None
-            and self._startup_update_checks_remaining > 0
-        )
-        self._schedule_update_notification_poll(
-            self.UPDATE_STARTUP_RETRY_MS if retry_startup else None
-        )
-        if interaction_retry and release is None and not self._closing:
-            self.after(
-                150,
-                lambda: self._start_update_check(show_status=False),
-            )
 
     def _install_available_update(self) -> None:
         release = self.available_update
@@ -1436,11 +1388,6 @@ class CancheriaDesktop(tk.Tk):
             if not ok:
                 return
         self._closing = True
-        if self._update_notification_poll_id is not None:
-            try:
-                self.after_cancel(self._update_notification_poll_id)
-            except Exception:
-                pass
         self._stop_process()
         self.destroy()
 

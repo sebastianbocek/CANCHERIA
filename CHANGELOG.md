@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.24 - 2026-10-09
+
+- Rediseña exclusivamente la pestaña `Horas` con un contenedor moderno, controles de fecha redondeados y navegación más clara.
+- Convierte la leyenda de disponibilidad en indicadores tipo píldora y agrega un resumen dinámico de fecha, horarios y canchas.
+- Moderniza la grilla con encabezados suaves, celdas redondeadas, degradado verde y mayor separación visual.
+- Conserva la selección de calendario, los callbacks de cada celda, el menú contextual de deportes y los desplazamientos horizontal y vertical.
+- Adapta la distribución a ventanas angostas sin ocultar el botón `Ver horarios` ni los datos del resumen.
+- Elimina las consultas automáticas de actualización al iniciar y por temporizador; la comprobación silenciosa se activa únicamente mediante una interacción del operador.
+- Agrupa los clics durante quince minutos para evitar agotar el límite anónimo de GitHub, manteniendo disponible la búsqueda manual inmediata.
+
 ## 0.2.23 - 2026-10-09
 
 - La pestaña `Torneos` reparte dinámicamente el alto entre torneos e inscripciones para mantener visibles ambas tablas y todas las acciones.

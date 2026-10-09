@@ -337,7 +337,7 @@ def test_admin_operation_date_reuses_visual_calendar_picker():
 def test_admin_hours_tab_builds_with_colored_slot_buttons():
     import tkinter as tk
 
-    from cancheria.desktop.admin_panel import AdminPanel
+    from cancheria.desktop.admin_panel import AdminPanel, HoursTile
 
     class UiService:
         def courts(self):
@@ -379,10 +379,15 @@ def test_admin_hours_tab_builds_with_colored_slot_buttons():
         panel.notebook.select(panel.hours_tab)
         panel.update_idletasks()
         tab_labels = [panel.notebook.tab(tab_id, "text") for tab_id in panel.notebook.tabs()]
-        buttons = [widget for widget in panel.hours_grid.winfo_children() if isinstance(widget, tk.Button)]
+        buttons = [
+            widget
+            for widget in panel.hours_grid.winfo_children()
+            if isinstance(widget, HoursTile) and callable(widget.command)
+        ]
         assert "Horas" in tab_labels
         assert len(buttons) == 4
-        assert {button.cget("bg") for button in buttons} == {panel.FREE_GREEN, panel.RED}
+        assert {button.fill for button in buttons} == {panel.FREE_GREEN, panel.RED}
+        assert "2 horarios · 2 canchas" in panel.hours_status_var.get()
     finally:
         if panel is not None:
             panel.destroy()

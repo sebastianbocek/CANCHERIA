@@ -206,17 +206,18 @@ def test_gui_exposes_settings_and_update_action() -> None:
     assert "launch_update_helper" in text
 
 
-def test_gui_checks_updates_automatically_and_shows_creator_contact() -> None:
+def test_gui_checks_updates_only_from_interactions_and_shows_creator_contact() -> None:
     root = Path(__file__).resolve().parents[2]
     text = (root / "src" / "cancheria" / "desktop" / "gui.py").read_text(encoding="utf-8")
 
-    assert "UPDATE_STARTUP_DELAY_MS = 350" in text
-    assert "UPDATE_STARTUP_RETRY_MS = 30_000" in text
-    assert "UPDATE_STARTUP_CHECKS = 3" in text
-    assert "self.UPDATE_STARTUP_DELAY_MS" in text
-    assert "UPDATE_POLL_INTERVAL_MS = 6 * 60 * 60 * 1000" in text
+    assert "UPDATE_STARTUP_DELAY_MS" not in text
+    assert "UPDATE_STARTUP_RETRY_MS" not in text
+    assert "UPDATE_STARTUP_CHECKS" not in text
+    assert "UPDATE_POLL_INTERVAL_MS" not in text
+    assert "_poll_update_notifications" not in text
+    assert "_schedule_update_notification_poll" not in text
     assert "self._update_update_notification_badge(release)" in text
-    assert "UPDATE_INTERACTION_COOLDOWN_SECONDS = 10.0" in text
+    assert "UPDATE_INTERACTION_COOLDOWN_SECONDS = 15 * 60.0" in text
     assert 'self.bind_all(' in text
     assert '"<ButtonRelease-1>"' in text
     assert "self._on_user_interaction_for_update" in text
@@ -226,17 +227,14 @@ def test_gui_checks_updates_automatically_and_shows_creator_contact() -> None:
     assert "https://wa.me/5493513441882" in text
 
 
-def test_automatic_update_check_retries_at_startup_without_opening_settings() -> None:
+def test_finished_update_check_does_not_schedule_another_request() -> None:
     from cancheria.desktop.gui import CancheriaDesktop
 
     class FakeDesktop:
         _update_check_in_progress = True
-        _startup_update_checks_remaining = 3
         available_update = None
         _announced_update_version = ""
-        UPDATE_STARTUP_RETRY_MS = 30_000
         rendered = []
-        scheduled = []
         badges = []
 
         def _update_update_notification_badge(self, release):
@@ -248,15 +246,11 @@ def test_automatic_update_check_retries_at_startup_without_opening_settings() ->
         def _render_update_check_result(self, release, error):
             self.rendered.append((release, error))
 
-        def _schedule_update_notification_poll(self, delay_ms=None):
-            self.scheduled.append(delay_ms)
-
     desktop = FakeDesktop()
     CancheriaDesktop._finish_update_check(desktop, None, "fallo transitorio")
 
     assert desktop._update_check_in_progress is False
-    assert desktop._startup_update_checks_remaining == 2
-    assert desktop.scheduled == [30_000]
+    assert desktop.rendered == [(None, "fallo transitorio")]
     assert desktop.badges == []
 
 
@@ -264,7 +258,7 @@ def test_any_gui_interaction_can_refresh_update_badge_with_cooldown(monkeypatch)
     from cancheria.desktop import gui
     from cancheria.desktop.gui import CancheriaDesktop
 
-    ticks = iter([100.0, 105.0, 111.0])
+    ticks = iter([100.0, 105.0, 1001.0])
     monkeypatch.setattr(gui.time, "monotonic", lambda: next(ticks))
 
     class FakeDesktop:
@@ -272,8 +266,7 @@ def test_any_gui_interaction_can_refresh_update_badge_with_cooldown(monkeypatch)
         available_update = None
         _update_check_in_progress = False
         _last_interaction_update_check = 0.0
-        _interaction_update_check_pending = False
-        UPDATE_INTERACTION_COOLDOWN_SECONDS = 10.0
+        UPDATE_INTERACTION_COOLDOWN_SECONDS = 15 * 60.0
         checks = []
         badges = []
 
@@ -292,7 +285,7 @@ def test_any_gui_interaction_can_refresh_update_badge_with_cooldown(monkeypatch)
     assert desktop.badges == []
 
 
-def test_gui_interaction_queues_refresh_when_startup_check_is_running(monkeypatch) -> None:
+def test_gui_interaction_is_ignored_while_a_check_is_running(monkeypatch) -> None:
     from cancheria.desktop import gui
     from cancheria.desktop.gui import CancheriaDesktop
 
@@ -303,11 +296,11 @@ def test_gui_interaction_queues_refresh_when_startup_check_is_running(monkeypatc
         available_update = None
         _update_check_in_progress = True
         _last_interaction_update_check = 0.0
-        _interaction_update_check_pending = False
-        UPDATE_INTERACTION_COOLDOWN_SECONDS = 10.0
+        UPDATE_INTERACTION_COOLDOWN_SECONDS = 15 * 60.0
+        checks = []
 
         def _start_update_check(self, *, show_status):
-            raise AssertionError("no debe iniciar otra consulta en paralelo")
+            self.checks.append(show_status)
 
         def _update_update_notification_badge(self, _release):
             raise AssertionError("todavía no hay release")
@@ -315,7 +308,7 @@ def test_gui_interaction_queues_refresh_when_startup_check_is_running(monkeypatc
     desktop = FakeDesktop()
     CancheriaDesktop._on_user_interaction_for_update(desktop)
 
-    assert desktop._interaction_update_check_pending is True
+    assert desktop.checks == []
 
 
 def test_github_release_request_bypasses_stale_http_cache(monkeypatch) -> None:
