@@ -405,7 +405,8 @@ def test_expired_hold_ai_recovery_rebuilds_exact_slot_and_asks_only_sport(
     assert recovered["booking"]["time"] == "21:00"
     assert recovered["missing_fields"] == ["resource_type"]
     assert captured_payloads[0]["recent_messages"] == state["recent_messages"]
-    assert captured_payloads[0]["operational_history"]["last_decision"] == {
+    assert captured_payloads[0]["operational_history"]["last_decision"] is None
+    assert captured_payloads[0]["discarded_historical_context"]["last_decision"] == {
         "operation": "replace_pending_booking"
     }
 
@@ -615,3 +616,153 @@ def test_ai_reconstructs_complete_goal_when_day_arrives_last(monkeypatch) -> Non
     assert decision["booking"]["resource_type"] == "Futbol 5"
     assert decision["missing_fields"] == []
     assert decision.get("_v229_pending_field_completed") is None
+
+
+def test_0045_vanished_hold_is_rebuilt_by_two_pass_ai_as_current_goal(
+    monkeypatch,
+) -> None:
+    """Reproduce el incidente real del 09/10 a las 00:45."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    real_datetime = datetime.datetime
+    payloads = []
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = real_datetime(2026, 10, 9, 0, 45)
+            if tz is None:
+                return value
+            if hasattr(tz, "localize"):
+                return tz.localize(value)
+            return value.replace(tzinfo=tz)
+
+    stale_draft = {
+        "operation": "query_availability",
+        "confidence": 0.88,
+        "intent_mode": "information",
+        "booking": {
+            "day": "Jueves 08/10",
+            "day_source": "conversation_history",
+            "time": "21:00",
+            "time_specificity": "exact",
+            "time_source": "current_turn",
+            "time_evidence": "las 21",
+            "references_previous_time": False,
+            "resource_type": None,
+            "duration_hours": 1.0,
+        },
+        "context_resolution": {
+            "relation": "new_request",
+            "effective_operation": "query_availability",
+            "inherit_fields": [],
+            "replace_fields": ["time"],
+        },
+        "missing_fields": ["day", "resource_type"],
+        "actions": [],
+    }
+    reviewed = {
+        "operation": "create_booking",
+        "confidence": 0.98,
+        "intent_mode": "transaction",
+        "booking": {
+            "day": "Viernes 09/10",
+            "day_source": "natural_context",
+            "day_evidence": None,
+            "time": "21:00",
+            "time_specificity": "exact",
+            "time_source": "current_turn",
+            "time_evidence": "las 21",
+            "references_previous_time": False,
+            "resource_type": None,
+            "duration_hours": 1.0,
+        },
+        "context_resolution": {
+            "relation": "new_request",
+            "effective_operation": "create_booking",
+            "inherit_fields": [],
+            "replace_fields": [],
+        },
+        "goal_reconstruction": {
+            "goal": "crear_reserva",
+            "known_fields": {"day": "Viernes 09/10", "time": "21:00"},
+            "missing_fields": ["resource_type"],
+            "ready_for_execution": False,
+            "summary": "Pedido nuevo para hoy a las 21; falta deporte",
+        },
+        "missing_fields": ["resource_type"],
+        "actions": [],
+    }
+
+    async def fake_openai(*_args, **kwargs):
+        payload = json.loads(kwargs["messages"][1]["content"])
+        payloads.append(payload)
+        content = stale_draft if len(payloads) == 1 else reviewed
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=json.dumps(content)),
+                finish_reason="stop",
+            )],
+            usage=None,
+        )
+
+    async def no_resource(*_args, **_kwargs):
+        return {"explicit": False, "resource_type": None, "evidence": None}
+
+    async def no_current_day(_message, _messages, audited_state, _decision):
+        assert audited_state["booking"]["day"] is None
+        assert audited_state["pending"] is None
+        return {
+            "mode": "no_day_context",
+            "validated": True,
+            "resolved_day": None,
+            "evidence": None,
+        }
+
+    monkeypatch.setattr(legacy.datetime, "datetime", FrozenDateTime)
+    monkeypatch.setattr(legacy, "call_openai_async", fake_openai)
+    monkeypatch.setattr(legacy, "register_cost", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(legacy, "_canonical_v205_current_turn_resource_receipt", no_resource)
+    monkeypatch.setattr(legacy, "_canonical_v200_adjudicate_current_turn_day", no_current_day)
+
+    state = legacy._canonical_v183_default_state("artificial-test")
+    state["active_flow"] = "booking"
+    state["active_flow_hint"] = "booking_payment"
+    state["booking"].update({
+        "day": "Jueves 08/10",
+        "time": "19:00",
+        "resource_type": "Futbol 5",
+        "status": "senia_pendiente",
+        "reservation_id": "R-EXPIRADA",
+    })
+    state["pending"] = {
+        "field": "comprobante",
+        "operation": "replace_pending_booking",
+    }
+    state["last_decision"] = {"operation": "replace_pending_booking"}
+    state["recent_messages"] = [
+        {"role": "user", "content": "Hola tenes cancha para las 21"},
+    ]
+
+    recovered = asyncio.run(
+        legacy._canonical_v204_recover_without_active_pending_hold(
+            "Hola tenes cancha para las 21",
+            ["Hola tenes cancha para las 21"],
+            state,
+        )
+    )
+
+    assert len(payloads) == 2
+    assert payloads[0]["canonical_state"]["booking"]["day"] is None
+    assert payloads[0]["operational_history"]["pending_action"] is None
+    assert payloads[0]["discarded_historical_context"]["booking"]["day"] == "Jueves 08/10"
+    assert payloads[1]["draft_decision"]["booking"]["day"] == "Jueves 08/10"
+    assert recovered["operation"] == "create_booking"
+    assert recovered["booking"]["day"] == "Viernes 09/10"
+    assert recovered["booking"]["day_source"] == "natural_context"
+    assert recovered["booking"]["time"] == "21:00"
+    assert recovered["missing_fields"] == ["resource_type"]
+    assert recovered["_v230_goal_self_reviewed"] is True
+    assert state["booking"]["day"] is None
+    assert state["pending"] is None

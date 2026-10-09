@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.14 - 2026-10-09
+
+- Separa por completo un hold vencido del objetivo conversacional vigente antes de volver a interpretar el mensaje.
+- Conserva el estado anterior únicamente como contexto histórico descartado, sin permitir que aporte fecha, hora, deporte ni operación al nuevo objetivo.
+- Agrega una segunda pasada de IA que audita y corrige la reconstrucción completa antes de responder o ejecutar una reserva.
+- Permite que la IA infiera una fecha implícita desde el lenguaje, la hora actual y la conversación, con procedencia explícita, sin una regla Python de «hora sin fecha = hoy».
+- Evita que las capas posteriores vuelvan a insertar o purgar la fecha de una reserva vieja después de que la IA reconstruyó el nuevo pedido.
+- Añade una regresión artificial exacta del incidente de las 00:45 con una seña pendiente histórica y un hold inexistente.
+
 ## 0.2.13 - 2026-10-09
 
 - Centraliza en la IA la reconstrucción del objetivo vigente usando el turno actual, el historial JSON, el estado canónico y las acciones operativas.

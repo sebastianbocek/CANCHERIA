@@ -140603,6 +140603,38 @@ def _canonical_v215_apply_current_turn_court_time(
     return decision
 
 
+def _canonical_v204_state_without_vanished_hold(
+    state: Dict[str, Any],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Separa la verdad vigente del contexto de un hold que ya no existe.
+
+    No interpreta el mensaje ni completa datos de reserva. Sólo invalida el
+    foco transaccional cuya inexistencia ya fue comprobada contra calendario.
+    El historial se conserva por separado para que la IA pueda comprender la
+    conversación sin confundirlo con estado operativo actual.
+    """
+    original = copy.deepcopy(state if isinstance(state, dict) else {})
+    safe = copy.deepcopy(original)
+    discarded = {
+        "active_flow": original.get("active_flow"),
+        "active_flow_hint": original.get("active_flow_hint"),
+        "booking": original.get("booking"),
+        "availability": original.get("availability"),
+        "pending": original.get("pending"),
+        "last_decision": original.get("last_decision"),
+        "discard_reason": "no_active_pending_hold_exists",
+    }
+    safe["active_flow"] = None
+    safe["active_flow_hint"] = None
+    safe["booking"] = copy.deepcopy(
+        _canonical_v183_default_state(str(original.get("owner") or "v204"))["booking"]
+    )
+    safe["availability"] = None
+    safe["pending"] = None
+    safe["last_decision"] = None
+    return safe, discarded
+
+
 async def _canonical_v204_recover_without_active_pending_hold(
     message: str,
     user_messages: List[str],
@@ -140622,6 +140654,10 @@ async def _canonical_v204_recover_without_active_pending_hold(
     if pending_focus.get("active"):
         return None
 
+    recovery_state, discarded_context = _canonical_v204_state_without_vanished_hold(
+        state
+    )
+
     payload = {
         "now": datetime.datetime.now(TIMEZONE).isoformat(),
         "latest_user_turn": str(message or "").strip(),
@@ -140629,22 +140665,23 @@ async def _canonical_v204_recover_without_active_pending_hold(
             str(x) for x in (user_messages or [message]) if str(x).strip()
         ],
         "image_present": bool(image_path and os.path.isfile(image_path)),
-        "canonical_state": _canonical_v184_compact_state(state),
+        "canonical_state": _canonical_v184_compact_state(recovery_state),
         "transactional_truth": {
             "active_pending_booking": False,
             "replace_pending_booking_allowed": False,
             "reason": "no_active_pending_hold_exists",
         },
         "semantic_focus": {
-            "last_verified_availability": _canonical_v201_last_verified_availability_context(state),
+            "last_verified_availability": _canonical_v201_last_verified_availability_context(recovery_state),
             "active_pending_booking": pending_focus,
         },
         "recent_messages": list(state.get("recent_messages") or [])[-10:],
         "operational_history": {
-            "last_decision": state.get("last_decision"),
-            "pending_action": state.get("pending"),
-            "verified_booking_state": state.get("booking"),
+            "last_decision": recovery_state.get("last_decision"),
+            "pending_action": recovery_state.get("pending"),
+            "verified_booking_state": recovery_state.get("booking"),
         },
+        "discarded_historical_context": discarded_context,
         "business_constraints": {
             "configured_resource_types": list(_configured_court_type_labels()),
             "allowed_durations_hours": list(ALLOWED_TURN_DURATIONS or []),
@@ -140663,7 +140700,10 @@ La IA sigue siendo la autoridad semántica; Python no está clasificando palabra
 
 REGLAS OBLIGATORIAS:
 1. replace_pending_booking está PROHIBIDO porque no existe un hold activo.
-2. No conviertas un hold expirado del historial en una reserva viva.
+2. canonical_state y operational_history contienen sólo estado vigente. El
+   objeto discarded_historical_context es evidencia narrativa para comprender
+   el diálogo, pero sus campos fueron invalidados y NO se pueden heredar como
+   día, hora, deporte, pending ni operación actual.
 3. Si el turno actual es autosuficiente (por ejemplo contiene su propio día,
    hora/franja y deporte), tratá esos datos del turno actual como autoridad y
    elegí la operación que realmente pide ahora.
@@ -140686,6 +140726,14 @@ REGLAS OBLIGATORIAS:
     campos impuesto por Python. Devolvé en booking todo lo que la conversación
     ya permita conocer, y en missing_fields solamente lo que siga realmente
     ausente. Si el objetivo de reserva queda completo, devolvé create_booking.
+13. Usá now para interpretar el sentido temporal natural del pedido actual. Si
+    el usuario omitió la fecha, decidí semánticamente si una persona razonable
+    está hablando del día local actual o si existe ambigüedad real. No copies la
+    fecha descartada para llenar ese vacío. Si inferís una fecha por el sentido
+    natural del pedido, devolvé day_source=natural_context y explicala en
+    goal_reconstruction; si realmente es ambiguo, dejala como faltante.
+14. Hacé una reconstrucción completa del goal: el borrador será sometido a una
+    segunda revisión IA antes de responder al cliente.
 
 OPERATIONS válidas en esta recuperación:
 greeting, query_availability, create_booking, create_recurring_booking,
@@ -140701,7 +140749,8 @@ Respondé SOLO JSON:
   \"confidence\": 0.0,
   \"intent_mode\": \"information|transaction|continuation\",
   \"booking\": {
-    \"day\": null, \"time\": null, \"daypart\": null,
+    \"day\": null, \"day_source\": \"current_turn|conversation_history|natural_context|none\",
+    \"day_evidence\": null, \"time\": null, \"daypart\": null,
     \"time_specificity\": \"exact|daypart|none\",
     \"time_source\": \"current_turn|canonical_state|none\",
     \"time_evidence\": null,
@@ -140728,24 +140777,38 @@ Respondé SOLO JSON:
     \"replace_fields\": [],
     \"evidence\": null
   },
+  \"goal_reconstruction\": {
+    \"goal\": null,
+    \"known_fields\": {},
+    \"missing_fields\": [],
+    \"ready_for_execution\": false,
+    \"summary\": null
+  },
   \"missing_fields\": [],
   \"handoff_reason\": null,
   \"reason\": \"breve\",
   \"actions\": []
 }"""
 
+    first_valid_draft: Optional[Dict[str, Any]] = None
     for attempt in range(2):
         retry_rule = (
-            "\nREINTENTO: la salida anterior violó la precondición. "
-            "NO uses replace_pending_booking ni continue_previous_booking."
-            if attempt else ""
+            "\nSEGUNDA REVISIÓN SEMÁNTICA OBLIGATORIA: releé todo el payload y "
+            "auditá draft_decision. Corregí cualquier dato heredado del contexto "
+            "descartado, cualquier campo ya conocido que se haya perdido y cualquier "
+            "faltante que el significado natural permita resolver. Devolvé la decisión "
+            "final completa; NO uses replace_pending_booking ni "
+            "continue_previous_booking."
+            if attempt else "\nPRIMERA PASADA: reconstruí un borrador completo del goal."
         )
         try:
+            request_payload = dict(payload)
+            request_payload["draft_decision"] = first_valid_draft if attempt else None
             resp = await call_openai_async(
                 model=OPENAI_MODEL,
                 messages=[
                     {"role": "system", "content": system + retry_rule},
-                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)},
+                    {"role": "user", "content": json.dumps(request_payload, ensure_ascii=False, default=str)},
                 ],
                 temperature=0.0,
                 max_tokens=900,
@@ -140783,13 +140846,24 @@ Respondé SOLO JSON:
         if operation not in CANONICAL_V184_OPERATIONS:
             continue
 
+        if attempt == 0:
+            first_valid_draft = copy.deepcopy(recovered)
+            print(
+                "   🔎 [CANONICAL V230 GOAL SELF-REVIEW] "
+                f"borrador operation={operation} → segunda revisión IA"
+            )
+            continue
+
         try:
             recovered["confidence"] = max(
                 0.0, min(1.0, float(recovered.get("confidence") or 0.0))
             )
         except Exception:
             recovered["confidence"] = 0.0
-        for key in ("booking", "recurrence", "reservation", "event", "info", "context_resolution"):
+        for key in (
+            "booking", "recurrence", "reservation", "event", "info",
+            "context_resolution", "goal_reconstruction",
+        ):
             if not isinstance(recovered.get(key), dict):
                 recovered[key] = {}
         if not isinstance(recovered.get("missing_fields"), list):
@@ -140812,13 +140886,16 @@ Respondé SOLO JSON:
         # aplicamos las mismas autoridades temporales antes de ejecutarla: la IA
         # decide el significado y los receipts sólo validan provenance.
         day_receipt = await _canonical_v200_adjudicate_current_turn_day(
-            message, user_messages, state, recovered
+            message, user_messages, recovery_state, recovered
         )
         recovered = _canonical_v213_apply_current_turn_day_receipt(
             recovered, day_receipt
         )
         recovered["_v213_current_turn_day_receipt"] = day_receipt
         recovered["_v204_expired_hold_semantic_recovery"] = True
+        recovered["_v230_goal_self_reviewed"] = True
+        state.clear()
+        state.update(recovery_state)
         print(
             "   ✅ [CANONICAL V204 EXPIRED HOLD RECOVERY] "
             f"hold_inexistente descartado → operation={recovered.get('operation')} "
@@ -141200,7 +141277,10 @@ Respondé SOLO JSON con esta forma:
   "confidence": 0.0,
   "intent_mode": "information|transaction|continuation",
   "booking": {
-    "day": null, "time": null, "daypart": null,
+    "day": null,
+    "day_source": "current_turn|conversation_history|natural_context|none",
+    "day_evidence": null,
+    "time": null, "daypart": null,
     "time_specificity": "exact|daypart|none",
     "time_source": "current_turn|canonical_state|none",
     "time_evidence": null,
@@ -147119,7 +147199,7 @@ def run_agent_v2_invariant_evals() -> Dict[str, Any]:
 
 AGENT_V2_UNIFIED_AGENTIC_CORE = "v227-partial-cash-context-binding"
 AGENT_V2_UNIFIED_CONVERSATION_KERNEL = "v227-partial-cash-context-binding"
-AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-08_canonical_partial_cash_binding_v227"
+AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-09_ai_goal_self_review_v230"
 
 # V195 marker is defined immediately above. V194 marker intentionally retired.
 
