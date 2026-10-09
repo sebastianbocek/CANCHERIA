@@ -182,23 +182,37 @@ CANCHERIA no incluye una API key. Cada usuario debe crear y administrar la suya,
 | **CERRAR SESIÓN** | Elimina solamente la sesión local de WhatsApp; no borra reservas ni configuración. |
 | **NUEVA SESIÓN** | Limpia el perfil anterior y abre WhatsApp para escanear un QR nuevo. |
 | **CONFIGURACIÓN** | Abre el configurador visual del complejo. |
-| **ADMINISTRACIÓN** | Abre reservas, pagos, agenda por horas, operación y casos humanos. |
+| **ADMINISTRACIÓN** | Abre reservas, pagos, agenda por horas, operación, casos humanos, torneos, turnos fijos y blacklist. |
 | **Abrir manual** | Abre el manual PDF incluido con el programa. |
 
 ## Panel de administración
 
 El panel visual permite trabajar sin recordar comandos:
 
-- Ver reservas activas, pagos pendientes, turnos del día y casos humanos.
-- Crear reservas manuales.
-- Confirmar una seña o el pago total.
-- Liberar un turno pendiente o cancelar una reserva.
-- Consultar la agenda completa por fecha y cancha.
-- Seleccionar horarios libres u ocupados directamente desde la grilla.
-- Revisar el estado operativo y los comandos disponibles.
+- **Reservas y pagos:** ver reservas activas y pagos pendientes, crear reservas
+  manuales, confirmar una seña o el pago total, liberar pendientes y cancelar
+  reservas.
+- **Horas:** consultar la agenda visual por fecha y cancha, distinguir horarios
+  libres y ocupados, y crear, editar o cancelar un turno desde su celda. Las
+  horas que ya pasaron se ocultan para que la agenda del día muestre solamente
+  horarios útiles. Cada cancha presenta el icono de su deporte; con clic derecho
+  sobre su encabezado se puede cambiar el deporte y sincronizar ese dato con la
+  disponibilidad que CANCHERIA informa por WhatsApp.
+- **Operación:** revisar el estado operativo del complejo, seleccionar una fecha
+  desde el calendario y administrar bloqueos o disponibilidad de la jornada.
+- **Atención humana:** consultar los casos derivados por el agente, ver su
+  contexto y marcarlos como resueltos cuando el administrador los atiende.
+- **Torneos:** crear, editar y eliminar torneos, además de gestionar sus cupos,
+  inscripciones y pagos desde la GUI.
+- **Turnos Fijos:** crear, editar y quitar reservas recurrentes. Sus próximas
+  ocurrencias se sincronizan automáticamente con la agenda de **Horas**.
+- **Blacklist:** bloquear o desbloquear números y consultar qué contactos no
+  deben recibir respuestas automáticas.
+- **Comandos y configuración:** consultar de forma ordenada todos los comandos
+  administrativos disponibles en WhatsApp y abrir la configuración del negocio.
 - Ver contadores rojos en el botón **ADMINISTRACIÓN** y en la pestaña exacta
-  que tiene pagos o casos humanos pendientes. Abrir el panel no borra la alerta:
-  desaparece al confirmar el pago o resolver el caso.
+  que tiene una acción pendiente. Abrir el panel no borra la alerta: desaparece
+  únicamente al confirmar el pago o resolver el caso correspondiente.
 
 La fecha de la pestaña **Horas** comienza siempre en el día actual y puede cambiarse para revisar o administrar cualquier otra fecha.
 
