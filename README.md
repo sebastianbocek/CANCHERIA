@@ -18,13 +18,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.29/InstaladorCancheria.exe"><strong>⬇️ Descargar para Windows</strong></a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.30/InstaladorCancheria.exe"><strong>⬇️ Descargar para Windows</strong></a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.29/InstaladorCancheriaLinux.run"><strong>⬇️ Descargar para Debian</strong></a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.30/InstaladorCancheriaLinux.run"><strong>⬇️ Descargar para Debian</strong></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/tag/v0.2.29">Ver versión v0.2.29</a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/tag/v0.2.30">Ver versión v0.2.30</a>
   ·
   <a href="docs/MANUAL_DE_USO_CANCHERIA_DUENOS_ENCARGADOS.pdf">Manual completo</a>
 </p>
@@ -71,13 +71,13 @@ El software de CANCHERIA se distribuye sin costo de licencia. Para responder con
 La siguiente demostración muestra una conversación real de reserva con CANCHERIA. La vista previa se reproduce directamente en el README; hacé clic sobre ella para abrir el video completo con audio.
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.29/DEMO-CANCHERIA-CHAT.mp4">
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.30/DEMO-CANCHERIA-CHAT.mp4">
     <img src="docs/images/cancheria-demo.webp" alt="Demo de una conversación de reserva con CANCHERIA" width="420">
   </a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.29/DEMO-CANCHERIA-CHAT.mp4"><strong>▶ Ver demo completa con audio</strong></a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.30/DEMO-CANCHERIA-CHAT.mp4"><strong>▶ Ver demo completa con audio</strong></a>
 </p>
 
 ### Panel principal
@@ -98,7 +98,7 @@ La pestaña **Horas** muestra cada horario y cancha en una grilla: verde cuando 
 
 ### Windows 10 y Windows 11
 
-1. Descargá **[InstaladorCancheria.exe](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.29/InstaladorCancheria.exe)**.
+1. Descargá **[InstaladorCancheria.exe](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.30/InstaladorCancheria.exe)**.
 2. Cerrá una instalación anterior de CANCHERIA si estuviera abierta.
 3. Ejecutá `InstaladorCancheria.exe` y seguí el asistente.
 4. Dejá marcada la opción **Configurar mi negocio ahora**.
@@ -117,7 +117,7 @@ Requisitos:
 - Usuario normal con acceso a `sudo`.
 - Conexión a Internet.
 
-1. Descargá **[InstaladorCancheriaLinux.run](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.29/InstaladorCancheriaLinux.run)**.
+1. Descargá **[InstaladorCancheriaLinux.run](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.30/InstaladorCancheriaLinux.run)**.
 2. Abrí una terminal en la carpeta de descarga.
 3. Ejecutá el instalador con tu usuario normal, sin anteponer `sudo`:
 
@@ -182,7 +182,7 @@ CANCHERIA no incluye una API key. Cada usuario debe crear y administrar la suya,
 | **CERRAR SESIÓN** | Elimina solamente la sesión local de WhatsApp; no borra reservas ni configuración. |
 | **NUEVA SESIÓN** | Limpia el perfil anterior y abre WhatsApp para escanear un QR nuevo. |
 | **CONFIGURACIÓN** | Abre el configurador visual del complejo. |
-| **ADMINISTRACIÓN** | Abre reservas, pagos, agenda por horas, operación, casos humanos, torneos, turnos fijos y blacklist. |
+| **ADMINISTRACIÓN** | Abre reservas, pagos, agenda por horas, caja, operación, casos humanos, torneos, turnos fijos y blacklist. |
 | **Abrir manual** | Abre el manual PDF incluido con el programa. |
 
 ## Panel de administración
@@ -198,6 +198,11 @@ El panel visual permite trabajar sin recordar comandos:
   horarios útiles. Cada cancha presenta el icono de su deporte; con clic derecho
   sobre su encabezado se puede cambiar el deporte y sincronizar ese dato con la
   disponibilidad que CANCHERIA informa por WhatsApp.
+- **Caja:** consultar ingresos reales del día y del mes, saldos pendientes y
+  reservas futuras; filtrar movimientos por rango de fechas con calendario y
+  por método de pago; registrar ingresos o gastos manuales, cerrar la jornada y
+  exportar el detalle a CSV. Los pagos de reservas y torneos se consolidan por
+  su ID para que un turno de varias horas se contabilice una sola vez.
 - **Operación:** revisar el estado operativo del complejo, seleccionar una fecha
   desde el calendario y administrar bloqueos o disponibilidad de la jornada.
 - **Atención humana:** consultar los casos derivados por el agente, ver su
@@ -336,7 +341,7 @@ Los resultados se guardan en `release/`. Los generadores usan una configuración
 
 ## Estado de licencia
 
-CANCHERIA `v0.2.29` se ofrece para descarga y uso sin costo de licencia. La licencia jurídica definitiva del código fuente continúa pendiente de selección por AI BROTHERS; consultá [docs/licensing.md](docs/licensing.md). Esto no afecta la descarga gratuita de los instaladores publicados.
+CANCHERIA `v0.2.30` se ofrece para descarga y uso sin costo de licencia. La licencia jurídica definitiva del código fuente continúa pendiente de selección por AI BROTHERS; consultá [docs/licensing.md](docs/licensing.md). Esto no afecta la descarga gratuita de los instaladores publicados.
 
 ---
 

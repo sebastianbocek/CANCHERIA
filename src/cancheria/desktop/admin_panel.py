@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
+import datetime as dt
 from pathlib import Path
 from typing import Callable
 
@@ -352,6 +353,7 @@ class AdminTabView(tk.Frame):
     TAB_ICONS = {
         "Reservas y pagos": "▣",
         "Horas": "◷",
+        "Caja": "$",
         "Operación": "⚙",
         "Atención humana": "●",
         "Torneos": "♛",
@@ -731,6 +733,7 @@ class AdminPanel(tk.Toplevel):
         self.notebook.pack(fill="both", expand=True, padx=20, pady=(0, 18))
         self.bookings_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.hours_tab = tk.Frame(self.notebook, bg=self.SURFACE)
+        self.cash_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.operation_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.cases_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.tournaments_tab = tk.Frame(self.notebook, bg=self.SURFACE)
@@ -739,6 +742,7 @@ class AdminPanel(tk.Toplevel):
         self.commands_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.notebook.add(self.bookings_tab, text="Reservas y pagos")
         self.notebook.add(self.hours_tab, text="Horas")
+        self.notebook.add(self.cash_tab, text="Caja")
         self.notebook.add(self.operation_tab, text="Operación")
         self.notebook.add(self.cases_tab, text="Atención humana")
         self.notebook.add(self.tournaments_tab, text="Torneos")
@@ -748,6 +752,7 @@ class AdminPanel(tk.Toplevel):
         self._tab_titles = {
             self.bookings_tab: "Reservas y pagos",
             self.hours_tab: "Horas",
+            self.cash_tab: "Caja",
             self.operation_tab: "Operación",
             self.cases_tab: "Atención humana",
             self.tournaments_tab: "Torneos",
@@ -758,6 +763,7 @@ class AdminPanel(tk.Toplevel):
         self._tab_notification_keys = {
             self.bookings_tab: "bookings",
             self.hours_tab: "hours",
+            self.cash_tab: "cash",
             self.operation_tab: "operation",
             self.cases_tab: "cases",
             self.tournaments_tab: "tournaments",
@@ -768,6 +774,7 @@ class AdminPanel(tk.Toplevel):
         self._tab_badge_images: dict[tk.Widget, tk.PhotoImage] = {}
         self._build_bookings()
         self._build_hours()
+        self._build_cash()
         self._build_operation()
         self._build_cases()
         self._build_tournaments()
@@ -1139,9 +1146,425 @@ class AdminPanel(tk.Toplevel):
         self.hours_canvas.xview_scroll(direction * 3, "units")
         return "break"
 
+    def _build_cash(self) -> None:
+        """Build the financial dashboard without changing reservation workflows."""
+        self.cash_tab.configure(bg=self.BG)
+        today = dt.date.today()
+        self.cash_start_var = tk.StringVar(value=today.replace(day=1).isoformat())
+        self.cash_end_var = tk.StringVar(value=today.isoformat())
+        self.cash_method_var = tk.StringVar(value="Todos")
+        self.cash_summary_vars = {
+            key: tk.StringVar(value="$ 0")
+            for key in ("today", "month", "pending", "future")
+        }
+
+        cards = tk.Frame(self.cash_tab, bg=self.BG)
+        cards.pack(fill="x", padx=12, pady=(12, 8))
+        card_specs = (
+            ("today", "Ingresos de hoy", "$", "#079455", "#E1F7EE"),
+            ("month", "Ingresos del mes", "▣", self.BLUE, "#E7F0FF"),
+            ("pending", "Saldos pendientes", "$", self.ORANGE, "#FFF3E6"),
+            ("future", "Reservas futuras", "▦", "#7C3AED", "#F0EAFE"),
+        )
+        for column, (key, title, icon, color, icon_bg) in enumerate(card_specs):
+            cards.grid_columnconfigure(column, weight=1, uniform="cash-card")
+            card = tk.Frame(
+                cards, bg=self.SURFACE, highlightbackground=self.BORDER,
+                highlightthickness=1, height=86,
+            )
+            card.grid(row=0, column=column, sticky="nsew", padx=4)
+            card.grid_propagate(False)
+            icon_holder = tk.Frame(card, bg=icon_bg, width=54, height=54)
+            icon_holder.pack(side="left", padx=(14, 12), pady=15)
+            icon_holder.pack_propagate(False)
+            tk.Label(
+                icon_holder, text=icon, bg=icon_bg, fg=color,
+                font=("Segoe UI Symbol", 21, "bold"),
+            ).pack(expand=True)
+            value_area = tk.Frame(card, bg=self.SURFACE)
+            value_area.pack(side="left", fill="y", pady=12)
+            tk.Label(
+                value_area, text=title, bg=self.SURFACE, fg=self.MUTED,
+                font=("Segoe UI", 9), anchor="w",
+            ).pack(anchor="w")
+            tk.Label(
+                value_area, textvariable=self.cash_summary_vars[key],
+                bg=self.SURFACE, fg=color, font=("Segoe UI", 17, "bold"),
+                anchor="w",
+            ).pack(anchor="w", pady=(2, 0))
+
+        toolbar = tk.Frame(
+            self.cash_tab, bg=self.SURFACE, highlightbackground=self.BORDER,
+            highlightthickness=1,
+        )
+        toolbar.pack(fill="x", padx=16, pady=(0, 8))
+        filters = tk.Frame(toolbar, bg=self.SURFACE)
+        filters.pack(side="left", padx=12, pady=9)
+        tk.Label(
+            filters, text="Período:", bg=self.SURFACE, fg=self.NAVY,
+            font=("Segoe UI", 9, "bold"),
+        ).pack(side="left", padx=(0, 7))
+        self.cash_start_entry = self._cash_date_control(
+            filters, "Desde", self.cash_start_var, "Fecha inicial de Caja"
+        )
+        self.cash_end_entry = self._cash_date_control(
+            filters, "Hasta", self.cash_end_var, "Fecha final de Caja"
+        )
+        self.cash_method_combo = ttk.Combobox(
+            filters,
+            textvariable=self.cash_method_var,
+            values=("Todos", "Efectivo", "Transferencia", "Mixto", "Otros"),
+            state="readonly",
+            width=14,
+        )
+        self.cash_method_combo.pack(side="left", padx=(5, 0), ipady=4)
+        self.cash_method_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_cash())
+
+        actions = tk.Frame(toolbar, bg=self.SURFACE)
+        actions.pack(side="right", padx=10, pady=7)
+        self._action_button(
+            actions, "+  Registrar ingreso", lambda: self._cash_movement_dialog("income"), self.BLUE
+        ).pack(side="left", padx=3)
+        self._action_button(
+            actions, "−  Registrar gasto", lambda: self._cash_movement_dialog("expense"), self.ORANGE
+        ).pack(side="left", padx=3)
+        self._action_button(actions, "▣  Cerrar caja", self._close_cash, self.NAVY).pack(
+            side="left", padx=3
+        )
+        self._action_button(actions, "▤  Exportar CSV", self._export_cash, self.GREEN).pack(
+            side="left", padx=3
+        )
+
+        body = tk.PanedWindow(
+            self.cash_tab, orient="horizontal", bg=self.BORDER, bd=0,
+            sashwidth=7, sashrelief="flat", showhandle=False,
+        )
+        body.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+        movements_card = tk.Frame(
+            body, bg=self.SURFACE, highlightbackground=self.BORDER, highlightthickness=1,
+        )
+        charts = tk.Frame(body, bg=self.BG)
+        body.add(movements_card, minsize=560, stretch="always")
+        body.add(charts, minsize=270, stretch="always")
+
+        heading = tk.Frame(movements_card, bg=self.SURFACE)
+        heading.pack(fill="x", padx=14, pady=(10, 6))
+        tk.Label(
+            heading, text="▤  Movimientos de caja", bg=self.SURFACE, fg=self.NAVY,
+            font=("Segoe UI", 13, "bold"),
+        ).pack(side="left")
+        self.cash_period_var = tk.StringVar(value="")
+        tk.Label(
+            heading, textvariable=self.cash_period_var, bg=self.SURFACE, fg=self.MUTED,
+            font=("Segoe UI", 9),
+        ).pack(side="right")
+        columns = ("date", "concept", "client", "method", "amount", "court", "status")
+        table_body = tk.Frame(movements_card, bg=self.SURFACE)
+        table_body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        self.cash_tree = ttk.Treeview(
+            table_body, columns=columns, show="headings", style="Admin.Treeview",
+        )
+        labels = ("Fecha", "Concepto", "Cliente", "Método", "Importe", "Cancha", "Estado")
+        widths = (125, 220, 145, 105, 105, 120, 95)
+        for key, label, width in zip(columns, labels, widths):
+            self.cash_tree.heading(key, text=label)
+            self.cash_tree.column(
+                key, width=width,
+                anchor="e" if key == "amount" else "center" if key in {"date", "method", "status"} else "w",
+            )
+        cash_y = ttk.Scrollbar(
+            table_body, orient="vertical", command=self.cash_tree.yview,
+            style="Admin.Vertical.TScrollbar",
+        )
+        cash_x = ttk.Scrollbar(
+            table_body, orient="horizontal", command=self.cash_tree.xview,
+            style="Admin.Horizontal.TScrollbar",
+        )
+        self.cash_tree.configure(yscrollcommand=cash_y.set, xscrollcommand=cash_x.set)
+        self.cash_tree.tag_configure("expense", foreground=self.RED)
+        self.cash_tree.tag_configure("income", foreground=self.GREEN)
+        cash_y.pack(side="right", fill="y")
+        cash_x.pack(side="bottom", fill="x")
+        self.cash_tree.pack(side="left", fill="both", expand=True)
+
+        self.cash_chart_canvases: dict[str, tk.Canvas] = {}
+        chart_specs = (
+            ("daily", "▥  Ingresos por día"),
+            ("methods", "◔  Distribución por método"),
+            ("courts", "▥  Por cancha"),
+        )
+        for key, title in chart_specs:
+            card = tk.Frame(
+                charts, bg=self.SURFACE, highlightbackground=self.BORDER,
+                highlightthickness=1,
+            )
+            card.pack(fill="both", expand=True, padx=(2, 0), pady=(0, 6))
+            tk.Label(
+                card, text=title, bg=self.SURFACE, fg=self.NAVY,
+                font=("Segoe UI", 10, "bold"), anchor="w",
+            ).pack(fill="x", padx=12, pady=(8, 2))
+            canvas = tk.Canvas(card, bg=self.SURFACE, highlightthickness=0, height=82)
+            canvas.pack(fill="both", expand=True, padx=10, pady=(0, 7))
+            canvas.bind("<Configure>", lambda _event: self._draw_cash_charts())
+            self.cash_chart_canvases[key] = canvas
+        self._cash_snapshot = {}
+
+    def _cash_date_control(
+        self,
+        parent: tk.Widget,
+        label: str,
+        variable: tk.StringVar,
+        title: str,
+    ) -> tk.Entry:
+        tk.Label(parent, text=label, bg=self.SURFACE, fg=self.MUTED).pack(
+            side="left", padx=(6, 3)
+        )
+        holder = tk.Frame(parent, bg="#F8FAFC", highlightbackground=self.BORDER, highlightthickness=1)
+        holder.pack(side="left", padx=(0, 4))
+        entry = tk.Entry(
+            holder, textvariable=variable, width=11, relief="flat", bd=0,
+            bg="#F8FAFC", fg=self.NAVY, font=("Segoe UI", 9),
+        )
+        entry.pack(side="left", padx=(7, 2), ipady=5)
+        open_calendar = lambda _event=None: self._show_date_picker(
+            variable, entry, title, self._refresh_cash
+        )
+        entry.bind("<Double-Button-1>", open_calendar)
+        entry.bind("<Return>", lambda _event: self._refresh_cash())
+        tk.Button(
+            holder, text="▦", command=open_calendar, relief="flat", bd=0,
+            bg="#F8FAFC", fg=self.BLUE, activebackground="#DBEAFE",
+            cursor="hand2", padx=5,
+        ).pack(side="left")
+        return entry
+
+    def _cash_movement_dialog(self, kind: str) -> None:
+        is_income = kind == "income"
+        dialog = tk.Toplevel(self)
+        dialog.title("Registrar ingreso" if is_income else "Registrar gasto")
+        dialog.configure(bg=self.SURFACE)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        values = {
+            "date": tk.StringVar(value=dt.date.today().isoformat()),
+            "concept": tk.StringVar(),
+            "client": tk.StringVar(),
+            "method": tk.StringVar(value="Efectivo"),
+            "amount": tk.StringVar(),
+            "court": tk.StringVar(),
+        }
+        labels = (
+            ("Fecha", "date"), ("Concepto", "concept"), ("Cliente / proveedor", "client"),
+            ("Método", "method"), ("Importe", "amount"), ("Cancha / área", "court"),
+        )
+        for row_index, (label, key) in enumerate(labels):
+            tk.Label(
+                dialog, text=label, bg=self.SURFACE, fg=self.NAVY,
+                font=("Segoe UI", 9, "bold"),
+            ).grid(row=row_index, column=0, sticky="w", padx=16, pady=8)
+            if key == "method":
+                widget = ttk.Combobox(
+                    dialog, textvariable=values[key],
+                    values=("Efectivo", "Transferencia", "Otros"),
+                    state="readonly", width=31,
+                )
+            else:
+                widget = tk.Entry(dialog, textvariable=values[key], width=34)
+            widget.grid(row=row_index, column=1, padx=(4, 8), pady=8, ipady=3)
+            if key == "date":
+                tk.Button(
+                    dialog, text="▦", relief="flat", bg=self.BLUE, fg="white",
+                    command=lambda anchor=widget: self._show_date_picker(
+                        values["date"], anchor, "Fecha del movimiento"
+                    ),
+                ).grid(row=row_index, column=2, padx=(0, 14), pady=8)
+
+        def save() -> None:
+            try:
+                occurred = dt.datetime.combine(
+                    dt.date.fromisoformat(values["date"].get().strip()),
+                    dt.datetime.now().time().replace(microsecond=0),
+                ).isoformat(timespec="seconds")
+                self.service.add_cash_movement(
+                    kind=kind,
+                    occurred_at=occurred,
+                    concept=values["concept"].get(),
+                    client=values["client"].get(),
+                    method=values["method"].get(),
+                    amount=values["amount"].get(),
+                    court=values["court"].get(),
+                )
+                dialog.destroy()
+                self._refresh_cash()
+            except Exception as exc:
+                messagebox.showerror("Caja", str(exc), parent=dialog)
+
+        self._action_button(
+            dialog,
+            "Registrar ingreso" if is_income else "Registrar gasto",
+            save,
+            self.GREEN if is_income else self.ORANGE,
+        ).grid(row=len(labels), column=0, columnspan=3, pady=14)
+
+    def _close_cash(self) -> None:
+        try:
+            day = self.cash_end_var.get().strip()
+            if not messagebox.askyesno(
+                "Cerrar caja",
+                f"¿Registrar el cierre de caja del {day}?\n\n"
+                "El cierre guarda una fotografía del saldo; no modifica movimientos.",
+                parent=self,
+            ):
+                return
+            result = self.service.close_cash(day)
+            messagebox.showinfo(
+                "Caja cerrada",
+                f"Cierre guardado.\nSaldo: {self._money(result.get('balance'))}\n"
+                f"Movimientos: {result.get('movement_count', 0)}",
+                parent=self,
+            )
+        except Exception as exc:
+            messagebox.showerror("Caja", str(exc), parent=self)
+
+    def _export_cash(self) -> None:
+        suggested = f"caja_{self.cash_start_var.get()}_{self.cash_end_var.get()}.csv"
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Exportar movimientos de Caja",
+            defaultextension=".csv",
+            initialfile=suggested,
+            filetypes=(("Archivo CSV", "*.csv"),),
+        )
+        if not path:
+            return
+        try:
+            count = self.service.export_cash_csv(
+                path,
+                start_date=self.cash_start_var.get(),
+                end_date=self.cash_end_var.get(),
+                method=self.cash_method_var.get(),
+            )
+            messagebox.showinfo(
+                "Caja", f"Se exportaron {count} movimientos.\n\n{path}", parent=self
+            )
+        except Exception as exc:
+            messagebox.showerror("Caja", str(exc), parent=self)
+
+    def _refresh_cash(self) -> None:
+        if not hasattr(self, "cash_tree"):
+            return
+        method = getattr(self.service, "cash_snapshot", None)
+        if not callable(method):
+            return
+        snapshot = method(
+            start_date=self.cash_start_var.get().strip(),
+            end_date=self.cash_end_var.get().strip(),
+            method=self.cash_method_var.get(),
+        )
+        self._cash_snapshot = dict(snapshot)
+        self.cash_summary_vars["today"].set(self._money(snapshot.get("income_today")))
+        self.cash_summary_vars["month"].set(self._money(snapshot.get("income_month")))
+        self.cash_summary_vars["pending"].set(self._money(snapshot.get("pending_balances")))
+        self.cash_summary_vars["future"].set(self._money(snapshot.get("future_reservations")))
+        movements = list(snapshot.get("movements") or [])
+        self.cash_period_var.set(
+            f"{len(movements)} movimientos · Saldo {self._money(snapshot.get('period_balance'))}"
+        )
+        self.cash_tree.delete(*self.cash_tree.get_children())
+        for index, row in enumerate(movements):
+            moment = str(row.get("occurred_at") or "")
+            try:
+                moment = dt.datetime.fromisoformat(moment).strftime("%d/%m/%Y %H:%M")
+            except ValueError:
+                pass
+            amount = int(row.get("amount") or 0)
+            self.cash_tree.insert(
+                "", "end", iid=f"cash:{index}",
+                values=(
+                    moment, row.get("concept", ""), row.get("client", ""),
+                    row.get("method", ""), self._money(amount), row.get("court", ""),
+                    row.get("status", ""),
+                ),
+                tags=("income" if amount >= 0 else "expense",),
+            )
+        self.after_idle(self._draw_cash_charts)
+
+    def _draw_cash_charts(self) -> None:
+        if not getattr(self, "cash_chart_canvases", None):
+            return
+        snapshot = getattr(self, "_cash_snapshot", {}) or {}
+        self._draw_cash_daily_chart(
+            self.cash_chart_canvases["daily"], snapshot.get("daily_income") or {}
+        )
+        self._draw_cash_rank_chart(
+            self.cash_chart_canvases["methods"], snapshot.get("method_income") or {},
+            ("#079455", self.BLUE, "#7C3AED", self.ORANGE), percent=True,
+        )
+        self._draw_cash_rank_chart(
+            self.cash_chart_canvases["courts"], snapshot.get("court_income") or {},
+            (self.BLUE,), percent=False,
+        )
+
+    def _draw_cash_daily_chart(self, canvas: tk.Canvas, values: dict[str, int]) -> None:
+        canvas.delete("all")
+        width, height = max(80, canvas.winfo_width()), max(55, canvas.winfo_height())
+        items = sorted(values.items())[-7:]
+        if not items:
+            canvas.create_text(
+                width / 2, height / 2, text="Sin ingresos en el período",
+                fill=self.MUTED, font=("Segoe UI", 9),
+            )
+            return
+        top = max(value for _key, value in items) or 1
+        gap = 5
+        bar_width = max(8, (width - 18 - gap * (len(items) - 1)) / len(items))
+        for index, (day, value) in enumerate(items):
+            x1 = 9 + index * (bar_width + gap)
+            x2 = x1 + bar_width
+            bar_height = max(3, (height - 25) * value / top)
+            canvas.create_rectangle(x1, height - 16 - bar_height, x2, height - 16, fill=self.BLUE, outline="")
+            canvas.create_text((x1 + x2) / 2, height - 7, text=day[8:10], fill=self.MUTED, font=("Segoe UI", 7))
+
+    def _draw_cash_rank_chart(
+        self,
+        canvas: tk.Canvas,
+        values: dict[str, int],
+        colors: tuple[str, ...],
+        *,
+        percent: bool,
+    ) -> None:
+        canvas.delete("all")
+        width, height = max(120, canvas.winfo_width()), max(55, canvas.winfo_height())
+        items = sorted(values.items(), key=lambda item: item[1], reverse=True)[:3]
+        if not items:
+            canvas.create_text(
+                width / 2, height / 2, text="Sin datos en el período",
+                fill=self.MUTED, font=("Segoe UI", 9),
+            )
+            return
+        total = sum(value for _key, value in items) or 1
+        maximum = max(value for _key, value in items) or 1
+        row_height = max(18, min(25, height / max(1, len(items))))
+        label_width = min(90, max(58, width * .27))
+        amount_width = 72
+        for index, (label, value) in enumerate(items):
+            y = 8 + index * row_height
+            color = colors[index % len(colors)]
+            canvas.create_text(2, y + 5, text=label[:16], anchor="w", fill=self.NAVY, font=("Segoe UI", 8))
+            bar_left, bar_right = label_width, max(label_width + 10, width - amount_width)
+            canvas.create_rectangle(bar_left, y, bar_right, y + 10, fill="#E2E8F0", outline="")
+            canvas.create_rectangle(
+                bar_left, y, bar_left + (bar_right - bar_left) * value / maximum,
+                y + 10, fill=color, outline="",
+            )
+            suffix = f"{round(value * 100 / total)}%" if percent else self._money(value)
+            canvas.create_text(width - 2, y + 5, text=suffix, anchor="e", fill=self.NAVY, font=("Segoe UI", 8, "bold"))
+
     def _on_tab_changed(self, _event=None) -> None:
         if self.notebook.select() == str(self.hours_tab):
             self._refresh_hours()
+        elif self.notebook.select() == str(self.cash_tab):
+            self._refresh_cash()
         elif self.notebook.select() == str(self.tournaments_tab):
             self._refresh_tournaments()
         elif self.notebook.select() == str(self.fixed_turns_tab):
@@ -1556,6 +1979,7 @@ class AdminPanel(tk.Toplevel):
             self._refresh_fixed_turns()
             self._refresh_blacklist()
             self._refresh_hours()
+            self._refresh_cash()
         except Exception as exc:
             messagebox.showerror("Administración", f"No pude actualizar el panel:\n{exc}", parent=self)
 
@@ -1583,7 +2007,7 @@ class AdminPanel(tk.Toplevel):
             key: max(0, int(counts.get(key, 0) or 0))
             for key in (
                 "bookings", "hours", "operation", "cases", "tournaments", "fixed_turns",
-                "blacklist", "commands"
+                "cash", "blacklist", "commands"
             )
         }
         normalized["total"] = sum(normalized.values())
@@ -1622,6 +2046,7 @@ class AdminPanel(tk.Toplevel):
         return {
             "bookings": bookings,
             "hours": 0,
+            "cash": 0,
             "operation": 0,
             "cases": cases,
             "tournaments": 0,
@@ -1694,6 +2119,8 @@ class AdminPanel(tk.Toplevel):
                 self._refresh_fixed_turns()
             if self.notebook.select() == str(self.blacklist_tab):
                 self._refresh_blacklist()
+            if self.notebook.select() == str(self.cash_tab):
+                self._refresh_cash()
         except Exception:
             # A transient file write must not interrupt the administrator.
             pass
@@ -2278,7 +2705,8 @@ class AdminPanel(tk.Toplevel):
             amount = int(float(value or 0))
         except (TypeError, ValueError):
             amount = 0
-        return "$" + f"{amount:,}".replace(",", ".")
+        prefix = "-$" if amount < 0 else "$"
+        return prefix + f"{abs(amount):,}".replace(",", ".")
 
     def _refresh_tournaments(self) -> None:
         if not hasattr(self, "tournament_tree"):

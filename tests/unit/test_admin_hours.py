@@ -262,6 +262,7 @@ def test_notification_counts_sum_only_unresolved_admin_work():
     assert counts == {
         "bookings": 3,
         "hours": 0,
+        "cash": 0,
         "operation": 0,
         "cases": 2,
         "tournaments": 0,
@@ -361,6 +362,8 @@ def test_admin_panel_exposes_hours_tab_and_click_editing():
         / "admin_panel.py"
     ).read_text(encoding="utf-8")
     assert 'text="Horas"' in source
+    assert 'text="Caja"' in source
+    assert "def _refresh_cash" in source
     assert "def _refresh_hours" in source
     assert "def _open_hour_cell" in source
     assert "def _edit_booking_dialog" in source

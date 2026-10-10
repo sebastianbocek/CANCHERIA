@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import csv
 import json
 import re
+import uuid
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -17,7 +19,7 @@ from cancheria.legacy_bridge import legacy_callable
 
 ACTIVE_STATES = {str(value).strip().lower() for value in cfg.ACTIVE_BOOKING_STATUSES}
 NOTIFICATION_KEYS = (
-    "bookings", "hours", "operation", "cases", "tournaments", "fixed_turns",
+    "bookings", "hours", "cash", "operation", "cases", "tournaments", "fixed_turns",
     "blacklist", "commands",
 )
 
@@ -37,6 +39,8 @@ class DesktopAdminService:
         self._notification_read_store = JSONStore(
             self.runtime / "admin_notification_read_state.json"
         )
+        self._cash_store = JSONStore(self.runtime / "caja_movimientos.json")
+        self._cash_closures_store = JSONStore(self.runtime / "caja_cierres.json")
 
     def bookings(self) -> list[dict[str, Any]]:
         rows = self.calendar.asegurar_ids_reservas()
@@ -80,6 +84,7 @@ class DesktopAdminService:
         return {
             "bookings": bookings,
             "hours": 0,
+            "cash": 0,
             "operation": 0,
             "cases": cases,
             "tournaments": tournaments,
@@ -177,6 +182,359 @@ class DesktopAdminService:
                     ) or str(index)
                 items["tournaments"].add(f"{event_id}:{registration_id}")
         return items
+
+    @staticmethod
+    def _cash_amount(value: Any) -> int:
+        """Parse persisted money without ever inventing or rounding a value."""
+        text = str(value or "").strip().replace("$", "").replace(" ", "")
+        if not text:
+            return 0
+        if "," in text and "." in text:
+            text = text.replace(".", "").replace(",", ".")
+        elif "," in text:
+            text = text.replace(",", ".")
+        elif "." in text:
+            groups = text.split(".")
+            if len(groups) > 1 and all(len(group) == 3 for group in groups[1:]):
+                text = "".join(groups)
+        try:
+            return max(0, int(float(text)))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _cash_datetime(value: Any, fallback: dt.datetime | None = None) -> dt.datetime:
+        text = str(value or "").strip()
+        if text:
+            try:
+                return dt.datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+            except ValueError:
+                pass
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d/%m"):
+                try:
+                    parsed = dt.datetime.strptime(text, fmt)
+                    if fmt == "%d/%m":
+                        parsed = parsed.replace(year=dt.date.today().year)
+                    return parsed
+                except ValueError:
+                    continue
+        return fallback or dt.datetime.now()
+
+    @staticmethod
+    def _cash_method(value: Any) -> str:
+        text = str(value or "").strip().casefold()
+        if "efectivo" in text:
+            return "Efectivo" if "transfer" not in text else "Mixto"
+        if "transfer" in text or "comprobante" in text:
+            return "Transferencia"
+        return "Otros"
+
+    def _cash_manual_rows(self) -> list[dict[str, Any]]:
+        try:
+            payload = self._cash_store.read(default={}) or {}
+        except (OSError, ValueError, TypeError):
+            payload = {}
+        rows = payload.get("movements", []) if isinstance(payload, dict) else []
+        return [dict(row) for row in rows if isinstance(row, dict)]
+
+    def _cash_write_manual_rows(self, rows: list[dict[str, Any]]) -> None:
+        self._cash_store.write({
+            "version": 1,
+            "movements": rows,
+            "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
+        })
+
+    def add_cash_movement(
+        self,
+        *,
+        kind: str,
+        occurred_at: str,
+        concept: str,
+        amount: Any,
+        method: str,
+        client: str = "",
+        court: str = "",
+    ) -> dict[str, Any]:
+        kind = str(kind or "").strip().casefold()
+        if kind not in {"income", "expense"}:
+            raise ValueError("El movimiento debe ser un ingreso o un gasto.")
+        parsed_amount = self._cash_amount(amount)
+        if parsed_amount <= 0:
+            raise ValueError("Ingresá un importe mayor que cero.")
+        concept = str(concept or "").strip()
+        if not concept:
+            raise ValueError("Ingresá el concepto del movimiento.")
+        moment = self._cash_datetime(occurred_at)
+        row = {
+            "movement_id": f"cash_{uuid.uuid4().hex[:12]}",
+            "source": "manual",
+            "source_id": "",
+            "kind": kind,
+            "occurred_at": moment.isoformat(timespec="seconds"),
+            "concept": concept,
+            "client": str(client or "").strip(),
+            "method": self._cash_method(method),
+            "amount": parsed_amount if kind == "income" else -parsed_amount,
+            "court": str(court or "").strip(),
+            "status": "Completado",
+            "created_at": dt.datetime.now().isoformat(timespec="seconds"),
+        }
+        rows = self._cash_manual_rows()
+        rows.append(row)
+        self._cash_write_manual_rows(rows)
+        return dict(row)
+
+    def _all_booking_rows_for_cash(self) -> list[dict[str, Any]]:
+        rows = [dict(row) for row in self.bookings()]
+        finished = self.runtime / "turnos_terminados.csv"
+        if finished.is_file():
+            try:
+                with finished.open("r", encoding="utf-8-sig", newline="") as handle:
+                    rows.extend(dict(row) for row in csv.DictReader(handle))
+            except OSError:
+                pass
+        return rows
+
+    def _booking_cash_movements(self) -> list[dict[str, Any]]:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for index, row in enumerate(self._all_booking_rows_for_cash()):
+            reservation_id = str(row.get("reservation_id") or "").strip()
+            identity = reservation_id or "|".join(
+                str(row.get(key) or "").strip()
+                for key in ("telefono", "fecha", "cancha", "reservado_en")
+            ) or f"booking:{index}"
+            grouped.setdefault(identity, []).append(row)
+
+        movements: list[dict[str, Any]] = []
+        for identity, rows in grouped.items():
+            row = sorted(rows, key=lambda item: str(item.get("hora") or ""))[0]
+            paid = max(self._cash_amount(item.get("senia_pagada_monto")) for item in rows)
+            deposit_state = str(row.get("senia_estado") or "").strip().casefold()
+            if paid <= 0 and deposit_state in {"pagada", "pago_total", "total_pagado"}:
+                paid = max(self._cash_amount(item.get("senia_monto")) for item in rows)
+            total = max(self._cash_amount(item.get("precio_total")) for item in rows)
+            pending = max(self._cash_amount(item.get("monto_pendiente")) for item in rows)
+            if total > 0 and pending == 0 and deposit_state in {"pagada_total", "pago_total", "total_pagado"}:
+                paid = max(paid, total)
+            if paid <= 0:
+                continue
+            booking_day = self._parse_booking_date(row.get("fecha"), dt.date.today().year)
+            fallback = (
+                dt.datetime.combine(booking_day, dt.time(12, 0))
+                if booking_day is not None else dt.datetime.now()
+            )
+            moment = self._cash_datetime(
+                row.get("last_payment_at") or row.get("reservado_en"), fallback
+            )
+            movements.append({
+                "movement_id": f"booking:{identity}",
+                "source": "booking",
+                "source_id": identity,
+                "kind": "income",
+                "occurred_at": moment.isoformat(timespec="seconds"),
+                "concept": f"Pago reserva · {row.get('tipo_turno') or row.get('cancha') or 'Cancha'}",
+                "client": str(row.get("nombre") or row.get("telefono") or "").strip(),
+                "method": self._cash_method(row.get("payment_method")),
+                "amount": paid,
+                "court": str(row.get("cancha") or "").strip(),
+                "status": "Completado",
+            })
+        return movements
+
+    def _tournament_cash_movements(self) -> list[dict[str, Any]]:
+        movements: list[dict[str, Any]] = []
+        for event in event_registration.list_business_events(active_only=False):
+            for row in event_registration.read_event_registrations(event):
+                paid = self._cash_amount(row.get("paid_amount"))
+                if paid <= 0:
+                    continue
+                identity = str(row.get("registration_id") or "").strip()
+                moment = self._cash_datetime(
+                    row.get("last_payment_at") or row.get("confirmed_at") or row.get("created_at")
+                )
+                movements.append({
+                    "movement_id": f"tournament:{identity}",
+                    "source": "tournament",
+                    "source_id": identity,
+                    "kind": "income",
+                    "occurred_at": moment.isoformat(timespec="seconds"),
+                    "concept": f"Inscripción torneo · {event.get('name') or row.get('event_name') or ''}",
+                    "client": str(row.get("team_name") or row.get("contact_name") or "").strip(),
+                    "method": self._cash_method(row.get("payment_method")),
+                    "amount": paid,
+                    "court": "Torneos",
+                    "status": "Completado",
+                })
+        return movements
+
+    def _cash_pending_and_future(self) -> tuple[int, int]:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for index, row in enumerate(self.bookings()):
+            if str(row.get("estado") or "").strip().casefold() not in ACTIVE_STATES:
+                continue
+            identity = str(row.get("reservation_id") or "").strip() or f"row:{index}"
+            grouped.setdefault(identity, []).append(row)
+        pending_total = 0
+        future_total = 0
+        today = dt.date.today()
+        for rows in grouped.values():
+            row = rows[0]
+            pending_total += max(self._cash_amount(item.get("monto_pendiente")) for item in rows)
+            booking_date = self._parse_booking_date(row.get("fecha"), today.year)
+            if booking_date is not None and booking_date >= today:
+                future_total += max(self._cash_amount(item.get("precio_total")) for item in rows)
+        for event in event_registration.list_business_events(active_only=False):
+            for row in event_registration.read_event_registrations(event):
+                if str(row.get("status") or "") not in {"pending_payment", "confirmed"}:
+                    continue
+                pending_total += self._cash_amount(row.get("remaining_amount"))
+                try:
+                    event_date = dt.date.fromisoformat(str(event.get("date") or ""))
+                except ValueError:
+                    event_date = None
+                if event_date is not None and event_date >= today:
+                    future_total += self._cash_amount(row.get("required_payment"))
+        return pending_total, future_total
+
+    @staticmethod
+    def _parse_booking_date(value: Any, default_year: int) -> dt.date | None:
+        text = str(value or "").strip()
+        try:
+            return dt.date.fromisoformat(text)
+        except ValueError:
+            pass
+        match = re.search(r"(\d{1,2})/(\d{1,2})(?:/(\d{4}))?", text)
+        if not match:
+            return None
+        try:
+            return dt.date(
+                int(match.group(3) or default_year), int(match.group(2)), int(match.group(1))
+            )
+        except ValueError:
+            return None
+
+    def cash_snapshot(
+        self,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        method: str = "Todos",
+    ) -> dict[str, Any]:
+        today = dt.date.today()
+        start = dt.date.fromisoformat(start_date) if start_date else today.replace(day=1)
+        end = dt.date.fromisoformat(end_date) if end_date else today
+        if end < start:
+            raise ValueError("La fecha Hasta no puede ser anterior a Desde.")
+        all_rows = [
+            *self._booking_cash_movements(),
+            *self._tournament_cash_movements(),
+            *self._cash_manual_rows(),
+        ]
+        all_rows.sort(key=lambda row: str(row.get("occurred_at") or ""), reverse=True)
+        method_filter = str(method or "Todos").strip().casefold()
+
+        def in_range(row: dict[str, Any]) -> bool:
+            day = self._cash_datetime(row.get("occurred_at")).date()
+            same_method = method_filter in {"", "todos", "all"} or str(
+                row.get("method") or ""
+            ).casefold() == method_filter
+            return start <= day <= end and same_method
+
+        filtered = [row for row in all_rows if in_range(row)]
+        month_start = today.replace(day=1)
+        next_month = (month_start.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
+        income_today = sum(
+            int(row.get("amount") or 0) for row in all_rows
+            if self._cash_datetime(row.get("occurred_at")).date() == today
+            and int(row.get("amount") or 0) > 0
+        )
+        income_month = sum(
+            int(row.get("amount") or 0) for row in all_rows
+            if month_start <= self._cash_datetime(row.get("occurred_at")).date() < next_month
+            and int(row.get("amount") or 0) > 0
+        )
+        pending, future = self._cash_pending_and_future()
+        daily: dict[str, int] = {}
+        methods: dict[str, int] = {}
+        courts: dict[str, int] = {}
+        for row in filtered:
+            amount = int(row.get("amount") or 0)
+            if amount <= 0:
+                continue
+            day = self._cash_datetime(row.get("occurred_at")).date().isoformat()
+            daily[day] = daily.get(day, 0) + amount
+            method_name = str(row.get("method") or "Otros")
+            methods[method_name] = methods.get(method_name, 0) + amount
+            court = str(row.get("court") or "Otros")
+            courts[court] = courts.get(court, 0) + amount
+        return {
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "income_today": income_today,
+            "income_month": income_month,
+            "pending_balances": pending,
+            "future_reservations": future,
+            "period_balance": sum(int(row.get("amount") or 0) for row in filtered),
+            "movements": filtered,
+            "daily_income": daily,
+            "method_income": methods,
+            "court_income": courts,
+        }
+
+    def close_cash(self, day: str) -> dict[str, Any]:
+        target = dt.date.fromisoformat(str(day or "").strip())
+        snapshot = self.cash_snapshot(start_date=target.isoformat(), end_date=target.isoformat())
+        closure = {
+            "closure_id": f"close_{uuid.uuid4().hex[:12]}",
+            "day": target.isoformat(),
+            "closed_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "balance": int(snapshot.get("period_balance") or 0),
+            "movement_count": len(snapshot.get("movements") or []),
+        }
+        try:
+            payload = self._cash_closures_store.read(default={}) or {}
+        except (OSError, ValueError, TypeError):
+            payload = {}
+        closures = [dict(item) for item in payload.get("closures", []) if isinstance(item, dict)]
+        closures.append(closure)
+        self._cash_closures_store.write({"version": 1, "closures": closures})
+        return closure
+
+    def export_cash_csv(
+        self,
+        destination: str | Path,
+        *,
+        start_date: str,
+        end_date: str,
+        method: str = "Todos",
+    ) -> int:
+        rows = self.cash_snapshot(
+            start_date=start_date, end_date=end_date, method=method
+        )["movements"]
+        path = Path(destination)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=(
+                    "fecha", "concepto", "cliente", "metodo", "importe", "cancha",
+                    "estado", "origen", "id_origen",
+                ),
+            )
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({
+                    "fecha": row.get("occurred_at", ""),
+                    "concepto": row.get("concept", ""),
+                    "cliente": row.get("client", ""),
+                    "metodo": row.get("method", ""),
+                    "importe": row.get("amount", 0),
+                    "cancha": row.get("court", ""),
+                    "estado": row.get("status", ""),
+                    "origen": row.get("source", ""),
+                    "id_origen": row.get("source_id", ""),
+                })
+        return len(rows)
 
     def command_reference(self) -> str:
         """Use the exact help catalog exposed by the WhatsApp admin command."""

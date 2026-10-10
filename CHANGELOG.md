@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.30 - 2026-10-09
+
+- Agrega la pestaña `Caja` inmediatamente a la derecha de `Horas` en el panel de administración.
+- Muestra ingresos reales de hoy y del mes, saldos pendientes y valor de reservas futuras, consolidando las reservas de varias horas por ID.
+- Incorpora filtros Desde/Hasta con calendario y filtro por método de pago para movimientos de reservas, torneos, ingresos y gastos manuales.
+- Permite registrar ingresos y gastos, guardar cierres de caja auditables y exportar el período visible a CSV.
+- Agrega resúmenes visuales de ingresos por día, distribución por método y facturación por cancha sin introducir dependencias nuevas.
+
 ## 0.2.29 - 2026-10-09
 
 - Corrige instalaciones parciales en las que el ejecutable se actualizaba pero los módulos Python externos quedaban en la versión anterior.

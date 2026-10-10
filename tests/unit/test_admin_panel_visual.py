@@ -15,6 +15,7 @@ def test_admin_panel_visual_contract_keeps_all_features_and_callbacks():
     for title in (
         "Reservas y pagos",
         "Horas",
+        "Caja",
         "Operación",
         "Atención humana",
         "Torneos",
@@ -80,7 +81,7 @@ def test_custom_tab_bar_selects_all_tabs_and_scrolls_when_narrow():
         root.update_idletasks()
         root.update()
 
-        assert len(view.tabs()) == 8
+        assert len(view.tabs()) == 9
         assert [view.tab(tab_id, "text") for tab_id in view.tabs()] == list(titles)
         assert view._tabs_requested_width() > view._canvas.winfo_width()
         assert view._scrollbar.winfo_manager()
