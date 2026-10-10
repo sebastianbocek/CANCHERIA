@@ -10619,6 +10619,7 @@ def _promote_paid_hold_to_reserved(
     target_court = str(target.get("cancha") or "").strip().casefold()
 
     promoted = []
+    previous_paid_amount = 0
     ctx = calendario.atomic() if hasattr(calendario, "atomic") else contextlib.nullcontext()
     with ctx:
         rows = calendario._leer_todos()
@@ -10645,6 +10646,11 @@ def _promote_paid_hold_to_reserved(
 
             if not (same_date and same_hour and same_court and same_owner):
                 continue
+
+            previous_paid_amount = max(
+                previous_paid_amount,
+                _monto_a_int(current.get("senia_pagada_monto")) or 0,
+            )
 
             current["estado"] = BOOKING_STATUS_RESERVED
             current["senia_estado"] = "pagada"
@@ -10674,6 +10680,41 @@ def _promote_paid_hold_to_reserved(
             calendario._escribir_todos(rows, ordenar=True)
 
     if promoted:
+        try:
+            from cancheria.domain.finance.ledger import record_cumulative_payment
+
+            paid_total = max(
+                (_monto_a_int(row.get("senia_pagada_monto")) or 0)
+                for row in promoted
+            )
+            reservation_id = str(
+                promoted[0].get("reservation_id")
+                or _agent_v2_reservation_id(promoted[0])
+                or ""
+            ).strip()
+            booking_total = _monto_a_int(promoted[0].get("precio_total")) or 0
+            movement_type = (
+                "balance_payment" if previous_paid_amount > 0
+                else "full_payment" if booking_total and paid_total >= booking_total
+                else "deposit"
+            )
+            record_cumulative_payment(
+                source_kind="booking",
+                source_id=reservation_id,
+                total_paid=paid_total,
+                movement_type=movement_type,
+                payment_method=payment_method or promoted[0].get("payment_method") or "",
+                concept=(
+                    "Pago de saldo" if movement_type == "balance_payment"
+                    else "Pago total de reserva" if movement_type == "full_payment"
+                    else "Seña de reserva"
+                ),
+                client=promoted[0].get("nombre") or promoted[0].get("telefono") or "",
+                court=promoted[0].get("cancha") or "",
+                responsible="Administrador" if "admin" in str(note).casefold() else "Agente IA",
+            )
+        except Exception as exc:
+            print(f"⚠ [CAJA] No se pudo registrar el cobro confirmado: {exc}")
         # El lease se identifica por el primer slot.
         _clear_pending_hold_tracking(target)
         print(

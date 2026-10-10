@@ -4,17 +4,20 @@ import csv
 import datetime as dt
 
 from cancheria.admin.desktop_service import DesktopAdminService
-from cancheria.infrastructure.persistence.json_store import JSONStore
+from cancheria.domain.finance.ledger import FinancialLedger
 
 
-def build_cash_service(tmp_path, monkeypatch, rows):
+def build_cash_service(tmp_path, monkeypatch, rows=()):
     service = object.__new__(DesktopAdminService)
     service.root = tmp_path
     service.runtime = tmp_path / "runtime"
     service.runtime.mkdir(parents=True)
-    service._cash_store = JSONStore(service.runtime / "caja_movimientos.json")
-    service._cash_closures_store = JSONStore(service.runtime / "caja_cierres.json")
+    service.cash_ledger = FinancialLedger(service.runtime / "caja.db")
     monkeypatch.setattr(service, "bookings", lambda: [dict(row) for row in rows])
+    monkeypatch.setattr(service, "court_catalog", lambda: [
+        {"name": "Cancha 1", "type": "Fútbol 5"},
+        {"name": "Cancha 2", "type": "Pádel"},
+    ])
     monkeypatch.setattr(
         "cancheria.admin.desktop_service.event_registration.list_business_events",
         lambda active_only=False: [],
@@ -22,98 +25,64 @@ def build_cash_service(tmp_path, monkeypatch, rows):
     return service
 
 
-def booking_rows(today: dt.date):
-    common = {
-        "reservation_id": "R-100",
-        "fecha": today.strftime("%d/%m/%Y"),
-        "estado": "reservado",
-        "telefono": "+5493510000000",
-        "nombre": "Cliente Prueba",
-        "cancha": "Cancha 1",
-        "tipo_turno": "Fútbol 5",
-        "precio_total": "20000",
-        "senia_estado": "pagada",
-        "senia_monto": "10000",
-        "senia_pagada_monto": "10000",
-        "monto_pendiente": "10000",
-        "payment_method": "transferencia",
-        "reservado_en": dt.datetime.combine(today, dt.time(10, 30)).isoformat(),
-    }
-    return [{**common, "hora": "20:00"}, {**common, "hora": "21:00"}]
-
-
-def test_cash_snapshot_groups_multislot_booking_and_uses_real_amounts(tmp_path, monkeypatch):
+def test_existing_paid_booking_is_not_invented_as_historical_income(tmp_path, monkeypatch):
     today = dt.date.today()
-    service = build_cash_service(tmp_path, monkeypatch, booking_rows(today))
-
+    rows = [{
+        "reservation_id": "R-old", "fecha": today.isoformat(), "hora": "23:00",
+        "estado": "reservado", "precio_total": "20000", "monto_pendiente": "10000",
+        "senia_pagada_monto": "10000", "cancha": "Cancha 1",
+    }]
+    service = build_cash_service(tmp_path, monkeypatch, rows)
     snapshot = service.cash_snapshot(start_date=today.isoformat(), end_date=today.isoformat())
-
-    assert snapshot["income_today"] == 10000
-    assert snapshot["income_month"] == 10000
+    assert snapshot["income_today"] == 0
+    assert snapshot["movements"] == []
     assert snapshot["pending_balances"] == 10000
-    assert snapshot["future_reservations"] == 20000
-    assert snapshot["period_balance"] == 10000
-    assert len(snapshot["movements"]) == 1
-    assert snapshot["movements"][0]["source_id"] == "R-100"
-    assert snapshot["method_income"] == {"Transferencia": 10000}
-    assert snapshot["court_income"] == {"Cancha 1": 10000}
+    assert "no se inventan cobros históricos" in snapshot["history_notice"]
 
 
-def test_cash_manual_income_expense_filters_and_export(tmp_path, monkeypatch):
+def test_cash_manual_filters_totals_individual_court_and_export(tmp_path, monkeypatch):
     today = dt.date.today()
-    service = build_cash_service(tmp_path, monkeypatch, [])
-    stamp = dt.datetime.combine(today, dt.time(15, 0)).isoformat()
-    service.add_cash_movement(
-        kind="income", occurred_at=stamp, concept="Alquiler extra", amount="15000",
-        method="Efectivo", client="Juan", court="Cancha 2",
-    )
-    service.add_cash_movement(
-        kind="expense", occurred_at=stamp, concept="Mantenimiento", amount="$ 3.000",
-        method="Efectivo", client="Proveedor", court="Cancha 2",
-    )
-    service.add_cash_movement(
-        kind="income", occurred_at=stamp, concept="Venta", amount="5000",
-        method="Transferencia", client="Ana",
-    )
-
-    cash = service.cash_snapshot(
-        start_date=today.isoformat(), end_date=today.isoformat(), method="Efectivo"
-    )
+    service = build_cash_service(tmp_path, monkeypatch)
+    stamp = dt.datetime.combine(today, dt.time(15)).isoformat()
+    service.add_cash_movement(kind="income", occurred_at=stamp, concept="Alquiler", amount="15000", method="Efectivo", client="Juan", court="Cancha 1")
+    service.add_cash_movement(kind="expense", occurred_at=stamp, concept="Mantenimiento", amount="$ 3.000", method="Efectivo", client="Proveedor", court="Cancha 1")
+    service.add_cash_movement(kind="income", occurred_at=stamp, concept="Venta", amount="5000", method="Transferencia", client="Ana", court="Cancha 2")
+    cash = service.cash_snapshot(start_date=today.isoformat(), end_date=today.isoformat(), method="Efectivo")
     assert len(cash["movements"]) == 2
     assert cash["period_balance"] == 12000
     assert cash["income_today"] == 20000
-
-    destination = tmp_path / "export" / "caja.csv"
-    exported = service.export_cash_csv(
-        destination,
-        start_date=today.isoformat(),
-        end_date=today.isoformat(),
-        method="Todos",
-    )
-    assert exported == 3
+    assert cash["court_income"]["Cancha 1 · Fútbol 5"] == 15000
+    destination = tmp_path / "caja.csv"
+    assert service.export_cash_csv(destination, start_date=today.isoformat(), end_date=today.isoformat()) == 3
     with destination.open("r", encoding="utf-8-sig", newline="") as handle:
-        rows = list(csv.DictReader(handle))
-    assert {row["concepto"] for row in rows} == {
-        "Alquiler extra", "Mantenimiento", "Venta"
-    }
-    assert next(row for row in rows if row["concepto"] == "Mantenimiento")["importe"] == "-3000"
+        exported = list(csv.DictReader(handle))
+    assert next(row for row in exported if row["concepto"] == "Mantenimiento")["importe_ars"] == "-3000"
 
 
-def test_close_cash_keeps_movements_and_writes_auditable_snapshot(tmp_path, monkeypatch):
-    today = dt.date.today()
-    service = build_cash_service(tmp_path, monkeypatch, [])
-    service.add_cash_movement(
-        kind="income",
-        occurred_at=dt.datetime.combine(today, dt.time(12)).isoformat(),
-        concept="Ingreso del día",
-        amount=8000,
-        method="Efectivo",
-    )
+def test_manual_duplicate_requires_explicit_override(tmp_path, monkeypatch):
+    service = build_cash_service(tmp_path, monkeypatch)
+    stamp = dt.datetime.now().isoformat()
+    kwargs = dict(kind="income", occurred_at=stamp, concept="Mostrador", amount=1000, method="Efectivo")
+    service.add_cash_movement(**kwargs)
+    try:
+        service.add_cash_movement(**kwargs)
+    except ValueError as exc:
+        assert str(exc).startswith("POSSIBLE_DUPLICATE:")
+    else:
+        raise AssertionError("duplicate was not detected")
+    service.add_cash_movement(**kwargs, allow_duplicate=True)
+    assert len(service.cash_ledger.list_movements(start_date=stamp[:10], end_date=stamp[:10])) == 2
 
-    closure = service.close_cash(today.isoformat())
 
-    assert closure["balance"] == 8000
-    assert closure["movement_count"] == 1
-    assert len(service._cash_manual_rows()) == 1
-    stored = service._cash_closures_store.read(default={})
-    assert stored["closures"][0]["closure_id"] == closure["closure_id"]
+def test_close_cash_is_auditable_and_keeps_movements(tmp_path, monkeypatch):
+    today = dt.date.today().isoformat()
+    service = build_cash_service(tmp_path, monkeypatch)
+    service.add_cash_movement(kind="income", occurred_at=f"{today}T12:00:00", concept="Cobro", amount=8000, method="Efectivo")
+    service.add_cash_movement(kind="expense", occurred_at=f"{today}T13:00:00", concept="Insumos", amount=1000, method="Efectivo")
+    result = service.close_cash(today, cash_counted=6900, responsible="Seba", notes="Prueba")
+    assert result["income"] == 8000
+    assert result["expenses"] == 1000
+    assert result["balance"] == 7000
+    assert result["cash_expected"] == 7000
+    assert result["difference"] == -100
+    assert len(service.cash_ledger.list_movements(start_date=today, end_date=today)) == 2

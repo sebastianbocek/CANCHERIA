@@ -1152,7 +1152,10 @@ class AdminPanel(tk.Toplevel):
         today = dt.date.today()
         self.cash_start_var = tk.StringVar(value=today.replace(day=1).isoformat())
         self.cash_end_var = tk.StringVar(value=today.isoformat())
+        self.cash_range_var = tk.StringVar(value="Mes actual")
         self.cash_method_var = tk.StringVar(value="Todos")
+        self.cash_page = 0
+        self.cash_page_size = 50
         self.cash_summary_vars = {
             key: tk.StringVar(value="$ 0")
             for key in ("today", "month", "pending", "future")
@@ -1204,6 +1207,13 @@ class AdminPanel(tk.Toplevel):
             filters, text="Período:", bg=self.SURFACE, fg=self.NAVY,
             font=("Segoe UI", 9, "bold"),
         ).pack(side="left", padx=(0, 7))
+        range_combo = ttk.Combobox(
+            filters, textvariable=self.cash_range_var,
+            values=("Hoy", "Ayer", "Últimos 7 días", "Mes actual", "Mes anterior", "Rango personalizado"),
+            state="readonly", width=17,
+        )
+        range_combo.pack(side="left", padx=(0, 5), ipady=4)
+        range_combo.bind("<<ComboboxSelected>>", lambda _event: self._apply_cash_period())
         self.cash_start_entry = self._cash_date_control(
             filters, "Desde", self.cash_start_var, "Fecha inicial de Caja"
         )
@@ -1218,7 +1228,7 @@ class AdminPanel(tk.Toplevel):
             width=14,
         )
         self.cash_method_combo.pack(side="left", padx=(5, 0), ipady=4)
-        self.cash_method_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_cash())
+        self.cash_method_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_cash(reset_page=True))
 
         actions = tk.Frame(toolbar, bg=self.SURFACE)
         actions.pack(side="right", padx=10, pady=7)
@@ -1234,6 +1244,12 @@ class AdminPanel(tk.Toplevel):
         self._action_button(actions, "▤  Exportar CSV", self._export_cash, self.GREEN).pack(
             side="left", padx=3
         )
+
+        self.cash_history_var = tk.StringVar(value="")
+        tk.Label(
+            self.cash_tab, textvariable=self.cash_history_var, bg="#EFF6FF", fg="#315A8A",
+            font=("Segoe UI", 8), anchor="w", padx=10, pady=3,
+        ).pack(fill="x", padx=16, pady=(0, 6))
 
         body = tk.PanedWindow(
             self.cash_tab, orient="horizontal", bg=self.BORDER, bd=0,
@@ -1258,14 +1274,14 @@ class AdminPanel(tk.Toplevel):
             heading, textvariable=self.cash_period_var, bg=self.SURFACE, fg=self.MUTED,
             font=("Segoe UI", 9),
         ).pack(side="right")
-        columns = ("date", "concept", "client", "method", "amount", "court", "status")
+        columns = ("date", "concept", "client", "method", "amount", "court", "reference", "status")
         table_body = tk.Frame(movements_card, bg=self.SURFACE)
         table_body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
         self.cash_tree = ttk.Treeview(
             table_body, columns=columns, show="headings", style="Admin.Treeview",
         )
-        labels = ("Fecha", "Concepto", "Cliente", "Método", "Importe", "Cancha", "Estado")
-        widths = (125, 220, 145, 105, 105, 120, 95)
+        labels = ("Fecha", "Concepto", "Cliente", "Método", "Importe", "Cancha", "Origen / ID", "Estado")
+        widths = (125, 205, 135, 100, 100, 115, 135, 95)
         for key, label, width in zip(columns, labels, widths):
             self.cash_tree.heading(key, text=label)
             self.cash_tree.column(
@@ -1286,6 +1302,20 @@ class AdminPanel(tk.Toplevel):
         cash_y.pack(side="right", fill="y")
         cash_x.pack(side="bottom", fill="x")
         self.cash_tree.pack(side="left", fill="both", expand=True)
+        pager = tk.Frame(movements_card, bg=self.SURFACE)
+        pager.pack(fill="x", padx=12, pady=(0, 8))
+        tk.Button(
+            pager, text="‹", command=lambda: self._cash_change_page(-1),
+            bg="#E8EEF7", fg=self.NAVY, relief="flat", bd=0, padx=12, pady=5,
+            cursor="hand2", font=("Segoe UI", 10, "bold"),
+        ).pack(side="left", padx=2)
+        self.cash_page_var = tk.StringVar(value="Página 1 de 1")
+        tk.Label(pager, textvariable=self.cash_page_var, bg=self.SURFACE, fg=self.MUTED).pack(side="left", padx=8)
+        tk.Button(
+            pager, text="›", command=lambda: self._cash_change_page(1),
+            bg="#E8EEF7", fg=self.NAVY, relief="flat", bd=0, padx=12, pady=5,
+            cursor="hand2", font=("Segoe UI", 10, "bold"),
+        ).pack(side="left", padx=2)
 
         self.cash_chart_canvases: dict[str, tk.Canvas] = {}
         chart_specs = (
@@ -1326,17 +1356,48 @@ class AdminPanel(tk.Toplevel):
             bg="#F8FAFC", fg=self.NAVY, font=("Segoe UI", 9),
         )
         entry.pack(side="left", padx=(7, 2), ipady=5)
+        def refresh_custom() -> None:
+            self.cash_range_var.set("Rango personalizado")
+            self._refresh_cash(reset_page=True)
+
         open_calendar = lambda _event=None: self._show_date_picker(
-            variable, entry, title, self._refresh_cash
+            variable, entry, title, refresh_custom
         )
         entry.bind("<Double-Button-1>", open_calendar)
-        entry.bind("<Return>", lambda _event: self._refresh_cash())
+        entry.bind("<Return>", lambda _event: refresh_custom())
         tk.Button(
             holder, text="▦", command=open_calendar, relief="flat", bd=0,
             bg="#F8FAFC", fg=self.BLUE, activebackground="#DBEAFE",
             cursor="hand2", padx=5,
         ).pack(side="left")
         return entry
+
+    def _apply_cash_period(self) -> None:
+        today = dt.date.today()
+        choice = self.cash_range_var.get()
+        if choice == "Hoy":
+            start = end = today
+        elif choice == "Ayer":
+            start = end = today - dt.timedelta(days=1)
+        elif choice == "Últimos 7 días":
+            start, end = today - dt.timedelta(days=6), today
+        elif choice == "Mes anterior":
+            end = today.replace(day=1) - dt.timedelta(days=1)
+            start = end.replace(day=1)
+        elif choice == "Rango personalizado":
+            self._refresh_cash(reset_page=True)
+            return
+        else:
+            start, end = today.replace(day=1), today
+        self.cash_start_var.set(start.isoformat())
+        self.cash_end_var.set(end.isoformat())
+        self._refresh_cash(reset_page=True)
+
+    def _cash_change_page(self, delta: int) -> None:
+        movements = list(getattr(self, "_cash_snapshot", {}).get("movements") or [])
+        pages = max(1, (len(movements) + self.cash_page_size - 1) // self.cash_page_size)
+        self.cash_page = min(max(0, self.cash_page + delta), pages - 1)
+        self._render_cash_movements(movements)
 
     def _cash_movement_dialog(self, kind: str) -> None:
         is_income = kind == "income"
@@ -1352,10 +1413,15 @@ class AdminPanel(tk.Toplevel):
             "method": tk.StringVar(value="Efectivo"),
             "amount": tk.StringVar(),
             "court": tk.StringVar(),
+            "category": tk.StringVar(value="Ingreso manual" if is_income else "Mantenimiento"),
+            "related_id": tk.StringVar(),
+            "notes": tk.StringVar(),
         }
         labels = (
             ("Fecha", "date"), ("Concepto", "concept"), ("Cliente / proveedor", "client"),
-            ("Método", "method"), ("Importe", "amount"), ("Cancha / área", "court"),
+            ("Método", "method"), ("Importe", "amount"), ("Categoría", "category"),
+            ("Cancha / área", "court"), ("Reserva relacionada (opcional)", "related_id"),
+            ("Observaciones", "notes"),
         )
         for row_index, (label, key) in enumerate(labels):
             tk.Label(
@@ -1366,6 +1432,13 @@ class AdminPanel(tk.Toplevel):
                 widget = ttk.Combobox(
                     dialog, textvariable=values[key],
                     values=("Efectivo", "Transferencia", "Otros"),
+                    state="readonly", width=31,
+                )
+            elif key == "category":
+                widget = ttk.Combobox(
+                    dialog, textvariable=values[key],
+                    values=(("Ingreso manual", "Ajuste", "Otros") if is_income else
+                            ("Mantenimiento", "Servicios", "Personal", "Insumos", "Devolución", "Ajuste", "Otros")),
                     state="readonly", width=31,
                 )
             else:
@@ -1379,7 +1452,7 @@ class AdminPanel(tk.Toplevel):
                     ),
                 ).grid(row=row_index, column=2, padx=(0, 14), pady=8)
 
-        def save() -> None:
+        def save(allow_duplicate: bool = False) -> None:
             try:
                 occurred = dt.datetime.combine(
                     dt.date.fromisoformat(values["date"].get().strip()),
@@ -1393,9 +1466,23 @@ class AdminPanel(tk.Toplevel):
                     method=values["method"].get(),
                     amount=values["amount"].get(),
                     court=values["court"].get(),
+                    related_id=values["related_id"].get(),
+                    notes=values["notes"].get(),
+                    category=values["category"].get(),
+                    allow_duplicate=allow_duplicate,
                 )
                 dialog.destroy()
-                self._refresh_cash()
+                self._refresh_cash(reset_page=True)
+            except ValueError as exc:
+                if str(exc).startswith("POSSIBLE_DUPLICATE:"):
+                    if messagebox.askyesno(
+                        "Posible duplicado",
+                        f"{str(exc).split(':', 1)[1].strip()}\n\n¿Registrarlo igualmente?",
+                        parent=dialog,
+                    ):
+                        save(True)
+                    return
+                messagebox.showerror("Caja", str(exc), parent=dialog)
             except Exception as exc:
                 messagebox.showerror("Caja", str(exc), parent=dialog)
 
@@ -1409,22 +1496,55 @@ class AdminPanel(tk.Toplevel):
     def _close_cash(self) -> None:
         try:
             day = self.cash_end_var.get().strip()
-            if not messagebox.askyesno(
-                "Cerrar caja",
-                f"¿Registrar el cierre de caja del {day}?\n\n"
-                "El cierre guarda una fotografía del saldo; no modifica movimientos.",
-                parent=self,
-            ):
-                return
-            result = self.service.close_cash(day)
-            messagebox.showinfo(
-                "Caja cerrada",
-                f"Cierre guardado.\nSaldo: {self._money(result.get('balance'))}\n"
-                f"Movimientos: {result.get('movement_count', 0)}",
-                parent=self,
-            )
+            preview = self.service.cash_close_preview(day)
         except Exception as exc:
             messagebox.showerror("Caja", str(exc), parent=self)
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title("Cerrar caja")
+        dialog.configure(bg=self.SURFACE)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        counted = tk.StringVar(value=str(preview.get("cash_expected", 0)))
+        responsible = tk.StringVar(value="Administrador")
+        notes = tk.StringVar()
+        summary = (
+            f"Fecha: {day}\n"
+            f"Total cobrado: {self._money(preview.get('income'))}\n"
+            f"Gastos: {self._money(preview.get('expenses'))}\n"
+            f"Resultado: {self._money(preview.get('net'))}\n"
+            f"Efectivo esperado: {self._money(preview.get('cash_expected'))}\n"
+            f"Movimientos: {preview.get('movement_count', 0)}"
+        )
+        tk.Label(
+            dialog, text=summary, justify="left", bg="#EFF6FF", fg=self.NAVY,
+            font=("Segoe UI", 10), padx=16, pady=12,
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=16, pady=14)
+        fields = (("Efectivo contado", counted), ("Responsable", responsible), ("Observaciones", notes))
+        for row, (label, variable) in enumerate(fields, start=1):
+            tk.Label(dialog, text=label, bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 9, "bold")).grid(
+                row=row, column=0, sticky="w", padx=16, pady=7
+            )
+            tk.Entry(dialog, textvariable=variable, width=34).grid(row=row, column=1, padx=16, pady=7, ipady=3)
+
+        def save_close() -> None:
+            try:
+                result = self.service.close_cash(
+                    day, cash_counted=counted.get(), responsible=responsible.get(), notes=notes.get()
+                )
+                dialog.destroy()
+                messagebox.showinfo(
+                    "Caja cerrada",
+                    f"Cierre auditable guardado.\nResultado: {self._money(result.get('balance'))}\n"
+                    f"Diferencia de efectivo: {self._money(result.get('difference'))}",
+                    parent=self,
+                )
+            except Exception as exc:
+                messagebox.showerror("Caja", str(exc), parent=dialog)
+
+        self._action_button(dialog, "Guardar cierre", save_close, self.NAVY).grid(
+            row=4, column=0, columnspan=2, pady=14
+        )
 
     def _export_cash(self) -> None:
         suggested = f"caja_{self.cash_start_var.get()}_{self.cash_end_var.get()}.csv"
@@ -1450,7 +1570,7 @@ class AdminPanel(tk.Toplevel):
         except Exception as exc:
             messagebox.showerror("Caja", str(exc), parent=self)
 
-    def _refresh_cash(self) -> None:
+    def _refresh_cash(self, reset_page: bool = False) -> None:
         if not hasattr(self, "cash_tree"):
             return
         method = getattr(self.service, "cash_snapshot", None)
@@ -1467,11 +1587,23 @@ class AdminPanel(tk.Toplevel):
         self.cash_summary_vars["pending"].set(self._money(snapshot.get("pending_balances")))
         self.cash_summary_vars["future"].set(self._money(snapshot.get("future_reservations")))
         movements = list(snapshot.get("movements") or [])
+        self.cash_history_var.set(str(snapshot.get("history_notice") or ""))
         self.cash_period_var.set(
             f"{len(movements)} movimientos · Saldo {self._money(snapshot.get('period_balance'))}"
         )
+        if reset_page:
+            self.cash_page = 0
+        self._render_cash_movements(movements)
+        self.after_idle(self._draw_cash_charts)
+
+    def _render_cash_movements(self, movements: list[dict]) -> None:
         self.cash_tree.delete(*self.cash_tree.get_children())
-        for index, row in enumerate(movements):
+        pages = max(1, (len(movements) + self.cash_page_size - 1) // self.cash_page_size)
+        self.cash_page = min(self.cash_page, pages - 1)
+        start = self.cash_page * self.cash_page_size
+        visible = movements[start:start + self.cash_page_size]
+        self.cash_page_var.set(f"Página {self.cash_page + 1} de {pages}")
+        for index, row in enumerate(visible, start=start):
             moment = str(row.get("occurred_at") or "")
             try:
                 moment = dt.datetime.fromisoformat(moment).strftime("%d/%m/%Y %H:%M")
@@ -1483,11 +1615,11 @@ class AdminPanel(tk.Toplevel):
                 values=(
                     moment, row.get("concept", ""), row.get("client", ""),
                     row.get("method", ""), self._money(amount), row.get("court", ""),
+                    row.get("source_id", "") or row.get("source", ""),
                     row.get("status", ""),
                 ),
                 tags=("income" if amount >= 0 else "expense",),
             )
-        self.after_idle(self._draw_cash_charts)
 
     def _draw_cash_charts(self) -> None:
         if not getattr(self, "cash_chart_canvases", None):

@@ -141,10 +141,35 @@ def test_windows_update_preflight_reports_locked_executable_before_replacing_fil
 
     monkeypatch.setattr(update_helper.os, "replace", locked_replace)
     with pytest.raises(UpdateError, match="sigue abierto"):
-        update_helper._preflight_windows_executables(install, files)
+        update_helper._preflight_windows_executables(install, files, timeout=0.01)
 
     assert (install / "WPSetter.py").read_text(encoding="utf-8") == "old agent"
     assert executable.read_bytes() == b"old exe"
+
+
+def test_windows_replace_retries_a_transient_executable_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "cancheria.exe.new"
+    destination = tmp_path / "cancheria.exe"
+    source.write_bytes(b"new")
+    destination.write_bytes(b"old")
+    real_replace = update_helper.os.replace
+    attempts = 0
+
+    def transient_lock(left, right):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError("Windows todavía no liberó el ejecutable")
+        return real_replace(left, right)
+
+    monkeypatch.setattr(update_helper.os, "replace", transient_lock)
+    monkeypatch.setattr(update_helper.time, "sleep", lambda _seconds: None)
+    update_helper._replace_with_retry(source, destination, timeout=1)
+
+    assert attempts == 3
+    assert destination.read_bytes() == b"new"
 
 
 def test_backup_contains_private_data_but_skips_browser_cache(tmp_path: Path) -> None:

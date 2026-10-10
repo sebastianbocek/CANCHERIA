@@ -13,6 +13,7 @@ from cancheria.config import legacy_config as cfg
 from cancheria.config.court_sports import sport_icon, sport_menu_options
 from cancheria.domain.reservations.calendar import CalendarioLlamadas
 from cancheria.domain.events import registration as event_registration
+from cancheria.domain.finance.ledger import FinancialLedger, cents_to_pesos
 from cancheria.infrastructure.persistence.json_store import JSONStore
 from cancheria.legacy_bridge import legacy_callable
 
@@ -41,6 +42,31 @@ class DesktopAdminService:
         )
         self._cash_store = JSONStore(self.runtime / "caja_movimientos.json")
         self._cash_closures_store = JSONStore(self.runtime / "caja_cierres.json")
+        self.cash_ledger = FinancialLedger(self.runtime / "caja.db")
+        self._migrate_v230_cash_json()
+
+    def _migrate_v230_cash_json(self) -> None:
+        """Preserve manual movements created by the first Caja implementation."""
+        path = self.runtime / "caja_movimientos.json"
+        if not path.is_file():
+            return
+        for row in self._cash_manual_rows():
+            amount = int(row.get("amount") or 0)
+            if not amount:
+                continue
+            self.cash_ledger.record(
+                movement_type="manual_income" if amount > 0 else "expense",
+                direction="income" if amount > 0 else "expense",
+                amount=abs(amount),
+                occurred_at=str(row.get("occurred_at") or ""),
+                payment_method=str(row.get("method") or ""),
+                concept=str(row.get("concept") or "Movimiento migrado"),
+                client=str(row.get("client") or ""),
+                court=str(row.get("court") or ""),
+                origin="migration_v230",
+                notes="Migrado desde caja_movimientos.json",
+                idempotency_key=f"migration-v230:{row.get('movement_id')}",
+            )
 
     def bookings(self) -> list[dict[str, Any]]:
         rows = self.calendar.asegurar_ids_reservas()
@@ -254,6 +280,11 @@ class DesktopAdminService:
         method: str,
         client: str = "",
         court: str = "",
+        related_id: str = "",
+        notes: str = "",
+        category: str = "",
+        responsible: str = "Administrador",
+        allow_duplicate: bool = False,
     ) -> dict[str, Any]:
         kind = str(kind or "").strip().casefold()
         if kind not in {"income", "expense"}:
@@ -265,24 +296,31 @@ class DesktopAdminService:
         if not concept:
             raise ValueError("Ingresá el concepto del movimiento.")
         moment = self._cash_datetime(occurred_at)
-        row = {
-            "movement_id": f"cash_{uuid.uuid4().hex[:12]}",
-            "source": "manual",
-            "source_id": "",
-            "kind": kind,
-            "occurred_at": moment.isoformat(timespec="seconds"),
-            "concept": concept,
-            "client": str(client or "").strip(),
-            "method": self._cash_method(method),
-            "amount": parsed_amount if kind == "income" else -parsed_amount,
-            "court": str(court or "").strip(),
-            "status": "Completado",
-            "created_at": dt.datetime.now().isoformat(timespec="seconds"),
-        }
-        rows = self._cash_manual_rows()
-        rows.append(row)
-        self._cash_write_manual_rows(rows)
-        return dict(row)
+        if not allow_duplicate and self.cash_ledger.has_manual_duplicate(
+            occurred_at=moment.isoformat(timespec="seconds"),
+            direction=kind,
+            amount=parsed_amount,
+            payment_method=method,
+            concept=concept,
+        ):
+            raise ValueError(
+                "POSSIBLE_DUPLICATE: Ya existe un movimiento manual igual en esa fecha."
+            )
+        related = str(related_id or "").strip()
+        return self.cash_ledger.record(
+            movement_type=("manual_income" if kind == "income" else (category or "expense")),
+            direction=kind,
+            amount=parsed_amount,
+            occurred_at=moment.isoformat(timespec="seconds"),
+            payment_method=method,
+            concept=concept,
+            client=client,
+            reservation_id=related,
+            court=court,
+            origin="manual",
+            responsible=responsible,
+            notes=notes,
+        )
 
     def _all_booking_rows_for_cash(self) -> list[dict[str, Any]]:
         rows = [dict(row) for row in self.bookings()]
@@ -376,12 +414,20 @@ class DesktopAdminService:
             grouped.setdefault(identity, []).append(row)
         pending_total = 0
         future_total = 0
-        today = dt.date.today()
+        now = dt.datetime.now()
+        today = now.date()
         for rows in grouped.values():
             row = rows[0]
             pending_total += max(self._cash_amount(item.get("monto_pendiente")) for item in rows)
             booking_date = self._parse_booking_date(row.get("fecha"), today.year)
-            if booking_date is not None and booking_date >= today:
+            time_match = re.search(r"(\d{1,2}):(\d{2})", str(row.get("hora") or ""))
+            booking_moment = None
+            if booking_date is not None:
+                hour = int(time_match.group(1)) if time_match else 23
+                minute = int(time_match.group(2)) if time_match else 59
+                booking_moment = dt.datetime.combine(booking_date, dt.time(hour, minute))
+            state = str(row.get("estado") or "").strip().casefold()
+            if booking_moment is not None and booking_moment > now and state in {"reservado", "confirmado"}:
                 future_total += max(self._cash_amount(item.get("precio_total")) for item in rows)
         for event in event_registration.list_business_events(active_only=False):
             for row in event_registration.read_event_registrations(event):
@@ -392,7 +438,7 @@ class DesktopAdminService:
                     event_date = dt.date.fromisoformat(str(event.get("date") or ""))
                 except ValueError:
                     event_date = None
-                if event_date is not None and event_date >= today:
+                if event_date is not None and event_date >= today and str(row.get("status")) == "confirmed":
                     future_total += self._cash_amount(row.get("required_payment"))
         return pending_total, future_total
 
@@ -425,38 +471,47 @@ class DesktopAdminService:
         end = dt.date.fromisoformat(end_date) if end_date else today
         if end < start:
             raise ValueError("La fecha Hasta no puede ser anterior a Desde.")
-        all_rows = [
-            *self._booking_cash_movements(),
-            *self._tournament_cash_movements(),
-            *self._cash_manual_rows(),
-        ]
-        all_rows.sort(key=lambda row: str(row.get("occurred_at") or ""), reverse=True)
-        method_filter = str(method or "Todos").strip().casefold()
-
-        def in_range(row: dict[str, Any]) -> bool:
-            day = self._cash_datetime(row.get("occurred_at")).date()
-            same_method = method_filter in {"", "todos", "all"} or str(
-                row.get("method") or ""
-            ).casefold() == method_filter
-            return start <= day <= end and same_method
-
-        filtered = [row for row in all_rows if in_range(row)]
+        ledger_rows = self.cash_ledger.list_movements(
+            start_date=start.isoformat(), end_date=end.isoformat(), payment_method=method
+        )
+        filtered = []
+        for row in ledger_rows:
+            signed = cents_to_pesos(row.get("amount_cents"))
+            if row.get("direction") == "expense":
+                signed = -signed
+            filtered.append({
+                **row,
+                "source": row.get("origin", ""),
+                "source_id": row.get("reservation_id") or row.get("registration_id") or "",
+                "kind": row.get("direction", ""),
+                "method": row.get("payment_method", ""),
+                "amount": signed,
+                "status": "Completado" if row.get("status") == "confirmed" else row.get("status", ""),
+            })
         month_start = today.replace(day=1)
         next_month = (month_start.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
-        income_today = sum(
-            int(row.get("amount") or 0) for row in all_rows
-            if self._cash_datetime(row.get("occurred_at")).date() == today
-            and int(row.get("amount") or 0) > 0
-        )
-        income_month = sum(
-            int(row.get("amount") or 0) for row in all_rows
-            if month_start <= self._cash_datetime(row.get("occurred_at")).date() < next_month
-            and int(row.get("amount") or 0) > 0
+        income_today = self.cash_ledger.total_income(today.isoformat(), today.isoformat())
+        income_month = self.cash_ledger.total_income(
+            month_start.isoformat(), (next_month - dt.timedelta(days=1)).isoformat()
         )
         pending, future = self._cash_pending_and_future()
-        daily: dict[str, int] = {}
-        methods: dict[str, int] = {}
-        courts: dict[str, int] = {}
+        visible_days = min(366, (end - start).days + 1)
+        daily_start = end - dt.timedelta(days=visible_days - 1)
+        daily: dict[str, int] = {
+            (daily_start + dt.timedelta(days=offset)).isoformat(): 0
+            for offset in range(visible_days)
+        }
+        methods: dict[str, int] = {
+            "Efectivo": 0, "Transferencia": 0, "Mixto": 0, "Otros": 0,
+        }
+        catalog = {
+            str(item.get("name") or ""): (
+                f"{item.get('name')} · {item.get('type')}"
+                if str(item.get("type") or "").strip() else str(item.get("name") or "")
+            )
+            for item in self.court_catalog()
+        }
+        courts: dict[str, int] = {label: 0 for label in catalog.values() if label}
         for row in filtered:
             amount = int(row.get("amount") or 0)
             if amount <= 0:
@@ -465,7 +520,8 @@ class DesktopAdminService:
             daily[day] = daily.get(day, 0) + amount
             method_name = str(row.get("method") or "Otros")
             methods[method_name] = methods.get(method_name, 0) + amount
-            court = str(row.get("court") or "Otros")
+            raw_court = str(row.get("court") or "Otros")
+            court = catalog.get(raw_court, raw_court)
             courts[court] = courts.get(court, 0) + amount
         return {
             "start_date": start.isoformat(),
@@ -479,26 +535,58 @@ class DesktopAdminService:
             "daily_income": daily,
             "method_income": methods,
             "court_income": courts,
+            "history_notice": (
+                "Los ingresos se registran con fecha real desde CANCHERIA v0.2.31; "
+                "no se inventan cobros históricos sin evidencia."
+            ),
         }
 
-    def close_cash(self, day: str) -> dict[str, Any]:
-        target = dt.date.fromisoformat(str(day or "").strip())
-        snapshot = self.cash_snapshot(start_date=target.isoformat(), end_date=target.isoformat())
-        closure = {
-            "closure_id": f"close_{uuid.uuid4().hex[:12]}",
-            "day": target.isoformat(),
-            "closed_at": dt.datetime.now().isoformat(timespec="seconds"),
-            "balance": int(snapshot.get("period_balance") or 0),
-            "movement_count": len(snapshot.get("movements") or []),
+    def cash_close_preview(self, day: str) -> dict[str, int]:
+        target = dt.date.fromisoformat(str(day or "").strip()).isoformat()
+        rows = self.cash_ledger.list_movements(start_date=target, end_date=target)
+        income = sum(
+            cents_to_pesos(row.get("amount_cents"))
+            for row in rows if row.get("direction") == "income"
+        )
+        expenses = sum(
+            cents_to_pesos(row.get("amount_cents"))
+            for row in rows if row.get("direction") == "expense"
+        )
+        cash_expected = sum(
+            cents_to_pesos(row.get("amount_cents"))
+            * (1 if row.get("direction") == "income" else -1)
+            for row in rows if row.get("payment_method") == "Efectivo"
+        )
+        return {
+            "income": income,
+            "expenses": expenses,
+            "net": income - expenses,
+            "cash_expected": cash_expected,
+            "movement_count": len(rows),
         }
-        try:
-            payload = self._cash_closures_store.read(default={}) or {}
-        except (OSError, ValueError, TypeError):
-            payload = {}
-        closures = [dict(item) for item in payload.get("closures", []) if isinstance(item, dict)]
-        closures.append(closure)
-        self._cash_closures_store.write({"version": 1, "closures": closures})
-        return closure
+
+    def close_cash(
+        self,
+        day: str,
+        *,
+        cash_counted: Any = 0,
+        responsible: str = "Administrador",
+        notes: str = "",
+    ) -> dict[str, Any]:
+        target = dt.date.fromisoformat(str(day or "").strip())
+        closure = self.cash_ledger.close_day(
+            target.isoformat(), cash_counted=cash_counted,
+            responsible=responsible, notes=notes,
+        )
+        return {
+            **closure,
+            "balance": cents_to_pesos(closure.get("net_cents")),
+            "income": cents_to_pesos(closure.get("income_cents")),
+            "expenses": cents_to_pesos(closure.get("expense_cents")),
+            "cash_expected": cents_to_pesos(closure.get("cash_expected_cents")),
+            "cash_counted": cents_to_pesos(closure.get("cash_counted_cents")),
+            "difference": cents_to_pesos(closure.get("difference_cents")),
+        }
 
     def export_cash_csv(
         self,
@@ -508,33 +596,10 @@ class DesktopAdminService:
         end_date: str,
         method: str = "Todos",
     ) -> int:
-        rows = self.cash_snapshot(
-            start_date=start_date, end_date=end_date, method=method
-        )["movements"]
-        path = Path(destination)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8-sig", newline="") as handle:
-            writer = csv.DictWriter(
-                handle,
-                fieldnames=(
-                    "fecha", "concepto", "cliente", "metodo", "importe", "cancha",
-                    "estado", "origen", "id_origen",
-                ),
-            )
-            writer.writeheader()
-            for row in rows:
-                writer.writerow({
-                    "fecha": row.get("occurred_at", ""),
-                    "concepto": row.get("concept", ""),
-                    "cliente": row.get("client", ""),
-                    "metodo": row.get("method", ""),
-                    "importe": row.get("amount", 0),
-                    "cancha": row.get("court", ""),
-                    "estado": row.get("status", ""),
-                    "origen": row.get("source", ""),
-                    "id_origen": row.get("source_id", ""),
-                })
-        return len(rows)
+        return self.cash_ledger.export_csv(
+            destination, start_date=start_date, end_date=end_date,
+            payment_method=method,
+        )
 
     def command_reference(self) -> str:
         """Use the exact help catalog exposed by the WhatsApp admin command."""
@@ -955,6 +1020,21 @@ class DesktopAdminService:
         })
         if not result.get("ok"):
             raise RuntimeError(self._result_message(result, "No se pudo confirmar el pago."))
+        row = dict(result.get("reserva") or {})
+        paid = self._cash_amount(row.get("senia_pagada_monto"))
+        total_amount = self._cash_amount(row.get("precio_total"))
+        if paid > 0:
+            self.cash_ledger.record_cumulative_payment(
+                source_kind="booking",
+                source_id=str(row.get("reservation_id") or reservation_id),
+                total_paid=paid,
+                movement_type=("full_payment" if total and paid >= total_amount else "deposit"),
+                payment_method=str(row.get("payment_method") or "efectivo"),
+                concept="Pago total de reserva" if total else "Seña de reserva",
+                client=str(row.get("nombre") or row.get("telefono") or ""),
+                court=str(row.get("cancha") or ""),
+                responsible="Administrador",
+            )
         return self._result_message(result, "Pago confirmado.")
 
     def cancel_booking(self, reservation_id: str, reason: str = "panel de administración") -> str:

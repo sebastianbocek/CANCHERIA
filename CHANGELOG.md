@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.31 - 2026-10-09
+
+- Corrige el actualizador de Windows cuando `cancheria.exe` tarda en liberar el archivo o queda otra instancia exacta de la misma instalación: espera el cierre, detiene únicamente ese ejecutable y reintenta los reemplazos bloqueados antes de restaurar.
+- Convierte Caja en un ledger SQLite persistente y append-only con importes enteros en centavos, escrituras transaccionales e idempotencia por reserva o inscripción.
+- Registra cobros en el momento real de confirmar señas, saldos, pagos totales y pagos de torneos; una confirmación total contabiliza sólo la diferencia todavía no registrada.
+- Deja de inferir ingresos históricos desde el estado actual de reservas y muestra explícitamente el límite del historial anterior a esta versión.
+- Amplía Caja con períodos rápidos y rango personalizado, filtro de método, paginación, referencias de origen, detección de posibles duplicados manuales y categorías de gastos/devoluciones.
+- Agrega cierres auditables con ingresos, gastos, resultado, efectivo esperado, efectivo contado, diferencia, responsable y observaciones, además de exportación CSV compatible con Excel.
+- Mantiene los gráficos por día, método y cancha individual alimentados exclusivamente por cobros confirmados, incluyendo días sin ingresos.
+
 ## 0.2.30 - 2026-10-09
 
 - Agrega la pestaña `Caja` inmediatamente a la derecha de `Horas` en el panel de administración.

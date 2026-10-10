@@ -462,6 +462,31 @@ def _row_amount(row: Dict[str, Any], key: str) -> int:
         return 0
 
 
+def _record_event_payment_in_ledger(
+    event: Dict[str, Any], row: Dict[str, Any], *, responsible: str = "Agente IA"
+) -> None:
+    """Persist a confirmed tournament payment without coupling availability to Caja."""
+    try:
+        from cancheria.domain.finance.ledger import record_cumulative_payment
+
+        record_cumulative_payment(
+            source_kind="tournament",
+            source_id=str(row.get("registration_id") or ""),
+            total_paid=_row_amount(row, "paid_amount"),
+            movement_type="tournament_payment",
+            payment_method=str(row.get("payment_method") or ""),
+            concept=f"Inscripción torneo · {event.get('name') or row.get('event_name') or ''}",
+            client=str(row.get("team_name") or row.get("contact_name") or ""),
+            court="Torneos",
+            responsible=responsible,
+            occurred_at=str(row.get("last_payment_at") or row.get("confirmed_at") or "") or None,
+        )
+    except Exception as exc:
+        # A financial projection failure must never undo a payment already
+        # committed by the transactional event engine. It remains observable.
+        print(f"⚠ [CAJA] No se pudo registrar el pago de torneo: {exc}")
+
+
 def create_event_registration_hold(
     event: Dict[str, Any],
     team_name: Any,
@@ -613,6 +638,7 @@ def register_event_payment(
             raise EventRegistrationError("registration_cancelled", "La inscripcion esta cancelada.")
         if target.get("status") == "confirmed":
             _atomic_csv_write(csv_path, rows)
+            _record_event_payment_in_ledger(event, target)
             return {
                 "ok": True,
                 "idempotent": True,
@@ -664,6 +690,7 @@ def register_event_payment(
         if state["occupied"] > state["capacity"]:
             raise EventRegistrationError("capacity_invariant_broken", "La capacidad maxima fue excedida.")
         _atomic_csv_write(csv_path, rows)
+        _record_event_payment_in_ledger(event, target)
         return {
             "ok": True,
             "idempotent": False,

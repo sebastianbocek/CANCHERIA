@@ -16,17 +16,19 @@ from pathlib import Path
 from cancheria.desktop.update_service import UpdateError, validate_staged_update
 
 
-def _stop_installed_configurator(install_dir: Path) -> None:
-    """Stop only the configurator that belongs to this installation on Windows."""
+def _stop_installed_windows_process(install_dir: Path, executable_name: str) -> None:
+    """Stop only the named executable that belongs to this installation."""
     if os.name != "nt":
         return
-    target = str((Path(install_dir) / "configurador_cancheria.exe").resolve())
+    target = str((Path(install_dir) / executable_name).resolve())
+    safe_name = Path(executable_name).name.replace("'", "''")
     script = (
         "$target=[IO.Path]::GetFullPath($args[0]);"
-        "Get-CimInstance Win32_Process -Filter \"Name='configurador_cancheria.exe'\" "
+        f"Get-CimInstance Win32_Process -Filter \"Name='{safe_name}'\" "
         "-ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and "
         "([IO.Path]::GetFullPath($_.ExecutablePath) -eq $target) } | "
-        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; "
+        "Wait-Process -Id $_.ProcessId -Timeout 15 -ErrorAction SilentlyContinue }"
     )
     try:
         subprocess.run(
@@ -43,8 +45,35 @@ def _stop_installed_configurator(install_dir: Path) -> None:
         pass
 
 
+def _stop_installed_configurator(install_dir: Path) -> None:
+    _stop_installed_windows_process(install_dir, "configurador_cancheria.exe")
+
+
+def _replace_with_retry(
+    source: Path,
+    destination: Path,
+    *,
+    timeout: float = 20.0,
+) -> None:
+    """Replace a file after Windows releases short-lived executable handles."""
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+        except OSError as exc:
+            if getattr(exc, "winerror", None) not in {5, 32, 33}:
+                raise
+            if time.monotonic() >= deadline:
+                raise
+        time.sleep(0.25)
+
+
 def _preflight_windows_executables(
-    install_dir: Path, files: dict[str, str]
+    install_dir: Path, files: dict[str, str], *, timeout: float = 20.0
 ) -> None:
     """Detect locked executables before replacing any installation file."""
     if os.name != "nt":
@@ -56,12 +85,12 @@ def _preflight_windows_executables(
         probe = destination.with_name(destination.name + ".cancheria-lock-check")
         try:
             probe.unlink(missing_ok=True)
-            os.replace(destination, probe)
-            os.replace(probe, destination)
+            _replace_with_retry(destination, probe, timeout=timeout)
+            _replace_with_retry(probe, destination, timeout=timeout)
         except OSError as exc:
             if probe.exists() and not destination.exists():
                 try:
-                    os.replace(probe, destination)
+                    _replace_with_retry(probe, destination, timeout=5.0)
                 except OSError:
                     pass
             raise UpdateError(
@@ -182,7 +211,7 @@ def apply_staged_update(
             destination.parent.mkdir(parents=True, exist_ok=True)
             temporary = destination.with_name(destination.name + ".cancheria-new")
             shutil.copy2(source, temporary)
-            os.replace(temporary, destination)
+            _replace_with_retry(temporary, destination)
 
         for relative, expected_hash in files.items():
             destination = _safe_destination(install_dir, relative)
@@ -211,7 +240,9 @@ def apply_staged_update(
             destination = _safe_destination(install_dir, relative)
             destination.parent.mkdir(parents=True, exist_ok=True)
             if backup.is_file():
-                shutil.copy2(backup, destination)
+                restore_temp = destination.with_name(destination.name + ".cancheria-restore")
+                shutil.copy2(backup, restore_temp)
+                _replace_with_retry(restore_temp, destination)
         raise
     finally:
         shutil.rmtree(rollback_dir, ignore_errors=True)
@@ -260,6 +291,10 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(decoded, list) and all(isinstance(item, str) for item in decoded):
             restart_command = decoded
         _wait_for_parent(args.parent_pid)
+        # A second CANCHERIA instance or a delayed Windows teardown can keep
+        # the image mapped after the original parent has exited. Only the
+        # executable from this exact installation is stopped.
+        _stop_installed_windows_process(install_dir, "cancheria.exe")
         apply_staged_update(
             install_dir,
             Path(args.staged_dir),
