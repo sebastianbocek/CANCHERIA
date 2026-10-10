@@ -92,6 +92,12 @@ La pestaña **Horas** muestra cada horario y cancha en una grilla: verde cuando 
 
 ![Panel de administración de horarios](docs/images/cancheria-panel-horas.png)
 
+### Sección de Caja
+
+La pestaña **Caja** concentra los ingresos, gastos, saldos pendientes y reservas futuras del negocio. Permite filtrar los movimientos por período y método de pago, registrar operaciones, cerrar la caja, exportar los datos y consultar estadísticas por día, método y cancha.
+
+![Sección de Caja del panel de administración](docs/images/cancheria-panel-caja.png)
+
 ---
 
 ## Instalación rápida
