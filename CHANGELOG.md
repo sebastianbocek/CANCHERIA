@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.35 - 2026-10-10
+
+- Agrega **Ver reservas pasadas** junto a las acciones de Reservas y pagos, desmarcado por defecto y en modo de solo lectura.
+- Al activar el historial, mantiene primero las reservas vigentes y coloca después las pasadas desde la más reciente hasta la más antigua.
+- Agrega **Mostrar todos** en Horas, también desmarcado por defecto, para recuperar horarios transcurridos y reservas ya finalizadas.
+- Las reservas pasadas se distinguen en rojo dentro de la grilla y los horarios transcurridos sin reserva se muestran en gris, sin habilitar acciones operativas sobre el historial.
+
 ## 0.2.34 - 2026-10-10
 
 - Finaliza automáticamente cada reserva cuando termina su duración completa, usando la zona horaria configurada del complejo.

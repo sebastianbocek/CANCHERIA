@@ -9,8 +9,9 @@ from cancheria.admin.desktop_service import DesktopAdminService
 
 
 class FakeCalendar:
-    def __init__(self, rows):
+    def __init__(self, rows, finished=None):
         self.rows = copy.deepcopy(rows)
+        self.finished = copy.deepcopy(finished or [])
 
     @contextmanager
     def atomic(self):
@@ -21,6 +22,9 @@ class FakeCalendar:
 
     def _leer_todos(self):
         return copy.deepcopy(self.rows)
+
+    def _leer_terminadas(self):
+        return copy.deepcopy(self.finished)
 
     def _escribir_todos(self, rows, ordenar=True):
         self.rows = copy.deepcopy(rows)
@@ -109,6 +113,69 @@ def test_day_schedule_hides_every_elapsed_slot_for_today(monkeypatch):
 
     assert schedule["slots"] == ["15:00", "16:00"]
     assert {cell["status"] for cell in schedule["cells"]} == {"free"}
+
+
+def test_day_schedule_show_all_includes_elapsed_and_archived_occupied_slots(monkeypatch):
+    class FixedDateTime(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2031, 5, 10, 14, 30)
+            return value if tz is None else value.replace(tzinfo=tz)
+
+    monkeypatch.setattr(service_module.dt, "datetime", FixedDateTime)
+    service = build_service(monkeypatch, [], end_hour=17)
+    service.calendar.finished = [{
+        "reservation_id": "OLD-1",
+        "fecha": "Sábado 10/05/2031",
+        "hora": "13:00",
+        "cancha": "Cancha 1",
+        "estado": "finalizada",
+        "nombre": "Reserva anterior",
+        "telefono": "123",
+    }]
+
+    schedule = service.day_schedule("2031-05-10", include_all=True)
+    statuses = {
+        (cell["time"], cell["court"]): cell["status"]
+        for cell in schedule["cells"]
+    }
+
+    assert schedule["slots"] == ["10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00"]
+    assert statuses[("13:00", "Cancha 1")] == "past_occupied"
+    assert statuses[("12:00", "Cancha 1")] == "closed"
+    assert statuses[("15:00", "Cancha 1")] == "free"
+
+
+def test_bookings_with_history_keeps_current_first_and_history_newest_first(monkeypatch):
+    current_day = future_day()
+    service = build_service(monkeypatch, [{
+        "reservation_id": "CURRENT",
+        "fecha": display_day(current_day),
+        "hora": "20:00",
+        "cancha": "Cancha 1",
+        "estado": "reservado",
+    }])
+    service.calendar.finished = [
+        {
+            "reservation_id": "OLDER",
+            "fecha": "Miércoles 08/10/2026",
+            "hora": "20:00",
+            "cancha": "Cancha 1",
+            "estado": "finalizada",
+        },
+        {
+            "reservation_id": "NEWER",
+            "fecha": "Viernes 09/10/2026",
+            "hora": "21:00",
+            "cancha": "Cancha 1",
+            "estado": "finalizada",
+        },
+    ]
+
+    rows = service.bookings_with_history()
+
+    assert [row["reservation_id"] for row in rows] == ["CURRENT", "NEWER", "OLDER"]
+    assert rows[1]["_history"] is True
 
 
 def test_court_catalog_and_sport_update_share_whatsapp_configuration(monkeypatch):
@@ -372,6 +439,10 @@ def test_admin_panel_exposes_hours_tab_and_click_editing():
     assert "def _show_court_sport_menu" in source
     assert "def _change_court_sport" in source
     assert '"No quedan horarios futuros para esta fecha."' in source
+    assert 'text="Ver reservas pasadas"' in source
+    assert 'text="Mostrar todos"' in source
+    assert "bookings_with_history" in source
+    assert "include_all=True" in source
 
 
 def test_admin_operation_date_reuses_visual_calendar_picker():

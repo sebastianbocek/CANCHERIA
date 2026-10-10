@@ -890,6 +890,22 @@ class AdminPanel(tk.Toplevel):
         self._action_button(actions, "▣  Confirmar total", lambda: self._booking_action("total"), self.GREEN).pack(side="left", padx=(0, 8))
         self._action_button(actions, "↗  Liberar pendiente", lambda: self._booking_action("release"), self.ORANGE).pack(side="left", padx=(0, 8))
         self._action_button(actions, "✕  Cancelar", lambda: self._booking_action("cancel"), self.RED).pack(side="left", padx=(0, 8))
+        self.show_past_bookings_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            actions,
+            text="Ver reservas pasadas",
+            variable=self.show_past_bookings_var,
+            command=self._refresh_bookings,
+            font=("Segoe UI", 10, "bold"),
+            fg=self.NAVY,
+            bg=self.SURFACE,
+            activeforeground=self.NAVY,
+            activebackground=self.SURFACE,
+            selectcolor="#FFFFFF",
+            cursor="hand2",
+            bd=0,
+            highlightthickness=0,
+        ).pack(side="left", padx=(6, 0))
 
         columns = ("id", "fecha", "hora", "cancha", "nombre", "telefono", "estado", "senia", "saldo")
         self.booking_tree = ttk.Treeview(self.bookings_tab, columns=columns, show="headings", selectmode="browse", style="Admin.Treeview")
@@ -1045,6 +1061,22 @@ class AdminPanel(tk.Toplevel):
             self._legend_item(self.hours_legend, self.RED, "Ocupado / bloqueado", "#FDEBEC", 235),
             self._legend_item(self.hours_legend, self.PAST_GRAY, "Fuera de atención", "#EEF2F7", 205),
         ]
+        self.hours_show_all_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            self.hours_legend,
+            text="Mostrar todos",
+            variable=self.hours_show_all_var,
+            command=self._refresh_hours,
+            font=("Segoe UI", 10, "bold"),
+            fg=self.NAVY,
+            bg="#FFFFFF",
+            activeforeground=self.NAVY,
+            activebackground="#FFFFFF",
+            selectcolor="#FFFFFF",
+            cursor="hand2",
+            bd=0,
+            highlightthickness=0,
+        ).pack(side="left", padx=(4, 0))
         toolbar.bind("<Configure>", self._layout_hours_toolbar)
 
         grid_card = tk.Frame(
@@ -2412,13 +2444,19 @@ class AdminPanel(tk.Toplevel):
 
     def _refresh_bookings(self) -> None:
         self.booking_tree.delete(*self.booking_tree.get_children())
-        for index, row in enumerate(self.service.bookings()):
+        show_past = bool(
+            hasattr(self, "show_past_bookings_var") and self.show_past_bookings_var.get()
+        )
+        history_method = getattr(self.service, "bookings_with_history", None)
+        rows = history_method() if show_past and callable(history_method) else self.service.bookings()
+        for index, row in enumerate(rows):
             payment_status = getattr(self.service, "booking_payment_status", None)
             payment_label = (
                 payment_status(row)
                 if callable(payment_status) else row.get("senia_estado", "")
             )
-            self.booking_tree.insert("", "end", iid=f"booking:{row.get('reservation_id')}:{index}", values=(
+            source = "past" if row.get("_history") else "booking"
+            self.booking_tree.insert("", "end", iid=f"{source}:{row.get('reservation_id')}:{index}", values=(
                 row.get("reservation_id", ""), row.get("fecha", ""), row.get("hora", ""), row.get("cancha", ""),
                 row.get("nombre", ""), row.get("telefono", ""), row.get("estado", ""), payment_label,
                 row.get("monto_pendiente", ""),
@@ -2633,6 +2671,8 @@ class AdminPanel(tk.Toplevel):
         selection = self.booking_tree.selection()
         if not selection:
             raise ValueError("Seleccioná una reserva de la tabla.")
+        if str(selection[0]).startswith("past:"):
+            raise ValueError("Las reservas pasadas son de solo lectura.")
         return str(self.booking_tree.item(selection[0], "values")[0])
 
     def _booking_action(self, action: str) -> None:
@@ -2703,7 +2743,13 @@ class AdminPanel(tk.Toplevel):
         if not hasattr(self, "hours_grid"):
             return
         try:
-            schedule = self.service.day_schedule(self.hours_day_var.get())
+            show_all = bool(
+                hasattr(self, "hours_show_all_var") and self.hours_show_all_var.get()
+            )
+            schedule = (
+                self.service.day_schedule(self.hours_day_var.get(), include_all=True)
+                if show_all else self.service.day_schedule(self.hours_day_var.get())
+            )
         except Exception as exc:
             messagebox.showerror("Horas", str(exc), parent=self)
             return
@@ -2857,7 +2903,12 @@ class AdminPanel(tk.Toplevel):
         if status == "occupied":
             client = str(booking.get("nombre") or booking.get("telefono") or "Reserva").strip()
             return f"OCUPADO\n{client}", self.RED
+        if status == "past_occupied":
+            client = str(booking.get("nombre") or booking.get("telefono") or "Reserva").strip()
+            return f"OCUPADO\n{client}", self.RED
         if status == "blocked":
+            return "BLOQUEADO", self.RED
+        if status == "past_blocked":
             return "BLOQUEADO", self.RED
         if status == "closed":
             return "FUERA DE ATENCIÓN", self.PAST_GRAY
@@ -2873,6 +2924,13 @@ class AdminPanel(tk.Toplevel):
             return
         if status == "blocked":
             self._blocked_slot_dialog(cell)
+            return
+        if status in {"past_occupied", "past_blocked"}:
+            messagebox.showinfo(
+                "Horas",
+                "Ese turno ya pasó. Podés consultar sus datos en “Ver reservas pasadas”.",
+                parent=self,
+            )
             return
         messagebox.showinfo(
             "Horas",

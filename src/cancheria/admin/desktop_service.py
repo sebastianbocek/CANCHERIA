@@ -87,6 +87,48 @@ class DesktopAdminService:
             key=lambda row: (str(row.get("fecha") or ""), str(row.get("hora") or "")),
         )
 
+    def past_bookings(self) -> list[dict[str, Any]]:
+        """Return archived booking rows without mutating the operational calendar."""
+        reader = getattr(self.calendar, "_leer_terminadas", None)
+        if not callable(reader):
+            return []
+        lock = self.calendar.atomic() if hasattr(self.calendar, "atomic") else nullcontext()
+        try:
+            with lock:
+                rows = [dict(row) for row in reader()]
+        except OSError:
+            return []
+        for row in rows:
+            row["_history"] = True
+        return sorted(rows, key=self._booking_history_sort_key, reverse=True)
+
+    def bookings_with_history(self) -> list[dict[str, Any]]:
+        """Keep current/future bookings first, followed by newest archived rows."""
+        return [*self.bookings(), *self.past_bookings()]
+
+    def _booking_history_sort_key(self, row: dict[str, Any]) -> dt.datetime:
+        local_now = getattr(self.calendar, "local_now", None)
+        now = local_now() if callable(local_now) else dt.datetime.now()
+        reference = now.date()
+        text = str(row.get("fecha") or "")
+        parsed = self._parse_booking_date(text, reference.year)
+        if parsed is None:
+            parsed = dt.date.min
+        elif not re.search(r"\b\d{4}\b", text):
+            candidates = []
+            for year in (reference.year - 1, reference.year, reference.year + 1):
+                try:
+                    candidates.append(parsed.replace(year=year))
+                except ValueError:
+                    continue
+            if candidates:
+                parsed = min(candidates, key=lambda candidate: abs(candidate - reference))
+        try:
+            time = dt.time.fromisoformat(str(row.get("hora") or "00:00").strip())
+        except ValueError:
+            time = dt.time.min
+        return dt.datetime.combine(parsed, time)
+
     def stats(self) -> dict[str, int]:
         rows = self.bookings()
         active_rows = [
@@ -1260,7 +1302,7 @@ class DesktopAdminService:
     def _minutes_to_time(value: int) -> str:
         return f"{value // 60:02d}:{value % 60:02d}"
 
-    def day_schedule(self, day: str) -> dict[str, Any]:
+    def day_schedule(self, day: str, *, include_all: bool = False) -> dict[str, Any]:
         """Build the admin hour grid from the same CSV/config used by WhatsApp."""
         selected = self._parse_panel_date(day)
         slot_minutes = max(1, int(getattr(cfg, "CALL_SLOT_DURATION_MINUTES", 60) or 60))
@@ -1284,9 +1326,21 @@ class DesktopAdminService:
             time = str(row.get("hora") or "").strip()
             active_rows[(court, time)] = dict(row)
 
+        if include_all:
+            for row in self.past_bookings():
+                if not self._row_matches_date(row, selected):
+                    continue
+                if str(row.get("estado") or "").strip().casefold() != "finalizada":
+                    continue
+                court = str(
+                    row.get("cancha") or getattr(cfg, "DEFAULT_COURT_NAME", "Cancha 1")
+                ).strip()
+                time = str(row.get("hora") or "").strip()
+                active_rows.setdefault((court, time), dict(row))
+
         attention_day = selected.weekday() in set(cfg.obtener_dias_atencion())
         now = dt.datetime.now()
-        visible_slots = [
+        visible_slots = slots if include_all else [
             time for time in slots
             if dt.datetime.combine(selected, dt.time.fromisoformat(time)) > now
         ]
@@ -1300,8 +1354,12 @@ class DesktopAdminService:
                         str(booking.get("telefono") or "").startswith("ADMIN:CERRADO")
                         or str(booking.get("nombre") or "").strip().upper() == "CERRADO"
                     )
-                    status = "blocked" if blocked else "occupied"
-                elif not attention_day:
+                    historical = bool(booking.get("_history")) or slot_dt <= now
+                    if blocked:
+                        status = "past_blocked" if historical else "blocked"
+                    else:
+                        status = "past_occupied" if historical else "occupied"
+                elif not attention_day or slot_dt <= now:
                     status = "closed"
                 else:
                     status = "free"
