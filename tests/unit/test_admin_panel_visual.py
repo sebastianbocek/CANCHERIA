@@ -61,6 +61,8 @@ def test_admin_panel_visual_contract_keeps_all_features_and_callbacks():
     assert '("daily", "▥  Ingresos por día", 3)' in source
     assert '("methods", "◔  Distribución por método", 2)' in source
     assert '("courts", "▥  Por cancha", 2)' in source
+    assert "full_labels=True" in source
+    assert "text=label if full_labels else label[:16]" in source
 
 
 def test_custom_tab_bar_selects_all_tabs_and_scrolls_when_narrow():

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.33 - 2026-10-10
+
+- Corregido el gráfico **Por cancha** de Caja para mostrar completo el nombre y el tipo de cada recurso, sin cortar textos como “Fútbol 5”.
+
 ## 0.2.32 - 2026-10-10
 
 - Rediseñada visualmente la pestaña **Caja** para reproducir el dashboard aprobado: tarjetas financieras amplias, filtros y acciones equilibrados, tabla personalizada y paneles analíticos en dos columnas.

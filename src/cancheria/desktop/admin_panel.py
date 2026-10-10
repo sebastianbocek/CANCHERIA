@@ -1750,6 +1750,7 @@ class AdminPanel(tk.Toplevel):
         self._draw_cash_rank_chart(
             self.cash_chart_canvases["courts"], snapshot.get("court_income") or {},
             (self.BLUE,), percent=False, limit=3 if self._compact_height else 6,
+            full_labels=True,
         )
 
     def _draw_cash_daily_chart(self, canvas: tk.Canvas, values: dict[str, int]) -> None:
@@ -1788,6 +1789,7 @@ class AdminPanel(tk.Toplevel):
         *,
         percent: bool,
         limit: int = 3,
+        full_labels: bool = False,
     ) -> None:
         canvas.delete("all")
         width, height = max(120, canvas.winfo_width()), max(28, canvas.winfo_height())
@@ -1804,14 +1806,18 @@ class AdminPanel(tk.Toplevel):
         bar_height = max(6, min(10, row_height - 3))
         chart_font = ("Segoe UI", 7 if row_height < 15 else 8)
         amount_font = ("Segoe UI", 7 if row_height < 15 else 8, "bold")
-        label_width = min(135, max(78, width * .31))
+        label_width = (
+            min(180, max(120, width * .38))
+            if full_labels else min(135, max(78, width * .31))
+        )
         amount_width = 88
         for index, (label, value) in enumerate(items):
             y = 2 + index * row_height
             color = colors[index % len(colors)]
             center_y = y + bar_height / 2
             canvas.create_text(
-                2, center_y, text=label[:16], anchor="w", fill=self.NAVY,
+                2, center_y, text=label if full_labels else label[:16],
+                anchor="w", fill=self.NAVY,
                 font=chart_font,
             )
             bar_left, bar_right = label_width, max(label_width + 10, width - amount_width)
