@@ -178,6 +178,34 @@ def test_bookings_with_history_keeps_current_first_and_history_newest_first(monk
     assert rows[1]["_history"] is True
 
 
+def test_past_booking_details_returns_read_only_full_time_range(monkeypatch):
+    service = build_service(monkeypatch, [])
+    service.calendar.finished = [
+        {
+            "reservation_id": "OLD-7",
+            "fecha": "Viernes 09/10/2026",
+            "hora": hour,
+            "cancha": "Cancha 1",
+            "estado": "finalizada",
+            "nombre": "Sebastián",
+            "telefono": "3510000000",
+            "senia_estado": "pagada",
+            "precio_total": "30000",
+            "monto_pendiente": "0",
+            "duracion_horas": "2",
+        }
+        for hour in ("21:00", "22:00")
+    ]
+
+    details = service.past_booking_details("OLD-7", "2026-10-09")
+
+    assert details["slot_count"] == 2
+    assert details["time_range"] == "21:00 a 23:00"
+    assert details["nombre"] == "Sebastián"
+    assert details["estado"] == "finalizada"
+    assert details["monto_pendiente"] == "0"
+
+
 def test_court_catalog_and_sport_update_share_whatsapp_configuration(monkeypatch):
     monkeypatch.setattr(
         service_module.cfg,
@@ -443,6 +471,9 @@ def test_admin_panel_exposes_hours_tab_and_click_editing():
     assert 'text="Mostrar todos"' in source
     assert "bookings_with_history" in source
     assert "include_all=True" in source
+    assert "def _past_booking_details_dialog" in source
+    assert "Detalle del turno pasado" in source
+    assert "Consulta de solo lectura" in source
 
 
 def test_admin_operation_date_reuses_visual_calendar_picker():

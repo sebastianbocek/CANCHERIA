@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.36 - 2026-10-10
+
+- Permite abrir desde Horas una ficha completa de las reservas pasadas al usar **Mostrar todos**.
+- La ficha muestra ID, fecha, rango horario, cancha, cliente, teléfono, estado, pago, total y saldo.
+- La consulta histórica es estrictamente de solo lectura y no expone acciones para guardar, cancelar, desbloquear ni modificar pagos.
+
 ## 0.2.35 - 2026-10-10
 
 - Agrega **Ver reservas pasadas** junto a las acciones de Reservas y pagos, desmarcado por defecto y en modo de solo lectura.

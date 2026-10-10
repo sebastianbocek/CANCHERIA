@@ -2926,11 +2926,7 @@ class AdminPanel(tk.Toplevel):
             self._blocked_slot_dialog(cell)
             return
         if status in {"past_occupied", "past_blocked"}:
-            messagebox.showinfo(
-                "Horas",
-                "Ese turno ya pasó. Podés consultar sus datos en “Ver reservas pasadas”.",
-                parent=self,
-            )
+            self._past_booking_details_dialog(cell)
             return
         messagebox.showinfo(
             "Horas",
@@ -3010,6 +3006,102 @@ class AdminPanel(tk.Toplevel):
         actions.grid(row=len(fields) + 2, column=0, columnspan=2, pady=14)
         self._action_button(actions, "Guardar cambios", save, self.BLUE).pack(side="left", padx=4)
         self._action_button(actions, "Cancelar reserva", cancel, self.RED).pack(side="left", padx=4)
+
+    def _past_booking_details_dialog(self, cell: dict) -> None:
+        booking = cell.get("booking") or {}
+        reservation_id = str(booking.get("reservation_id") or "").strip()
+        details_method = getattr(self.service, "past_booking_details", None)
+        try:
+            details = (
+                details_method(reservation_id, cell.get("day") or "")
+                if callable(details_method) else dict(booking)
+            )
+        except Exception as exc:
+            messagebox.showerror("Horas", str(exc), parent=self)
+            return
+
+        payment_method = getattr(self.service, "booking_payment_status", None)
+        payment_status = (
+            payment_method(details)
+            if callable(payment_method) else str(details.get("senia_estado") or "-")
+        )
+        display_date = str(details.get("fecha") or cell.get("day") or "-")
+        time_range = str(details.get("time_range") or details.get("hora") or cell.get("time") or "-")
+        fields = [
+            ("ID", reservation_id or "-"),
+            ("Fecha", display_date),
+            ("Horario", time_range),
+            ("Cancha", details.get("cancha") or cell.get("court") or "-"),
+            ("Cliente", details.get("nombre") or "-"),
+            ("Teléfono", details.get("telefono") or "-"),
+            ("Estado", details.get("estado") or "finalizada"),
+            ("Pago", payment_status or "-"),
+            ("Total", self._money(details.get("precio_total"))),
+            ("Saldo", self._money(details.get("monto_pendiente"))),
+        ]
+
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Detalle de reserva pasada ID {reservation_id or '-'}")
+        dialog.configure(bg=self.BG)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+
+        card = tk.Frame(
+            dialog,
+            bg=self.SURFACE,
+            highlightbackground=self.BORDER,
+            highlightthickness=1,
+            bd=0,
+        )
+        card.pack(fill="both", expand=True, padx=16, pady=16)
+        tk.Label(
+            card,
+            text="Detalle del turno pasado",
+            font=("Segoe UI", 15, "bold"),
+            fg=self.NAVY,
+            bg=self.SURFACE,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=18, pady=(16, 2))
+        tk.Label(
+            card,
+            text="Consulta de solo lectura · No modifica la reserva ni sus pagos",
+            font=("Segoe UI", 9),
+            fg=self.MUTED,
+            bg=self.SURFACE,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", padx=18, pady=(0, 12))
+        for row_index, (label, value) in enumerate(fields, start=2):
+            tk.Label(
+                card,
+                text=label,
+                font=("Segoe UI", 9, "bold"),
+                fg=self.MUTED,
+                bg=self.SURFACE,
+                anchor="w",
+                width=12,
+            ).grid(row=row_index, column=0, sticky="w", padx=(18, 10), pady=5)
+            tk.Label(
+                card,
+                text=str(value),
+                font=("Segoe UI", 10, "bold" if label in {"Horario", "Estado", "Pago"} else "normal"),
+                fg=self.NAVY,
+                bg=self.SURFACE,
+                anchor="w",
+                width=32,
+            ).grid(row=row_index, column=1, sticky="w", padx=(0, 18), pady=5)
+        tk.Button(
+            card,
+            text="Cerrar",
+            command=dialog.destroy,
+            font=("Segoe UI", 10, "bold"),
+            bg=self.BLUE,
+            fg="white",
+            activebackground="#0F62E8",
+            activeforeground="white",
+            relief="flat",
+            bd=0,
+            padx=24,
+            pady=9,
+            cursor="hand2",
+        ).grid(row=len(fields) + 2, column=0, columnspan=2, pady=(14, 16))
 
     def _blocked_slot_dialog(self, cell: dict) -> None:
         if not messagebox.askyesno(

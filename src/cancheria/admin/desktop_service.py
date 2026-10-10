@@ -1396,6 +1396,42 @@ class DesktopAdminService:
         result["slot_count"] = len(matches)
         return result
 
+    def past_booking_details(self, reservation_id: str, day: str = "") -> dict[str, Any]:
+        """Return a read-only historical booking summary for the Hours grid."""
+        matches = [
+            dict(row) for row in self.past_bookings()
+            if str(row.get("reservation_id") or "").strip() == str(reservation_id).strip()
+            and (not day or self._row_matches_date(row, self._parse_panel_date(day)))
+        ]
+        if not matches:
+            raise ValueError("No se encontraron los datos históricos de ese turno.")
+        matches.sort(key=lambda row: str(row.get("hora") or ""))
+        result = dict(matches[0])
+        result["day"] = self._parse_panel_date(day).isoformat() if day else ""
+        result["slot_count"] = len(matches)
+
+        slot_minutes = max(1, int(getattr(cfg, "CALL_SLOT_DURATION_MINUTES", 60) or 60))
+        start_minutes = self._time_to_minutes(str(matches[0].get("hora") or "00:00"))
+        last_minutes = self._time_to_minutes(str(matches[-1].get("hora") or "00:00"))
+        try:
+            declared_minutes = int(round(float(
+                str(result.get("duracion_horas") or "").replace(",", ".")
+            ) * 60))
+        except (TypeError, ValueError):
+            try:
+                declared_minutes = int(float(result.get("duracion_minutos") or slot_minutes))
+            except (TypeError, ValueError):
+                declared_minutes = slot_minutes
+        end_minutes = max(
+            start_minutes + max(1, declared_minutes),
+            last_minutes + slot_minutes,
+        )
+        result["time_range"] = (
+            f"{self._minutes_to_time(start_minutes)} a "
+            f"{self._minutes_to_time(end_minutes % (24 * 60))}"
+        )
+        return result
+
     def update_booking(
         self,
         reservation_id: str,
