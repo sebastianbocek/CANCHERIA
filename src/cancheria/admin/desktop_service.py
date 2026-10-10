@@ -37,6 +37,12 @@ class DesktopAdminService:
         self.root = Path(root).resolve()
         self.runtime = self.root / "runtime"
         self.calendar = CalendarioLlamadas(str(self.runtime / "calendario_turnos.csv"))
+        try:
+            self.calendar.finalizar_turnos_vencidos()
+        except OSError:
+            # El contador aplica además un filtro defensivo; un bloqueo de E/S
+            # transitorio no debe impedir que CANCHERIA o sus alertas inicien.
+            pass
         self._notification_read_store = JSONStore(
             self.runtime / "admin_notification_read_state.json"
         )
@@ -69,6 +75,12 @@ class DesktopAdminService:
             )
 
     def bookings(self) -> list[dict[str, Any]]:
+        finalize = getattr(self.calendar, "finalizar_turnos_vencidos", None)
+        if callable(finalize):
+            try:
+                finalize()
+            except OSError:
+                pass
         rows = self.calendar.asegurar_ids_reservas()
         return sorted(
             (dict(row) for row in rows),
@@ -77,7 +89,25 @@ class DesktopAdminService:
 
     def stats(self) -> dict[str, int]:
         rows = self.bookings()
-        active = [row for row in rows if str(row.get("estado") or "").strip().lower() in ACTIVE_STATES]
+        active_rows = [
+            row for row in rows
+            if str(row.get("estado") or "").strip().lower() in ACTIVE_STATES
+        ]
+        logical: dict[str, list[dict[str, Any]]] = {}
+        for index, row in enumerate(active_rows):
+            identity = str(row.get("reservation_id") or "").strip() or "|".join(
+                str(row.get(key) or "").strip()
+                for key in ("telefono", "fecha", "hora", "cancha")
+            ) or f"row:{index}"
+            logical.setdefault(identity, []).append(row)
+        has_ended = getattr(self.calendar, "logical_reservation_has_ended", None)
+        if callable(has_ended):
+            logical = {
+                identity: group
+                for identity, group in logical.items()
+                if not has_ended(group)
+            }
+        active = [row for group in logical.values() for row in group]
         pending = [
             row for row in active
             if str(row.get("senia_estado") or "").strip().lower()
@@ -91,15 +121,32 @@ class DesktopAdminService:
             )
             for row in pending
         }
-        today = dt.date.today().strftime("%d/%m")
-        today_count = sum(today in str(row.get("fecha") or "") for row in active)
+        local_now = getattr(self.calendar, "local_now", None)
+        today_date = local_now().date() if callable(local_now) else dt.date.today()
+        today = today_date.strftime("%d/%m")
+        today_count = sum(
+            any(today in str(row.get("fecha") or "") for row in group)
+            for group in logical.values()
+        )
         return {
-            "active": len(active),
+            "active": len(logical),
             "pending": len(pending_reservations),
             "today": today_count,
             "cases": len(self.human_cases()),
             "tournaments": self.pending_tournament_registrations(),
         }
+
+    def booking_payment_status(self, row: dict[str, Any]) -> str:
+        """Expose total payment distinctly without changing booking lifecycle state."""
+        deposit_state = str(row.get("senia_estado") or "").strip()
+        pending_raw = str(row.get("monto_pendiente") or "").strip()
+        if (
+            deposit_state.casefold() == "pagada"
+            and pending_raw
+            and self._cash_amount(pending_raw) == 0
+        ):
+            return "total pagado"
+        return deposit_state
 
     def notification_counts(self, stats: dict[str, int] | None = None) -> dict[str, int]:
         """Return unresolved administrative work grouped by panel section."""

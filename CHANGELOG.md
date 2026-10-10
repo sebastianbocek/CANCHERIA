@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.34 - 2026-10-10
+
+- Finaliza automáticamente cada reserva cuando termina su duración completa, usando la zona horaria configurada del complejo.
+- Mueve los turnos vencidos al historial con estado `finalizada`, conservando pagos, importes e identificación; los estados terminales como `cancelado` se preservan.
+- Corrige el contador de reservas activas para excluir turnos vencidos y contar una sola vez las reservas que ocupan varias filas.
+- Ejecuta la finalización al iniciar el servicio administrativo y durante cada actualización periódica o manual del panel.
+- Distingue visualmente `total pagado` de una seña pagada sin finalizar anticipadamente la reserva.
+
 ## 0.2.33 - 2026-10-10
 
 - Corregido el gráfico **Por cancha** de Caja para mostrar completo el nombre y el tipo de cada recurso, sin cortar textos como “Fútbol 5”.

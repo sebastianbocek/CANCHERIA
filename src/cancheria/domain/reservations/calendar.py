@@ -26,6 +26,7 @@ import argparse
 import threading
 from contextlib import contextmanager
 from typing import Optional, Tuple, List
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def _configure_utf8_console_streams() -> None:
@@ -55,6 +56,7 @@ from cancheria.config.legacy_config import (
     BOOKING_STATUS_PENDING,
     BOOKING_STATUS_RESERVED,
     FINISHED_BOOKINGS_CSV,
+    LOCAL_TIMEZONE,
     MAX_BOOKING_SEARCH_DAYS,
     UPCOMING_BOOKINGS_LIMIT,
     descripcion_atencion_mensaje,
@@ -71,6 +73,22 @@ MAX_SLOTS_BUSQUEDA = MAX_BOOKING_SEARCH_DAYS
 CANCHA_DEFAULT = DEFAULT_COURT_NAME
 
 FIELDNAMES = BOOKING_FIELDNAMES
+
+
+def _local_timezone() -> datetime.tzinfo:
+    try:
+        return ZoneInfo(str(LOCAL_TIMEZONE or "America/Argentina/Cordoba"))
+    except (ZoneInfoNotFoundError, ValueError):
+        return datetime.timezone(datetime.timedelta(hours=-3))
+
+
+def _local_now(value: Optional[datetime.datetime] = None) -> datetime.datetime:
+    timezone = _local_timezone()
+    if value is None:
+        return datetime.datetime.now(timezone)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone)
+    return value.astimezone(timezone)
 
 
 def _parse_hora(hora_str: str) -> Optional[datetime.time]:
@@ -101,8 +119,16 @@ def _parse_fecha_simple(
     if not fecha_str:
         return None
 
-    hoy = datetime.date.today()
+    hoy = _local_now().date()
     anio = anio_referencia if anio_referencia else hoy.year
+
+    # Aceptar también la fecha ISO usada por los formularios administrativos.
+    m = re.search(r'\b(\d{4})-(\d{1,2})-(\d{1,2})\b', fecha_str)
+    if m:
+        try:
+            return datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            pass
 
     # Buscar patrón DD/MM/YYYY
     m = re.search(r'(\d{1,2})/(\d{1,2})/(\d{4})', fecha_str)
@@ -155,20 +181,59 @@ def _extraer_fecha_hora_de_row(
     return fecha_parseada, hora
 
 
-def _row_ya_paso(row: dict) -> bool:
-    """Determina si una fila del calendario ya pasó respecto al datetime actual"""
+def _duracion_row_minutos(row: dict) -> int:
+    try:
+        minutes = int(round(float(str(row.get("duracion_horas") or "").replace(",", ".")) * 60))
+    except (TypeError, ValueError):
+        try:
+            minutes = int(round(float(row.get("duracion_minutos") or DURACION_MINUTOS)))
+        except (TypeError, ValueError):
+            minutes = DURACION_MINUTOS
+    return max(1, minutes)
+
+
+def _row_inicio_local(
+    row: dict,
+    reference: Optional[datetime.datetime] = None,
+) -> Optional[datetime.datetime]:
     fecha, hora = _extraer_fecha_hora_de_row(row, asumir_proximo_anio_si_paso=False)
-
     if not fecha or not hora:
-        return False
+        return None
+    fecha_texto = str(row.get("fecha") or "")
+    referencia = _local_now(reference).date()
+    if not re.search(r'\b\d{4}\b', fecha_texto):
+        candidates = []
+        for year in (referencia.year - 1, referencia.year, referencia.year + 1):
+            try:
+                candidates.append(fecha.replace(year=year))
+            except ValueError:
+                continue
+        if candidates:
+            fecha = min(candidates, key=lambda candidate: abs(candidate - referencia))
+    return datetime.datetime.combine(fecha, hora, tzinfo=_local_timezone())
 
-    ahora = datetime.datetime.now()
 
-    # Crear datetime combinado
-    fecha_hora_row = datetime.datetime.combine(fecha, hora)
+def _reserva_fin_local(
+    rows: List[dict],
+    reference: Optional[datetime.datetime] = None,
+) -> Optional[datetime.datetime]:
+    starts = [
+        value for value in (_row_inicio_local(row, reference) for row in rows)
+        if value is not None
+    ]
+    if not starts:
+        return None
+    duration = max((_duracion_row_minutos(row) for row in rows), default=DURACION_MINUTOS)
+    return min(starts) + datetime.timedelta(minutes=duration)
 
-    # Consideramos que ya pasó si la fecha/hora es anterior al momento actual
-    return fecha_hora_row < ahora
+
+def _row_ya_paso(
+    row: dict,
+    ahora: Optional[datetime.datetime] = None,
+) -> bool:
+    """Indica si terminó el turno completo, no solo si pasó su hora de inicio."""
+    end = _reserva_fin_local([row], ahora)
+    return bool(end and end <= _local_now(ahora))
 
 
 def _texto_a_fecha(texto: str) -> Optional[datetime.date]:
@@ -292,8 +357,8 @@ def _slots_del_dia(fecha: datetime.date) -> List[datetime.time]:
 def _slot_ya_paso(fecha: datetime.date, hora: datetime.time) -> bool:
     if not fecha or not hora:
         return False
-    ahora = datetime.datetime.now()
-    return datetime.datetime.combine(fecha, hora) <= ahora
+    ahora = _local_now()
+    return datetime.datetime.combine(fecha, hora, tzinfo=_local_timezone()) <= ahora
 
 
 class CalendarioLlamadas:
@@ -593,6 +658,33 @@ class CalendarioLlamadas:
             print(f"[Calendario] Error leyendo terminadas: {e}")
         return rows
 
+    def _escribir_terminadas(self, rows: List[dict]) -> None:
+        directory = os.path.dirname(os.path.abspath(self.terminadas_path))
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        temp_path = (
+            f"{self.terminadas_path}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        try:
+            with open(temp_path, 'w', newline='', encoding='utf-8') as handle:
+                writer = csv.DictWriter(
+                    handle, fieldnames=FIELDNAMES, extrasaction='ignore'
+                )
+                writer.writeheader()
+                writer.writerows(rows)
+                handle.flush()
+                try:
+                    os.fsync(handle.fileno())
+                except OSError:
+                    pass
+            os.replace(temp_path, self.terminadas_path)
+        finally:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+
     def _ordenar_filas(self, rows: List[dict]) -> List[dict]:
         """Ordena las filas por fecha y hora (las más próximas primero)"""
         def clave_ordenamiento(row):
@@ -609,71 +701,134 @@ class CalendarioLlamadas:
         rows.sort(key=clave_ordenamiento)
         return rows
 
-    def _mover_terminadas(self) -> int:
-        """Mueve las filas ya pasadas al archivo de terminadas y las elimina del principal"""
+    @staticmethod
+    def _logical_reservation_key(row: dict, index: int) -> tuple:
+        reservation_id = str(row.get("reservation_id") or "").strip()
+        if reservation_id:
+            return ("reservation", reservation_id)
+        return (
+            "row",
+            str(row.get("telefono") or row.get("nombre") or "").strip().casefold(),
+            str(row.get("fecha") or "").strip(),
+            str(row.get("hora") or "").strip(),
+            str(row.get("cancha") or "").strip().casefold(),
+            index,
+        )
+
+    @staticmethod
+    def _finished_row_key(row: dict) -> tuple:
+        reservation_id = str(row.get("reservation_id") or "").strip()
+        if reservation_id:
+            return (
+                "reservation", reservation_id,
+                str(row.get("fecha") or "").strip(),
+                str(row.get("hora") or "").strip(),
+                str(row.get("cancha") or "").strip().casefold(),
+            )
+        return (
+            "legacy",
+            str(row.get("fecha") or "").strip(),
+            str(row.get("hora") or "").strip(),
+            str(row.get("telefono") or "").strip(),
+            str(row.get("cancha") or "").strip().casefold(),
+        )
+
+    def local_now(self) -> datetime.datetime:
+        return _local_now()
+
+    def logical_reservation_has_ended(
+        self,
+        rows: List[dict],
+        now: Optional[datetime.datetime] = None,
+    ) -> bool:
+        end = _reserva_fin_local(list(rows or []), now)
+        return bool(end and end <= _local_now(now))
+
+    def finalizar_turnos_vencidos(
+        self,
+        now: Optional[datetime.datetime] = None,
+    ) -> int:
+        """Archiva de forma atómica los turnos cuyo bloque completo ya terminó."""
+        with self.atomic():
+            return self._mover_terminadas(now=now)
+
+    def _mover_terminadas(
+        self,
+        now: Optional[datetime.datetime] = None,
+    ) -> int:
+        """Mueve bloques terminados al historial preservando sus datos financieros."""
         rows = self._leer_todos()
 
         if not rows:
             print("[Calendario] No hay filas para procesar")
             return 0
 
-        ahora = datetime.datetime.now()
-        print(f"[Calendario] Procesando {len(rows)} filas. Hora actual: {ahora.strftime('%Y-%m-%d %H:%M:%S')}")
+        ids_changed = self._ensure_reservation_ids(rows)
+        ahora = _local_now(now)
+        print(
+            f"[Calendario] Procesando {len(rows)} filas. "
+            f"Hora actual: {ahora.strftime('%Y-%m-%d %H:%M:%S %Z')}"
+        )
 
-        # Separar filas que ya pasaron de las que no
-        filas_activas = []
-        filas_terminadas = []
+        groups: Dict[tuple, List[dict]] = {}
+        for index, row in enumerate(rows):
+            groups.setdefault(self._logical_reservation_key(row, index), []).append(row)
 
-        for row in rows:
-            fecha, hora = _extraer_fecha_hora_de_row(row, asumir_proximo_anio_si_paso=False)
-
-            if fecha and hora:
-                fecha_hora_row = datetime.datetime.combine(fecha, hora)
-
-                # Si la fecha/hora es anterior al momento actual
-                if fecha_hora_row < ahora:
-                    print(f"   [MOVER] {row.get('fecha')} {row.get('hora')} - {row.get('nombre', '?')} (ya pasó)")
-                    filas_terminadas.append(row)
-                else:
-                    print(f"   [MANTENER] {row.get('fecha')} {row.get('hora')} - {row.get('nombre', '?')} (futuro)")
-                    filas_activas.append(row)
-            else:
-                print(f"   [WARN] No se pudo parsear fecha/hora: {row.get('fecha')} {row.get('hora')}")
-                filas_activas.append(row)
+        filas_activas: List[dict] = []
+        filas_terminadas: List[dict] = []
+        active_statuses = {
+            str(status or "").strip().casefold() for status in ACTIVE_BOOKING_STATUSES
+        }
+        for group in groups.values():
+            end = _reserva_fin_local(group, ahora)
+            if end is None:
+                for row in group:
+                    print(
+                        f"   [WARN] No se pudo parsear fecha/hora: "
+                        f"{row.get('fecha')} {row.get('hora')}"
+                    )
+                filas_activas.extend(group)
+                continue
+            if end > ahora:
+                filas_activas.extend(group)
+                continue
+            for row in group:
+                original_status = str(row.get("estado") or "").strip().casefold()
+                if original_status in active_statuses:
+                    row["estado"] = "finalizada"
+                filas_terminadas.append(row)
+                print(
+                    f"   [FINALIZAR] {row.get('fecha')} {row.get('hora')} - "
+                    f"{row.get('nombre', '?')} (fin {end.strftime('%H:%M')})"
+                )
 
         if filas_terminadas:
-            # Leer filas existentes en terminadas
             terminadas_existentes = self._leer_terminadas()
-
-            # Agregar las nuevas terminadas (evitar duplicados)
-            ids_existentes = {f"{r.get('fecha')}_{r.get('hora')}_{r.get('telefono')}" for r in terminadas_existentes}
-
+            ids_existentes = {
+                self._finished_row_key(row) for row in terminadas_existentes
+            }
             for row in filas_terminadas:
-                row_id = f"{row.get('fecha')}_{row.get('hora')}_{row.get('telefono')}"
+                row_id = self._finished_row_key(row)
                 if row_id not in ids_existentes:
                     terminadas_existentes.append(row)
                     ids_existentes.add(row_id)
 
-            # Escribir todas las terminadas
             try:
-                with open(self.terminadas_path, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.DictWriter(f, fieldnames=FIELDNAMES, extrasaction='ignore')
-                    writer.writeheader()
-                    writer.writerows(terminadas_existentes)
-
-                print(f"[Calendario] {len(filas_terminadas)} llamadas movidas a {self.terminadas_path}")
+                self._escribir_terminadas(terminadas_existentes)
             except Exception as e:
                 print(f"[Calendario] Error moviendo terminadas: {e}")
                 return 0
 
-            # Actualizar el archivo principal con solo las filas activas
             self._escribir_todos(filas_activas, ordenar=True)
+            print(
+                f"[Calendario] {len(filas_terminadas)} turnos finalizados "
+                f"movidos a {self.terminadas_path}"
+            )
             return len(filas_terminadas)
-        else:
-            print("[Calendario] No hay llamadas terminadas para mover")
-            # Aún así, ordenar el archivo
-            self._escribir_todos(rows, ordenar=True)
 
+        if ids_changed:
+            self._escribir_todos(rows, ordenar=True)
+        print("[Calendario] No hay llamadas terminadas para mover")
         return 0
 
     def _cancha_row(self, row: dict) -> str:
@@ -881,7 +1036,7 @@ class CalendarioLlamadas:
             print(f"   - {row.get('fecha')} {row.get('hora')} | {row.get('nombre')} | estado: {row.get('estado')}")
 
         # Mover las llamadas terminadas
-        movidas = self._mover_terminadas()
+        movidas = self.finalizar_turnos_vencidos()
 
         # Mostrar resultado final
         rows_final = self._leer_todos()

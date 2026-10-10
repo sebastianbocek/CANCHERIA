@@ -893,8 +893,8 @@ class AdminPanel(tk.Toplevel):
 
         columns = ("id", "fecha", "hora", "cancha", "nombre", "telefono", "estado", "senia", "saldo")
         self.booking_tree = ttk.Treeview(self.bookings_tab, columns=columns, show="headings", selectmode="browse", style="Admin.Treeview")
-        headings = {"id": "#  ID", "fecha": "▣  Fecha", "hora": "◷  Hora", "cancha": "⚽  Cancha", "nombre": "♙  Cliente", "telefono": "☎  Teléfono", "estado": "◇  Estado", "senia": "▤  Seña", "saldo": "$  Saldo"}
-        widths = {"id": 55, "fecha": 105, "hora": 65, "cancha": 105, "nombre": 155, "telefono": 125, "estado": 90, "senia": 105, "saldo": 90}
+        headings = {"id": "#  ID", "fecha": "▣  Fecha", "hora": "◷  Hora", "cancha": "⚽  Cancha", "nombre": "♙  Cliente", "telefono": "☎  Teléfono", "estado": "◇  Estado", "senia": "▤  Pago", "saldo": "$  Saldo"}
+        widths = {"id": 55, "fecha": 105, "hora": 65, "cancha": 105, "nombre": 155, "telefono": 125, "estado": 90, "senia": 115, "saldo": 90}
         for key in columns:
             self.booking_tree.heading(key, text=headings[key])
             self.booking_tree.column(key, width=widths[key], anchor="center" if key not in {"nombre", "telefono"} else "w")
@@ -2413,9 +2413,14 @@ class AdminPanel(tk.Toplevel):
     def _refresh_bookings(self) -> None:
         self.booking_tree.delete(*self.booking_tree.get_children())
         for index, row in enumerate(self.service.bookings()):
+            payment_status = getattr(self.service, "booking_payment_status", None)
+            payment_label = (
+                payment_status(row)
+                if callable(payment_status) else row.get("senia_estado", "")
+            )
             self.booking_tree.insert("", "end", iid=f"booking:{row.get('reservation_id')}:{index}", values=(
                 row.get("reservation_id", ""), row.get("fecha", ""), row.get("hora", ""), row.get("cancha", ""),
-                row.get("nombre", ""), row.get("telefono", ""), row.get("estado", ""), row.get("senia_estado", ""),
+                row.get("nombre", ""), row.get("telefono", ""), row.get("estado", ""), payment_label,
                 row.get("monto_pendiente", ""),
             ))
 

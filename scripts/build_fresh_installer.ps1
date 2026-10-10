@@ -215,7 +215,7 @@ if (-not (Test-Path -LiteralPath $Installer -PathType Leaf)) {
 }
 $Hash = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash
 & $BuildPython (Join-Path $Root "scripts\build_update_packages.py") `
-    --payload $PayloadRoot --platform windows --version "0.2.33"
+    --payload $PayloadRoot --platform windows --version "0.2.34"
 if ($LASTEXITCODE -ne 0) { throw "Falló la creación del paquete de actualización Windows" }
 Write-Output "INSTALLER=$Installer"
 Write-Output "SHA256=$Hash"
