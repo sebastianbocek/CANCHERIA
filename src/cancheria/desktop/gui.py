@@ -295,6 +295,7 @@ class CancheriaDesktop(tk.Tk):
         self.profile_dir = self.root_dir / "wa_profile"
         self.manual_path = self.root_dir / "docs" / "MANUAL_DE_USO_CANCHERIA_DUENOS_ENCARGADOS.pdf"
         self.process: subprocess.Popen[str] | None = None
+        self.configurator_process: subprocess.Popen[str] | None = None
         self.admin_window: tk.Toplevel | None = None
         self.settings_window: tk.Toplevel | None = None
         self.available_update: ReleaseInfo | None = None
@@ -952,7 +953,7 @@ class CancheriaDesktop(tk.Tk):
         if os.name == "nt":
             kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         try:
-            subprocess.Popen(command, **kwargs)
+            self.configurator_process = subprocess.Popen(command, **kwargs)
             self._append_log("⚙ Configurador de CANCHERIA abierto.")
         except Exception as exc:
             messagebox.showerror("CANCHERIA", f"No pude abrir el configurador:\n{exc}")
@@ -1326,6 +1327,7 @@ class CancheriaDesktop(tk.Tk):
         ):
             return
 
+        self._stop_configurator_for_update()
         self._stop_process()
         self.btn_check_update.configure(state="disabled")
         self.btn_install_update.configure(state="disabled")
@@ -1346,6 +1348,24 @@ class CancheriaDesktop(tk.Tk):
             self.after(0, lambda: self._launch_prepared_update(release, prepared))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _stop_configurator_for_update(self) -> None:
+        """Close the configurator so Windows can replace its executable."""
+        process = self.configurator_process
+        if process is None or process.poll() is not None:
+            self.configurator_process = None
+            return
+        try:
+            process.terminate()
+            process.wait(timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                process.kill()
+                process.wait(timeout=3)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        finally:
+            self.configurator_process = None
 
     def _update_install_failed(self, message: str) -> None:
         if self.settings_window is not None and self.settings_window.winfo_exists():

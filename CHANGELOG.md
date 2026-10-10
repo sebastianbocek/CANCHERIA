@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.29 - 2026-10-09
+
+- Corrige instalaciones parciales en las que el ejecutable se actualizaba pero los módulos Python externos quedaban en la versión anterior.
+- Cierra el configurador abierto antes de iniciar una actualización para que Windows pueda reemplazar `configurador_cancheria.exe`.
+- Verifica que todos los ejecutables sean reemplazables antes de modificar el primer archivo, evitando que una actualización fallida deje versiones mezcladas.
+- Repara en la instalación el servicio externo que persiste la lectura de las notificaciones de Administración.
+
 ## 0.2.28 - 2026-10-09
 
 - Convierte los contadores rojos de Administración en notificaciones leídas/no leídas sin alterar los contadores operativos reales.

@@ -121,6 +121,32 @@ def test_update_helper_replaces_program_and_preserves_configuration(tmp_path: Pa
     assert legacy.read_text() == "BUSINESS = 'client-value'"
 
 
+def test_windows_update_preflight_reports_locked_executable_before_replacing_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install = tmp_path / "install"
+    (install / "src" / "cancheria").mkdir(parents=True)
+    (install / "WPSetter.py").write_text("old agent", encoding="utf-8")
+    executable = install / "configurador_cancheria.exe"
+    executable.write_bytes(b"old exe")
+    files = {"WPSetter.py": "hash", "configurador_cancheria.exe": "hash"}
+
+    monkeypatch.setattr(update_helper.os, "name", "nt")
+    real_replace = update_helper.os.replace
+
+    def locked_replace(source, destination):
+        if Path(source) == executable:
+            raise PermissionError("locked")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(update_helper.os, "replace", locked_replace)
+    with pytest.raises(UpdateError, match="sigue abierto"):
+        update_helper._preflight_windows_executables(install, files)
+
+    assert (install / "WPSetter.py").read_text(encoding="utf-8") == "old agent"
+    assert executable.read_bytes() == b"old exe"
+
+
 def test_backup_contains_private_data_but_skips_browser_cache(tmp_path: Path) -> None:
     install = tmp_path / "CANCHERIA"
     (install / "runtime").mkdir(parents=True)

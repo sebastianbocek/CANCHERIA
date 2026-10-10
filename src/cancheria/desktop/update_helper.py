@@ -16,6 +16,60 @@ from pathlib import Path
 from cancheria.desktop.update_service import UpdateError, validate_staged_update
 
 
+def _stop_installed_configurator(install_dir: Path) -> None:
+    """Stop only the configurator that belongs to this installation on Windows."""
+    if os.name != "nt":
+        return
+    target = str((Path(install_dir) / "configurador_cancheria.exe").resolve())
+    script = (
+        "$target=[IO.Path]::GetFullPath($args[0]);"
+        "Get-CimInstance Win32_Process -Filter \"Name='configurador_cancheria.exe'\" "
+        "-ErrorAction SilentlyContinue | Where-Object { $_.ExecutablePath -and "
+        "([IO.Path]::GetFullPath($_.ExecutablePath) -eq $target) } | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+    )
+    try:
+        subprocess.run(
+            [
+                "powershell.exe", "-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "Bypass", "-Command", script, target,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def _preflight_windows_executables(
+    install_dir: Path, files: dict[str, str]
+) -> None:
+    """Detect locked executables before replacing any installation file."""
+    if os.name != "nt":
+        return
+    for relative in files:
+        destination = _safe_destination(install_dir, relative)
+        if destination.suffix.casefold() != ".exe" or not destination.exists():
+            continue
+        probe = destination.with_name(destination.name + ".cancheria-lock-check")
+        try:
+            probe.unlink(missing_ok=True)
+            os.replace(destination, probe)
+            os.replace(probe, destination)
+        except OSError as exc:
+            if probe.exists() and not destination.exists():
+                try:
+                    os.replace(probe, destination)
+                except OSError:
+                    pass
+            raise UpdateError(
+                f"No se puede actualizar porque {destination.name} sigue abierto. "
+                "Cerralo y volvé a intentar. No se modificó ningún archivo."
+            ) from exc
+
+
 def _wait_for_parent(parent_pid: int, timeout: float = 120.0) -> None:
     if os.name == "nt":
         _wait_for_windows_process(parent_pid, timeout)
@@ -108,6 +162,8 @@ def apply_staged_update(
         raise UpdateError("La carpeta seleccionada no parece una instalación válida de CANCHERIA.")
     manifest = validate_staged_update(staged_dir, version, target_platform)
     files: dict[str, str] = manifest["files"]
+    _stop_installed_configurator(install_dir)
+    _preflight_windows_executables(install_dir, files)
     rollback_dir = Path(tempfile.mkdtemp(prefix="cancheria-rollback-"))
     replaced: list[str] = []
     newly_created: list[str] = []
