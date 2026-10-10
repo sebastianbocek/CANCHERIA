@@ -616,8 +616,13 @@ class AdminPanel(tk.Toplevel):
         self._last_notification_counts: dict[str, int] | None = None
         self._initial_notification_tab_selected = False
         self.title("CANCHERIA · Administración")
-        self.geometry("1240x780")
-        self.minsize(940, 620)
+        screen_width = max(1100, self.winfo_screenwidth())
+        screen_height = max(720, self.winfo_screenheight())
+        self._compact_height = screen_height < 900
+        window_width = min(1460, screen_width - 50)
+        window_height = min(920, screen_height - 12)
+        self.geometry(f"{window_width}x{window_height}")
+        self.minsize(1100, 700)
         self.configure(bg=self.BG)
         self._apply_cancheria_icon()
         self.transient(parent)
@@ -656,14 +661,17 @@ class AdminPanel(tk.Toplevel):
             highlightbackground=self.BORDER,
             highlightthickness=1,
         )
-        header.pack(fill="x", padx=20, pady=(18, 10))
+        header.pack(
+            fill="x", padx=20,
+            pady=((10, 6) if self._compact_height else (18, 10)),
+        )
         tk.Label(
             header,
             text="Panel de administración",
-            font=("Segoe UI", 24, "bold"),
+            font=("Segoe UI", 20 if self._compact_height else 24, "bold"),
             fg=self.NAVY,
             bg=self.SURFACE,
-        ).pack(side="left", padx=24, pady=18)
+        ).pack(side="left", padx=24, pady=10 if self._compact_height else 18)
         tk.Button(
             header,
             text="↻  Actualizar",
@@ -676,12 +684,12 @@ class AdminPanel(tk.Toplevel):
             relief="flat",
             bd=0,
             padx=20,
-            pady=11,
+            pady=8 if self._compact_height else 11,
             cursor="hand2",
         ).pack(side="right", padx=20)
 
         cards = tk.Frame(self, bg=self.BG)
-        cards.pack(fill="x", padx=15, pady=(0, 12))
+        cards.pack(fill="x", padx=15, pady=(0, 7 if self._compact_height else 12))
         labels = (
             ("active", "Reservas activas", "▣", "#10B981", "#E1F7EE"),
             ("pending", "Pagos pendientes", "▤", "#7C3AED", "#F0EAFE"),
@@ -696,26 +704,30 @@ class AdminPanel(tk.Toplevel):
                 highlightbackground=self.BORDER,
                 highlightthickness=1,
                 bd=0,
-                height=112,
+                height=84 if self._compact_height else 112,
             )
             card.grid(row=0, column=index, sticky="nsew", padx=5)
             card.grid_propagate(False)
-            icon_holder = tk.Frame(card, bg=icon_bg, width=64, height=64)
-            icon_holder.pack(side="left", padx=(20, 15), pady=20)
+            icon_size = 48 if self._compact_height else 64
+            icon_holder = tk.Frame(card, bg=icon_bg, width=icon_size, height=icon_size)
+            icon_holder.pack(
+                side="left", padx=((14, 12) if self._compact_height else (20, 15)),
+                pady=17 if self._compact_height else 20,
+            )
             icon_holder.pack_propagate(False)
             tk.Label(
                 icon_holder,
                 text=icon,
-                font=("Segoe UI Symbol", 24, "bold"),
+                font=("Segoe UI Symbol", 20 if self._compact_height else 24, "bold"),
                 fg=icon_color,
                 bg=icon_bg,
             ).pack(expand=True)
             values = tk.Frame(card, bg=self.SURFACE)
-            values.pack(side="left", fill="y", pady=16)
+            values.pack(side="left", fill="y", pady=9 if self._compact_height else 16)
             tk.Label(
                 values,
                 textvariable=self.summary_vars[key],
-                font=("Segoe UI", 24, "bold"),
+                font=("Segoe UI", 20 if self._compact_height else 24, "bold"),
                 fg=self.BLUE,
                 bg=self.SURFACE,
                 anchor="w",
@@ -1147,7 +1159,7 @@ class AdminPanel(tk.Toplevel):
         return "break"
 
     def _build_cash(self) -> None:
-        """Build the financial dashboard without changing reservation workflows."""
+        """Build the approved financial dashboard without changing its business logic."""
         self.cash_tab.configure(bg=self.BG)
         today = dt.date.today()
         self.cash_start_var = tk.StringVar(value=today.replace(day=1).isoformat())
@@ -1155,186 +1167,198 @@ class AdminPanel(tk.Toplevel):
         self.cash_range_var = tk.StringVar(value="Mes actual")
         self.cash_method_var = tk.StringVar(value="Todos")
         self.cash_page = 0
-        self.cash_page_size = 50
+        self.cash_page_size = 8
         self.cash_summary_vars = {
-            key: tk.StringVar(value="$ 0")
-            for key in ("today", "month", "pending", "future")
+            key: tk.StringVar(value="$ 0") for key in ("today", "month", "pending", "future")
         }
 
         cards = tk.Frame(self.cash_tab, bg=self.BG)
-        cards.pack(fill="x", padx=12, pady=(12, 8))
+        cards.pack(
+            fill="x", padx=14,
+            pady=((9, 7) if self._compact_height else (14, 10)),
+        )
         card_specs = (
             ("today", "Ingresos de hoy", "$", "#079455", "#E1F7EE"),
             ("month", "Ingresos del mes", "▣", self.BLUE, "#E7F0FF"),
-            ("pending", "Saldos pendientes", "$", self.ORANGE, "#FFF3E6"),
+            ("pending", "Saldos pendientes", "$", "#F05A16", "#FFF3E6"),
             ("future", "Reservas futuras", "▦", "#7C3AED", "#F0EAFE"),
         )
         for column, (key, title, icon, color, icon_bg) in enumerate(card_specs):
             cards.grid_columnconfigure(column, weight=1, uniform="cash-card")
             card = tk.Frame(
-                cards, bg=self.SURFACE, highlightbackground=self.BORDER,
-                highlightthickness=1, height=86,
+                cards, bg=self.SURFACE, highlightbackground="#E6EDF7",
+                highlightthickness=1, height=90 if self._compact_height else 108,
             )
-            card.grid(row=0, column=column, sticky="nsew", padx=4)
+            card.grid(row=0, column=column, sticky="nsew", padx=5)
             card.grid_propagate(False)
-            icon_holder = tk.Frame(card, bg=icon_bg, width=54, height=54)
-            icon_holder.pack(side="left", padx=(14, 12), pady=15)
+            cash_icon_size = 54 if self._compact_height else 66
+            icon_holder = tk.Frame(card, bg=icon_bg, width=cash_icon_size, height=cash_icon_size)
+            icon_holder.pack(
+                side="left", padx=((14, 13) if self._compact_height else (20, 18)),
+                pady=17 if self._compact_height else 20,
+            )
             icon_holder.pack_propagate(False)
             tk.Label(
                 icon_holder, text=icon, bg=icon_bg, fg=color,
-                font=("Segoe UI Symbol", 21, "bold"),
+                font=("Segoe UI Symbol", 21 if self._compact_height else 25, "bold"),
             ).pack(expand=True)
             value_area = tk.Frame(card, bg=self.SURFACE)
-            value_area.pack(side="left", fill="y", pady=12)
+            value_area.pack(side="left", fill="y", pady=12 if self._compact_height else 18)
             tk.Label(
                 value_area, text=title, bg=self.SURFACE, fg=self.MUTED,
-                font=("Segoe UI", 9), anchor="w",
+                font=("Segoe UI", 10), anchor="w",
             ).pack(anchor="w")
             tk.Label(
                 value_area, textvariable=self.cash_summary_vars[key],
-                bg=self.SURFACE, fg=color, font=("Segoe UI", 17, "bold"),
-                anchor="w",
-            ).pack(anchor="w", pady=(2, 0))
+                bg=self.SURFACE, fg=color,
+                font=("Segoe UI", 18 if self._compact_height else 21, "bold"), anchor="w",
+            ).pack(anchor="w", pady=(4, 0))
 
         toolbar = tk.Frame(
-            self.cash_tab, bg=self.SURFACE, highlightbackground=self.BORDER,
+            self.cash_tab, bg=self.SURFACE, highlightbackground="#E6EDF7",
             highlightthickness=1,
         )
-        toolbar.pack(fill="x", padx=16, pady=(0, 8))
+        toolbar.pack(fill="x", padx=14, pady=(0, 7 if self._compact_height else 10))
+        toolbar.grid_columnconfigure(0, weight=1)
         filters = tk.Frame(toolbar, bg=self.SURFACE)
-        filters.pack(side="left", padx=12, pady=9)
+        filters.grid(row=0, column=0, sticky="w", padx=(16, 6), pady=7 if self._compact_height else 10)
         tk.Label(
             filters, text="Período:", bg=self.SURFACE, fg=self.NAVY,
-            font=("Segoe UI", 9, "bold"),
-        ).pack(side="left", padx=(0, 7))
+            font=("Segoe UI", 10, "bold"),
+        ).pack(side="left", padx=(0, 8))
         range_combo = ttk.Combobox(
             filters, textvariable=self.cash_range_var,
             values=("Hoy", "Ayer", "Últimos 7 días", "Mes actual", "Mes anterior", "Rango personalizado"),
-            state="readonly", width=17,
+            state="readonly", width=17, font=("Segoe UI", 10),
         )
-        range_combo.pack(side="left", padx=(0, 5), ipady=4)
+        range_combo.pack(side="left", padx=(0, 12), ipady=6)
         range_combo.bind("<<ComboboxSelected>>", lambda _event: self._apply_cash_period())
+
+        self.cash_method_buttons: dict[str, tk.Button] = {}
+        for method_name in ("Todos", "Efectivo", "Transferencia"):
+            button = tk.Button(
+                filters, text=method_name,
+                command=lambda value=method_name: self._set_cash_method(value),
+                font=("Segoe UI", 9), relief="flat", bd=0, padx=15,
+                pady=7 if self._compact_height else 9,
+                cursor="hand2",
+            )
+            button.pack(side="left", padx=3)
+            self.cash_method_buttons[method_name] = button
+        self._style_cash_method_buttons()
+
+        self.cash_custom_dates_holder = tk.Frame(toolbar, bg=self.SURFACE)
+        self.cash_custom_dates_holder.grid(row=1, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 9))
         self.cash_start_entry = self._cash_date_control(
-            filters, "Desde", self.cash_start_var, "Fecha inicial de Caja"
+            self.cash_custom_dates_holder, "Desde", self.cash_start_var, "Fecha inicial de Caja"
         )
         self.cash_end_entry = self._cash_date_control(
-            filters, "Hasta", self.cash_end_var, "Fecha final de Caja"
+            self.cash_custom_dates_holder, "Hasta", self.cash_end_var, "Fecha final de Caja"
         )
-        self.cash_method_combo = ttk.Combobox(
-            filters,
-            textvariable=self.cash_method_var,
-            values=("Todos", "Efectivo", "Transferencia", "Mixto", "Otros"),
-            state="readonly",
-            width=14,
-        )
-        self.cash_method_combo.pack(side="left", padx=(5, 0), ipady=4)
-        self.cash_method_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_cash(reset_page=True))
+        self.cash_custom_dates_holder.grid_remove()
 
         actions = tk.Frame(toolbar, bg=self.SURFACE)
-        actions.pack(side="right", padx=10, pady=7)
-        self._action_button(
-            actions, "+  Registrar ingreso", lambda: self._cash_movement_dialog("income"), self.BLUE
-        ).pack(side="left", padx=3)
-        self._action_button(
-            actions, "−  Registrar gasto", lambda: self._cash_movement_dialog("expense"), self.ORANGE
-        ).pack(side="left", padx=3)
-        self._action_button(actions, "▣  Cerrar caja", self._close_cash, self.NAVY).pack(
-            side="left", padx=3
+        actions.grid(row=0, column=1, sticky="e", padx=(6, 12), pady=8)
+        action_specs = (
+            ("＋  Registrar ingreso", lambda: self._cash_movement_dialog("income"), self.BLUE, 154),
+            ("−  Registrar gasto", lambda: self._cash_movement_dialog("expense"), self.ORANGE, 148),
+            ("▣  Cerrar caja", self._close_cash, self.NAVY, 126),
+            ("▤  Exportar CSV", self._export_cash, self.GREEN, 130),
         )
-        self._action_button(actions, "▤  Exportar CSV", self._export_cash, self.GREEN).pack(
-            side="left", padx=3
-        )
+        for label, command, color, width in action_specs:
+            button = tk.Button(
+                actions, text=label, command=command, bg=color, fg="white",
+                activebackground=color, activeforeground="white", relief="flat", bd=0,
+                font=("Segoe UI", 9, "bold"), cursor="hand2", width=max(12, width // 9),
+                pady=8 if self._compact_height else 10,
+            )
+            button.pack(side="left", padx=4)
 
-        self.cash_history_var = tk.StringVar(value="")
-        tk.Label(
-            self.cash_tab, textvariable=self.cash_history_var, bg="#EFF6FF", fg="#315A8A",
-            font=("Segoe UI", 8), anchor="w", padx=10, pady=3,
-        ).pack(fill="x", padx=16, pady=(0, 6))
-
-        body = tk.PanedWindow(
-            self.cash_tab, orient="horizontal", bg=self.BORDER, bd=0,
-            sashwidth=7, sashrelief="flat", showhandle=False,
-        )
-        body.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+        body = tk.Frame(self.cash_tab, bg=self.BG)
+        body.pack(fill="both", expand=True, padx=14, pady=(0, 12))
+        body.grid_rowconfigure(0, weight=1)
+        body.grid_columnconfigure(0, weight=2, uniform="cash-body")
+        body.grid_columnconfigure(1, weight=1, uniform="cash-body")
         movements_card = tk.Frame(
-            body, bg=self.SURFACE, highlightbackground=self.BORDER, highlightthickness=1,
+            body, bg=self.SURFACE, highlightbackground="#E6EDF7", highlightthickness=1,
         )
+        movements_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         charts = tk.Frame(body, bg=self.BG)
-        body.add(movements_card, minsize=560, stretch="always")
-        body.add(charts, minsize=270, stretch="always")
+        charts.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
 
         heading = tk.Frame(movements_card, bg=self.SURFACE)
-        heading.pack(fill="x", padx=14, pady=(10, 6))
+        heading.pack(fill="x", padx=18, pady=((9, 6) if self._compact_height else (14, 10)))
         tk.Label(
             heading, text="▤  Movimientos de caja", bg=self.SURFACE, fg=self.NAVY,
-            font=("Segoe UI", 13, "bold"),
+            font=("Segoe UI", 13 if self._compact_height else 15, "bold"),
         ).pack(side="left")
         self.cash_period_var = tk.StringVar(value="")
         tk.Label(
             heading, textvariable=self.cash_period_var, bg=self.SURFACE, fg=self.MUTED,
             font=("Segoe UI", 9),
         ).pack(side="right")
-        columns = ("date", "concept", "client", "method", "amount", "court", "reference", "status")
-        table_body = tk.Frame(movements_card, bg=self.SURFACE)
-        table_body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
-        self.cash_tree = ttk.Treeview(
-            table_body, columns=columns, show="headings", style="Admin.Treeview",
-        )
-        labels = ("Fecha", "Concepto", "Cliente", "Método", "Importe", "Cancha", "Origen / ID", "Estado")
-        widths = (125, 205, 135, 100, 100, 115, 135, 95)
-        for key, label, width in zip(columns, labels, widths):
-            self.cash_tree.heading(key, text=label)
-            self.cash_tree.column(
-                key, width=width,
-                anchor="e" if key == "amount" else "center" if key in {"date", "method", "status"} else "w",
-            )
-        cash_y = ttk.Scrollbar(
-            table_body, orient="vertical", command=self.cash_tree.yview,
-            style="Admin.Vertical.TScrollbar",
-        )
-        cash_x = ttk.Scrollbar(
-            table_body, orient="horizontal", command=self.cash_tree.xview,
-            style="Admin.Horizontal.TScrollbar",
-        )
-        self.cash_tree.configure(yscrollcommand=cash_y.set, xscrollcommand=cash_x.set)
-        self.cash_tree.tag_configure("expense", foreground=self.RED)
-        self.cash_tree.tag_configure("income", foreground=self.GREEN)
-        cash_y.pack(side="right", fill="y")
-        cash_x.pack(side="bottom", fill="x")
-        self.cash_tree.pack(side="left", fill="both", expand=True)
-        pager = tk.Frame(movements_card, bg=self.SURFACE)
-        pager.pack(fill="x", padx=12, pady=(0, 8))
-        tk.Button(
-            pager, text="‹", command=lambda: self._cash_change_page(-1),
-            bg="#E8EEF7", fg=self.NAVY, relief="flat", bd=0, padx=12, pady=5,
-            cursor="hand2", font=("Segoe UI", 10, "bold"),
-        ).pack(side="left", padx=2)
-        self.cash_page_var = tk.StringVar(value="Página 1 de 1")
-        tk.Label(pager, textvariable=self.cash_page_var, bg=self.SURFACE, fg=self.MUTED).pack(side="left", padx=8)
-        tk.Button(
-            pager, text="›", command=lambda: self._cash_change_page(1),
-            bg="#E8EEF7", fg=self.NAVY, relief="flat", bd=0, padx=12, pady=5,
-            cursor="hand2", font=("Segoe UI", 10, "bold"),
-        ).pack(side="left", padx=2)
+
+        table = tk.Frame(movements_card, bg=self.SURFACE)
+        table.pack(fill="both", expand=True, padx=18)
+        header = tk.Frame(table, bg="#F8FAFC", height=34 if self._compact_height else 40)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        self.cash_table_weights = (16, 24, 19, 15, 13, 13)
+        for index, (title, weight) in enumerate(zip(
+            ("Fecha", "Concepto", "Cliente", "Método", "Importe", "Estado"),
+            self.cash_table_weights,
+        )):
+            header.grid_columnconfigure(index, weight=weight, uniform="cash-table")
+            tk.Label(
+                header, text=title, bg="#F8FAFC", fg="#475569",
+                font=("Segoe UI", 9, "bold"), anchor="w" if index < 4 else "center",
+            ).grid(row=0, column=index, sticky="nsew", padx=10)
+        self.cash_rows_frame = tk.Frame(table, bg=self.SURFACE)
+        self.cash_rows_frame.pack(fill="both", expand=True)
+
+        footer = tk.Frame(movements_card, bg=self.SURFACE)
+        footer.pack(fill="x", padx=18, pady=((5, 7) if self._compact_height else (9, 13)))
+        self.cash_pager_buttons = tk.Frame(footer, bg=self.SURFACE)
+        self.cash_pager_buttons.pack(side="left")
+        self.cash_page_var = tk.StringVar(value="Mostrando 0 movimientos")
+        tk.Label(
+            footer, textvariable=self.cash_page_var, bg=self.SURFACE, fg=self.MUTED,
+            font=("Segoe UI", 9),
+        ).pack(side="right")
+        # Keep the ledger provenance available to the controller without adding
+        # the technical banner that made the approved dashboard look cramped.
+        self.cash_history_var = tk.StringVar(value="")
 
         self.cash_chart_canvases: dict[str, tk.Canvas] = {}
         chart_specs = (
-            ("daily", "▥  Ingresos por día"),
-            ("methods", "◔  Distribución por método"),
-            ("courts", "▥  Por cancha"),
+            ("daily", "▥  Ingresos por día", 3),
+            ("methods", "◔  Distribución por método", 2),
+            ("courts", "▥  Por cancha", 2),
         )
-        for key, title in chart_specs:
+        for row, (key, title, weight) in enumerate(chart_specs):
+            charts.grid_rowconfigure(row, weight=weight, uniform="cash-chart")
             card = tk.Frame(
-                charts, bg=self.SURFACE, highlightbackground=self.BORDER,
-                highlightthickness=1,
+                charts, bg=self.SURFACE, highlightbackground="#E6EDF7", highlightthickness=1,
             )
-            card.pack(fill="both", expand=True, padx=(2, 0), pady=(0, 6))
+            card.grid(row=row, column=0, sticky="nsew", pady=(0 if row == 0 else 6, 6 if row < 2 else 0))
             tk.Label(
                 card, text=title, bg=self.SURFACE, fg=self.NAVY,
-                font=("Segoe UI", 10, "bold"), anchor="w",
-            ).pack(fill="x", padx=12, pady=(8, 2))
-            canvas = tk.Canvas(card, bg=self.SURFACE, highlightthickness=0, height=82)
-            canvas.pack(fill="both", expand=True, padx=10, pady=(0, 7))
+                font=("Segoe UI", 10 if self._compact_height else 11, "bold"), anchor="w",
+            ).pack(
+                fill="x", padx=16,
+                pady=((7, 2) if self._compact_height else (12, 4)),
+            )
+            chart_height = (
+                (70 if key == "daily" else 52)
+                if self._compact_height else 96
+            )
+            canvas = tk.Canvas(
+                card, bg=self.SURFACE, highlightthickness=0, height=chart_height,
+            )
+            canvas.pack(
+                fill="both", expand=True, padx=14,
+                pady=(0, 4 if self._compact_height else 10),
+            )
             canvas.bind("<Configure>", lambda _event: self._draw_cash_charts())
             self.cash_chart_canvases[key] = canvas
         self._cash_snapshot = {}
@@ -1385,13 +1409,33 @@ class AdminPanel(tk.Toplevel):
             end = today.replace(day=1) - dt.timedelta(days=1)
             start = end.replace(day=1)
         elif choice == "Rango personalizado":
+            self.cash_custom_dates_holder.grid()
             self._refresh_cash(reset_page=True)
             return
         else:
             start, end = today.replace(day=1), today
+        self.cash_custom_dates_holder.grid_remove()
         self.cash_start_var.set(start.isoformat())
         self.cash_end_var.set(end.isoformat())
         self._refresh_cash(reset_page=True)
+
+    def _set_cash_method(self, value: str) -> None:
+        self.cash_method_var.set(value)
+        self._style_cash_method_buttons()
+        self._refresh_cash(reset_page=True)
+
+    def _style_cash_method_buttons(self) -> None:
+        selected = self.cash_method_var.get()
+        for value, button in getattr(self, "cash_method_buttons", {}).items():
+            active = value == selected
+            button.configure(
+                bg="#DBEAFE" if active else "#F8FAFC",
+                fg="#1D4ED8" if active else self.NAVY,
+                activebackground="#DBEAFE",
+                activeforeground="#1D4ED8",
+                highlightbackground="#BFDBFE" if active else self.BORDER,
+                highlightthickness=1,
+            )
 
     def _cash_change_page(self, delta: int) -> None:
         movements = list(getattr(self, "_cash_snapshot", {}).get("movements") or [])
@@ -1571,7 +1615,7 @@ class AdminPanel(tk.Toplevel):
             messagebox.showerror("Caja", str(exc), parent=self)
 
     def _refresh_cash(self, reset_page: bool = False) -> None:
-        if not hasattr(self, "cash_tree"):
+        if not hasattr(self, "cash_rows_frame"):
             return
         method = getattr(self.service, "cash_snapshot", None)
         if not callable(method):
@@ -1588,21 +1632,36 @@ class AdminPanel(tk.Toplevel):
         self.cash_summary_vars["future"].set(self._money(snapshot.get("future_reservations")))
         movements = list(snapshot.get("movements") or [])
         self.cash_history_var.set(str(snapshot.get("history_notice") or ""))
-        self.cash_period_var.set(
-            f"{len(movements)} movimientos · Saldo {self._money(snapshot.get('period_balance'))}"
-        )
+        self.cash_period_var.set(f"Saldo del período: {self._money(snapshot.get('period_balance'))}")
         if reset_page:
             self.cash_page = 0
         self._render_cash_movements(movements)
         self.after_idle(self._draw_cash_charts)
 
     def _render_cash_movements(self, movements: list[dict]) -> None:
-        self.cash_tree.delete(*self.cash_tree.get_children())
+        for child in self.cash_rows_frame.winfo_children():
+            child.destroy()
         pages = max(1, (len(movements) + self.cash_page_size - 1) // self.cash_page_size)
         self.cash_page = min(self.cash_page, pages - 1)
         start = self.cash_page * self.cash_page_size
         visible = movements[start:start + self.cash_page_size]
-        self.cash_page_var.set(f"Página {self.cash_page + 1} de {pages}")
+        end = start + len(visible)
+        self.cash_page_var.set(
+            f"Mostrando {start + 1 if visible else 0} a {end} de {len(movements)} movimientos"
+        )
+        for child in self.cash_pager_buttons.winfo_children():
+            child.destroy()
+        self._cash_page_button("‹", max(0, self.cash_page - 1), enabled=self.cash_page > 0)
+        first_page = max(0, min(self.cash_page - 1, pages - 3))
+        for page in range(first_page, min(pages, first_page + 3)):
+            self._cash_page_button(str(page + 1), page, selected=page == self.cash_page)
+        self._cash_page_button("›", min(pages - 1, self.cash_page + 1), enabled=self.cash_page < pages - 1)
+        if not visible:
+            tk.Label(
+                self.cash_rows_frame, text="Todavía no hay movimientos para este período.",
+                bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI", 10), pady=50,
+            ).pack(fill="both", expand=True)
+            return
         for index, row in enumerate(visible, start=start):
             moment = str(row.get("occurred_at") or "")
             try:
@@ -1610,16 +1669,66 @@ class AdminPanel(tk.Toplevel):
             except ValueError:
                 pass
             amount = int(row.get("amount") or 0)
-            self.cash_tree.insert(
-                "", "end", iid=f"cash:{index}",
-                values=(
-                    moment, row.get("concept", ""), row.get("client", ""),
-                    row.get("method", ""), self._money(amount), row.get("court", ""),
-                    row.get("source_id", "") or row.get("source", ""),
-                    row.get("status", ""),
-                ),
-                tags=("income" if amount >= 0 else "expense",),
+            line = tk.Frame(
+                self.cash_rows_frame, bg=self.SURFACE,
+                height=32 if self._compact_height else 38,
+                highlightbackground="#EEF2F7", highlightthickness=0,
             )
+            line.pack(fill="x")
+            line.pack_propagate(False)
+            for column, weight in enumerate(self.cash_table_weights):
+                line.grid_columnconfigure(column, weight=weight, uniform="cash-table")
+            values = (
+                moment, str(row.get("concept") or ""), str(row.get("client") or ""),
+                str(row.get("method") or "Otros"), self._money(amount),
+                str(row.get("status") or "Completado"),
+            )
+            for column, value in enumerate(values):
+                if column == 3:
+                    method_key = value.casefold()
+                    badge_bg = "#DCFCE7" if "efectivo" in method_key else "#DBEAFE" if "transfer" in method_key else "#F3E8FF"
+                    badge_fg = "#087A45" if "efectivo" in method_key else "#1565D8" if "transfer" in method_key else "#7C3AED"
+                    holder = tk.Frame(line, bg=self.SURFACE)
+                    holder.grid(
+                        row=0, column=column, sticky="nsew", padx=6,
+                        pady=3 if self._compact_height else 6,
+                    )
+                    tk.Label(
+                        holder, text=value, bg=badge_bg, fg=badge_fg,
+                        font=("Segoe UI", 8), padx=7, pady=1 if self._compact_height else 2,
+                    ).pack(anchor="center")
+                elif column == 5:
+                    tk.Label(
+                        line, text=value, bg="#DCFCE7", fg="#087A45",
+                        font=("Segoe UI", 8), padx=7, pady=2,
+                    ).grid(row=0, column=column, padx=8, pady=4 if self._compact_height else 7)
+                else:
+                    tk.Label(
+                        line, text=value, bg=self.SURFACE,
+                        fg=(self.GREEN if column == 4 and amount >= 0 else self.RED if column == 4 else "#475569"),
+                        font=("Segoe UI", 9, "bold" if column == 4 else "normal"),
+                        anchor="e" if column == 4 else "w",
+                    ).grid(row=0, column=column, sticky="nsew", padx=10)
+            tk.Frame(self.cash_rows_frame, bg="#E6EDF7", height=1).pack(fill="x")
+
+    def _cash_page_button(
+        self, text: str, page: int, *, selected: bool = False, enabled: bool = True
+    ) -> None:
+        tk.Button(
+            self.cash_pager_buttons, text=text,
+            command=lambda target=page: self._cash_go_to_page(target),
+            state="normal" if enabled else "disabled",
+            bg=self.BLUE if selected else self.SURFACE,
+            fg="white" if selected else self.NAVY,
+            disabledforeground="#94A3B8", activebackground="#DBEAFE",
+            relief="flat", bd=0, highlightbackground=self.BORDER,
+            highlightthickness=1, width=3, pady=5, cursor="hand2",
+            font=("Segoe UI", 9, "bold" if selected else "normal"),
+        ).pack(side="left", padx=2)
+
+    def _cash_go_to_page(self, page: int) -> None:
+        self.cash_page = max(0, page)
+        self._render_cash_movements(list(self._cash_snapshot.get("movements") or []))
 
     def _draw_cash_charts(self) -> None:
         if not getattr(self, "cash_chart_canvases", None):
@@ -1628,13 +1737,19 @@ class AdminPanel(tk.Toplevel):
         self._draw_cash_daily_chart(
             self.cash_chart_canvases["daily"], snapshot.get("daily_income") or {}
         )
+        method_values = dict(snapshot.get("method_income") or {})
+        method_values["Otros"] = int(method_values.get("Otros", 0)) + int(method_values.pop("Mixto", 0))
+        method_values = {
+            key: int(method_values.get(key, 0))
+            for key in ("Efectivo", "Transferencia", "Otros")
+        }
         self._draw_cash_rank_chart(
-            self.cash_chart_canvases["methods"], snapshot.get("method_income") or {},
+            self.cash_chart_canvases["methods"], method_values,
             ("#079455", self.BLUE, "#7C3AED", self.ORANGE), percent=True,
         )
         self._draw_cash_rank_chart(
             self.cash_chart_canvases["courts"], snapshot.get("court_income") or {},
-            (self.BLUE,), percent=False,
+            (self.BLUE,), percent=False, limit=3 if self._compact_height else 6,
         )
 
     def _draw_cash_daily_chart(self, canvas: tk.Canvas, values: dict[str, int]) -> None:
@@ -1648,14 +1763,22 @@ class AdminPanel(tk.Toplevel):
             )
             return
         top = max(value for _key, value in items) or 1
-        gap = 5
-        bar_width = max(8, (width - 18 - gap * (len(items) - 1)) / len(items))
+        plot_left, plot_right, plot_top, plot_bottom = 42, width - 8, 8, height - 22
+        for fraction in (0.0, 0.5, 1.0):
+            y = plot_bottom - (plot_bottom - plot_top) * fraction
+            canvas.create_line(plot_left, y, plot_right, y, fill="#E6EDF7")
+            canvas.create_text(
+                plot_left - 5, y, text=self._money(round(top * fraction)),
+                anchor="e", fill="#64748B", font=("Segoe UI", 7),
+            )
+        gap = 7
+        bar_width = max(8, (plot_right - plot_left - gap * (len(items) - 1)) / len(items))
         for index, (day, value) in enumerate(items):
-            x1 = 9 + index * (bar_width + gap)
+            x1 = plot_left + index * (bar_width + gap)
             x2 = x1 + bar_width
-            bar_height = max(3, (height - 25) * value / top)
-            canvas.create_rectangle(x1, height - 16 - bar_height, x2, height - 16, fill=self.BLUE, outline="")
-            canvas.create_text((x1 + x2) / 2, height - 7, text=day[8:10], fill=self.MUTED, font=("Segoe UI", 7))
+            bar_height = max(3, (plot_bottom - plot_top) * value / top)
+            canvas.create_rectangle(x1, plot_bottom - bar_height, x2, plot_bottom, fill=self.BLUE, outline="")
+            canvas.create_text((x1 + x2) / 2, height - 9, text=day[8:10], fill=self.MUTED, font=("Segoe UI", 8))
 
     def _draw_cash_rank_chart(
         self,
@@ -1664,10 +1787,11 @@ class AdminPanel(tk.Toplevel):
         colors: tuple[str, ...],
         *,
         percent: bool,
+        limit: int = 3,
     ) -> None:
         canvas.delete("all")
-        width, height = max(120, canvas.winfo_width()), max(55, canvas.winfo_height())
-        items = sorted(values.items(), key=lambda item: item[1], reverse=True)[:3]
+        width, height = max(120, canvas.winfo_width()), max(28, canvas.winfo_height())
+        items = sorted(values.items(), key=lambda item: item[1], reverse=True)[:limit]
         if not items:
             canvas.create_text(
                 width / 2, height / 2, text="Sin datos en el período",
@@ -1676,21 +1800,33 @@ class AdminPanel(tk.Toplevel):
             return
         total = sum(value for _key, value in items) or 1
         maximum = max(value for _key, value in items) or 1
-        row_height = max(18, min(25, height / max(1, len(items))))
-        label_width = min(90, max(58, width * .27))
-        amount_width = 72
+        row_height = max(10, min(27, (height - 3) / max(1, len(items))))
+        bar_height = max(6, min(10, row_height - 3))
+        chart_font = ("Segoe UI", 7 if row_height < 15 else 8)
+        amount_font = ("Segoe UI", 7 if row_height < 15 else 8, "bold")
+        label_width = min(135, max(78, width * .31))
+        amount_width = 88
         for index, (label, value) in enumerate(items):
-            y = 8 + index * row_height
+            y = 2 + index * row_height
             color = colors[index % len(colors)]
-            canvas.create_text(2, y + 5, text=label[:16], anchor="w", fill=self.NAVY, font=("Segoe UI", 8))
+            center_y = y + bar_height / 2
+            canvas.create_text(
+                2, center_y, text=label[:16], anchor="w", fill=self.NAVY,
+                font=chart_font,
+            )
             bar_left, bar_right = label_width, max(label_width + 10, width - amount_width)
-            canvas.create_rectangle(bar_left, y, bar_right, y + 10, fill="#E2E8F0", outline="")
+            canvas.create_rectangle(
+                bar_left, y, bar_right, y + bar_height, fill="#E2E8F0", outline="",
+            )
             canvas.create_rectangle(
                 bar_left, y, bar_left + (bar_right - bar_left) * value / maximum,
-                y + 10, fill=color, outline="",
+                y + bar_height, fill=color, outline="",
             )
             suffix = f"{round(value * 100 / total)}%" if percent else self._money(value)
-            canvas.create_text(width - 2, y + 5, text=suffix, anchor="e", fill=self.NAVY, font=("Segoe UI", 8, "bold"))
+            canvas.create_text(
+                width - 2, center_y, text=suffix, anchor="e", fill=self.NAVY,
+                font=amount_font,
+            )
 
     def _on_tab_changed(self, _event=None) -> None:
         if self.notebook.select() == str(self.hours_tab):

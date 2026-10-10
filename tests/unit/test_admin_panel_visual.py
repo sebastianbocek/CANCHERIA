@@ -55,6 +55,12 @@ def test_admin_panel_visual_contract_keeps_all_features_and_callbacks():
     assert "class HoursTile(tk.Canvas)" in source
     assert 'style="Hours.Vertical.TScrollbar"' in source
     assert "self.hours_summary_pill.set_text(summary)" in source
+    assert "self.cash_page_size = 8" in source
+    assert '("Fecha", "Concepto", "Cliente", "Método", "Importe", "Estado")' in source
+    assert "self.cash_method_buttons" in source
+    assert '("daily", "▥  Ingresos por día", 3)' in source
+    assert '("methods", "◔  Distribución por método", 2)' in source
+    assert '("courts", "▥  Por cancha", 2)' in source
 
 
 def test_custom_tab_bar_selects_all_tabs_and_scrolls_when_narrow():

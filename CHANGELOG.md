@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.32 - 2026-10-10
+
+- Rediseñada visualmente la pestaña **Caja** para reproducir el dashboard aprobado: tarjetas financieras amplias, filtros y acciones equilibrados, tabla personalizada y paneles analíticos en dos columnas.
+- Incorporadas insignias visuales para métodos y estados, paginación de ocho movimientos y gráficos de ingresos, métodos de pago y recaudación individual por cancha.
+- Añadido un diseño adaptativo para que todos los paneles permanezcan visibles en pantallas de 1366×768 sin alterar cálculos, filtros ni operaciones financieras.
+
 ## 0.2.31 - 2026-10-09
 
 - Corrige el actualizador de Windows cuando `cancheria.exe` tarda en liberar el archivo o queda otra instancia exacta de la misma instalación: espera el cierre, detiene únicamente ese ejecutable y reintenta los reemplazos bloqueados antes de restaurar.
