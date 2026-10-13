@@ -141200,6 +141200,126 @@ def _canonical_v218_preserve_verified_duration_on_confirmation(
     return decision
 
 
+def _canonical_v232_merge_info_contract(
+    target: Dict[str, Any],
+    incoming: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Une contratos informativos ya interpretados sin releer lenguaje natural."""
+    merged = copy.deepcopy(target or {})
+    for field in (
+        "requested_facts", "target_resources", "target_labels",
+        "question_domains", "requested_durations",
+    ):
+        values = []
+        seen = set()
+        for raw in list(merged.get(field) or []) + list((incoming or {}).get(field) or []):
+            marker = json.dumps(raw, ensure_ascii=False, sort_keys=True, default=str)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            values.append(copy.deepcopy(raw))
+        if values:
+            merged[field] = values
+    for field in ("include_court", "include_quincho"):
+        if merged.get(field) is None and (incoming or {}).get(field) is not None:
+            merged[field] = copy.deepcopy((incoming or {}).get(field))
+    return merged
+
+
+def _canonical_v232_merge_review_coverage(
+    reviewed: Dict[str, Any],
+    draft: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Impide que la segunda pasada borre siblings vistos por la primera.
+
+    La primera y la segunda salida son contratos semánticos de IA. Python no
+    clasifica texto: sólo conserva operaciones independientes cuando la primera
+    pasada ya había declarado un turno realmente multi-intención. Un cambio de
+    operación en un draft de intención única sigue considerándose una corrección
+    del mismo objetivo y no se duplica.
+    """
+    result = copy.deepcopy(reviewed or {})
+    draft = draft if isinstance(draft, dict) else {}
+
+    def action_rows(decision: Dict[str, Any]) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        primary_op = str(decision.get("operation") or "").strip()
+        if primary_op in CANONICAL_V184_OPERATIONS and primary_op != "delegate_legacy":
+            rows.append({
+                key: copy.deepcopy(decision.get(key))
+                for key in (
+                    "operation", "confidence", "intent_mode", "booking",
+                    "recurrence", "reservation", "event", "info",
+                    "context_resolution", "missing_fields", "handoff_reason",
+                    "reason",
+                )
+                if key in decision
+            })
+        for raw in decision.get("actions") or []:
+            if not isinstance(raw, dict):
+                continue
+            operation = str(raw.get("operation") or "").strip()
+            if operation in CANONICAL_V184_OPERATIONS and operation != "delegate_legacy":
+                rows.append(copy.deepcopy(raw))
+        return rows
+
+    draft_rows = action_rows(draft)
+    draft_operations = {
+        str(row.get("operation") or "").strip()
+        for row in draft_rows
+        if str(row.get("operation") or "").strip()
+    }
+    if len(draft_operations) <= 1:
+        return result
+
+    result_actions = [
+        copy.deepcopy(row)
+        for row in (result.get("actions") or [])
+        if isinstance(row, dict)
+    ]
+    primary_operation = str(result.get("operation") or "").strip()
+
+    def merge_into_existing(candidate: Dict[str, Any]) -> bool:
+        operation = str(candidate.get("operation") or "").strip()
+        if operation == primary_operation:
+            if operation == "business_info":
+                result["info"] = _canonical_v232_merge_info_contract(
+                    dict(result.get("info") or {}),
+                    dict(candidate.get("info") or {}),
+                )
+            return True
+        for existing in result_actions:
+            if str(existing.get("operation") or "").strip() != operation:
+                continue
+            if operation == "business_info":
+                existing["info"] = _canonical_v232_merge_info_contract(
+                    dict(existing.get("info") or {}),
+                    dict(candidate.get("info") or {}),
+                )
+            return True
+        return False
+
+    for candidate in draft_rows:
+        if not merge_into_existing(candidate):
+            result_actions.append(copy.deepcopy(candidate))
+
+    result["actions"] = result_actions
+    result["_v232_review_coverage_merged"] = True
+
+    draft_style = dict(draft.get("conversation_style") or {})
+    reviewed_style = dict(result.get("conversation_style") or {})
+    for field in (
+        "greeting_present", "closing", "declines_booking",
+        "information_only_boundary",
+    ):
+        reviewed_style[field] = bool(reviewed_style.get(field) or draft_style.get(field))
+    if not reviewed_style.get("greeting_evidence") and draft_style.get("greeting_evidence"):
+        reviewed_style["greeting_evidence"] = draft_style.get("greeting_evidence")
+    if reviewed_style:
+        result["conversation_style"] = reviewed_style
+    return result
+
+
 async def _canonical_v184_orchestrate(
     message: str,
     user_messages: List[str],
@@ -141476,6 +141596,13 @@ draft_decision es una hipótesis de la primera pasada, no una autoridad. Releé
 independientemente el turno físico, recent_messages, canonical_state,
 semantic_focus, operational_history, now y las restricciones del negocio.
 Corregí la operación y reconstruí booking + goal_reconstruction completos.
+AUDITÁ TAMBIÉN LA COBERTURA: enumerá una por una TODAS las preguntas y acciones
+del turno físico completo, incluso si llegaron en varias burbujas. Una corrección
+de la operación principal NO autoriza eliminar siblings independientes que el
+draft ya había detectado. En especial, disponibilidad del calendario, horarios
+generales de atención y préstamo/disponibilidad de equipamiento requieren
+contratos separados cuando aparecen juntos. La respuesta final debe cubrirlos
+todos en un único mensaje.
 Verificá especialmente que ningún día, hora, franja, duración o deporte ya
 conocido desaparezca y que missing_fields contenga solamente datos realmente
 ausentes. Si el objetivo pragmático es avanzar una reserva, conducilo hacia el
@@ -141550,7 +141677,10 @@ ya resolvió. Respondé el JSON final completo con el mismo schema.'''
             )
             reviewed_operation = str(reviewed.get("operation") or "").strip()
             if reviewed_operation in CANONICAL_V184_OPERATIONS:
-                decision = reviewed
+                decision = _canonical_v232_merge_review_coverage(
+                    reviewed,
+                    first_draft,
+                )
                 decision["_v231_goal_self_reviewed"] = True
                 print(
                     "   🔎 [CANONICAL V231 GOAL SELF-REVIEW] "

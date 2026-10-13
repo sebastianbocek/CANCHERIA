@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.38 - 2026-10-13
+
+- Corrige la pérdida de subintenciones cuando una segunda revisión semántica cambia la intención principal del turno.
+- Conserva en una sola respuesta la disponibilidad solicitada junto con preguntas independientes sobre horarios de atención, servicios, equipamiento y otras políticas.
+- Mantiene la misma cobertura cuando las peticiones llegan en un mensaje único o repartidas entre varias burbujas consecutivas.
+- Agrega regresiones automatizadas para la combinación disponibilidad + horario de atención + préstamo de pelota.
+
 ## 0.2.37 - 2026-10-13
 
 - Incorpora la pestaña **Bar** inmediatamente después de **Caja**, con punto de venta, pedidos, cobros, gastos, inventario y estadísticas comerciales.
