@@ -143708,6 +143708,58 @@ async def ejecutar_agente_real_v2_turno(
         and _memory_owner_key(telefono_key) != "unknown"
     )
     if can_use_canonical:
+        # V233 — RESTORE FAST PATH MULTI-INTENT AUTHORITY
+        # ------------------------------------------------
+        # El Orchestrator canónico reconstruye muy bien un goal transaccional,
+        # pero en producción demostró que puede colapsar un turno con varias
+        # preguntas independientes a una sola query_availability incluso después
+        # de su self-review. El descomponedor FAST PATH anterior ya tenía una
+        # propiedad más fuerte: enumera primero TODAS las obligaciones y ejecuta
+        # cada fragmento sin permitir que el compositor descarte siblings.
+        #
+        # Esta compuerta no interpreta texto en Python. Consume exclusivamente
+        # la descomposición semántica estructurada del router IA. Cuando declara
+        # más de una intención real, devuelve el turno completo al stack FAST
+        # PATH capturado antes de V184; ese stack conserva una única respuesta
+        # de WhatsApp, tools verificadas y la ejecución secuencial de fragments.
+        # Una sola intención continúa por el camino canónico normal.
+        physical_turn = _canonical_v200_current_turn_text(
+            mensaje,
+            user_messages or [mensaje],
+        )
+        try:
+            fast_path_detected = await detectar_multiples_intenciones(physical_turn)
+            fast_path_subintents = _agent_v2_v123_prepare_subintents(
+                fast_path_detected,
+                physical_turn,
+            )
+        except Exception as fast_path_exc:
+            print(
+                "   ⚠️ [CANONICAL V233 FAST PATH COVERAGE] "
+                f"detector no disponible; continúo canónico: "
+                f"{type(fast_path_exc).__name__}: {fast_path_exc}"
+            )
+            fast_path_subintents = []
+
+        if len(fast_path_subintents) > 1:
+            print(
+                "   🧩 [CANONICAL V233 FAST PATH COVERAGE] "
+                f"subintenciones={len(fast_path_subintents)} "
+                f"intents={[item.get('intencion') for item in fast_path_subintents]} "
+                "→ ejecución lossless anterior a V184"
+            )
+            return await _ejecutar_agente_real_v2_turno_v184_legacy(
+                physical_turn,
+                conv_state,
+                prospecto,
+                telefono,
+                user_messages=user_messages or [mensaje],
+                page=page,
+                image_path=image_path,
+                dry_run=dry_run,
+                eval_context=eval_context,
+            )
+
         state: Dict[str, Any] = {}
         decision: Dict[str, Any] = {}
         try:

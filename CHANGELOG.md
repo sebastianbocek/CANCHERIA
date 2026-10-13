@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.39 - 2026-10-13
+
+- Restaura el router FAST PATH exhaustivo como autoridad previa para turnos con múltiples peticiones.
+- Evita que el Orchestrator canónico V184 absorba preguntas independientes dentro de una única consulta de disponibilidad.
+- Procesa cada subintención con sus herramientas verificadas y une todos los resultados en un solo mensaje de WhatsApp.
+- Verifica con el router real el caso disponibilidad de fútbol + horarios de atención + préstamo de pelota.
+
 ## 0.2.38 - 2026-10-13
 
 - Corrige la pérdida de subintenciones cuando una segunda revisión semántica cambia la intención principal del turno.
