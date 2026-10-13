@@ -5,6 +5,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -131,13 +132,12 @@ def test_windows_update_preflight_reports_locked_executable_before_replacing_fil
     executable.write_bytes(b"old exe")
     files = {"WPSetter.py": "hash", "configurador_cancheria.exe": "hash"}
 
-    monkeypatch.setattr(update_helper.os, "name", "nt")
+    real_replace = update_helper.os.replace
     monkeypatch.setattr(
         update_helper,
-        "_safe_destination",
-        lambda root, relative: Path(root) / relative,
+        "os",
+        SimpleNamespace(name="nt", replace=real_replace),
     )
-    real_replace = update_helper.os.replace
 
     def locked_replace(source, destination):
         if source == executable:
