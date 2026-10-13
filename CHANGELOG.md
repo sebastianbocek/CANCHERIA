@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.40 - 2026-10-13
+
+- Unifica FAST PATH y Canonical: el primero enumera todas las obligaciones y el segundo interpreta y ejecuta cada objetivo con contexto compartido.
+- Incorpora una lista canónica de objetivos en lugar de elegir una única intención principal para todo el mensaje.
+- Planifica y valida el lote completo antes del primer efecto para evitar escrituras parciales o duplicadas.
+- Audita correspondencia 1:1 entre obligaciones detectadas, objetivos ejecutados y respuestas antes de enviar un único mensaje de WhatsApp.
+- Verifica con semántica real el caso disponibilidad de fútbol + horarios de atención + préstamo de pelota como tres objetivos canónicos aceptados.
+
 ## 0.2.39 - 2026-10-13
 
 - Restaura el router FAST PATH exhaustivo como autoridad previa para turnos con múltiples peticiones.

@@ -162,7 +162,7 @@ def test_two_pass_orchestrator_keeps_all_requests_from_multiple_messages(
     assert decision["_v232_review_coverage_merged"] is True
 
 
-def test_live_canonical_entry_restores_lossless_fast_path_for_multi_intent(
+def test_live_canonical_entry_routes_fast_path_inventory_to_canonical_objectives(
     monkeypatch,
 ) -> None:
     from cancheria.legacy_bridge import load_legacy_module
@@ -184,35 +184,31 @@ def test_live_canonical_entry_restores_lossless_fast_path_for_multi_intent(
             {"intencion": "consulta_informativa", "fragmento": messages[2]},
         ]
 
-    async def fake_fast_path(
-        message,
-        conv_state,
-        prospecto,
-        telefono,
-        user_messages=None,
-        page=None,
-        image_path="",
-        dry_run=False,
-        eval_context=None,
-    ):
-        calls["fast_path_message"] = message
-        calls["fast_path_user_messages"] = list(user_messages or [])
+    async def fake_unified(**kwargs):
+        calls["unified"] = kwargs
         return {
             "handled": True,
             "response": "disponibilidad\n\nhorarios de atención\n\npréstamo de pelota",
-            "multi_subintent_bridge": {"subintent_count": 3},
+            "multi_subintent_bridge": {
+                "version": "v234_canonical_objective_list",
+                "subintent_count": 3,
+            },
         }
 
-    async def canonical_must_not_run(*_args, **_kwargs):
-        raise AssertionError("El Orchestrator canónico no debe absorber este lote")
+    async def legacy_must_not_run(*_args, **_kwargs):
+        raise AssertionError("El FAST PATH legacy no debe ejecutar este lote")
 
     monkeypatch.setattr(legacy, "detectar_multiples_intenciones", fake_detector)
     monkeypatch.setattr(
         legacy,
         "_ejecutar_agente_real_v2_turno_v184_legacy",
-        fake_fast_path,
+        legacy_must_not_run,
     )
-    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate", canonical_must_not_run)
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v234_execute_objective_list",
+        fake_unified,
+    )
 
     result = asyncio.run(
         legacy.ejecutar_agente_real_v2_turno(
@@ -225,10 +221,173 @@ def test_live_canonical_entry_restores_lossless_fast_path_for_multi_intent(
     )
 
     assert calls["detected_message"] == physical_turn
-    assert calls["fast_path_message"] == physical_turn
-    assert calls["fast_path_user_messages"] == messages
+    assert calls["unified"]["physical_turn"] == physical_turn
+    assert calls["unified"]["subintents"] == [
+        {"intencion": "pedir_horarios", "fragmento": messages[0]},
+        {"intencion": "consulta_informativa", "fragmento": messages[1]},
+        {"intencion": "consulta_informativa", "fragmento": messages[2]},
+    ]
     assert result["handled"] is True
+    assert result["multi_subintent_bridge"]["version"] == "v234_canonical_objective_list"
     assert result["multi_subintent_bridge"]["subintent_count"] == 3
     assert "disponibilidad" in result["response"]
     assert "horarios de atención" in result["response"]
     assert "préstamo de pelota" in result["response"]
+
+
+def test_unified_objective_list_canonicalizes_executes_and_audits_every_request(
+    monkeypatch,
+) -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    fragments = [
+        "Hola, ¿tenés cancha de fútbol para hoy?",
+        "¿Cuáles son los horarios de atención?",
+        "¿Hace falta llevar pelota o prestan ustedes? Gracias",
+    ]
+    subintents = [
+        {"intencion": "pedir_horarios", "fragmento": fragments[0]},
+        {"intencion": "consulta_informativa", "fragmento": fragments[1]},
+        {"intencion": "consulta_informativa", "fragmento": fragments[2]},
+    ]
+    orchestrated = []
+    executed = []
+
+    async def fake_orchestrator(message, user_messages, state, image_path=""):
+        orchestrated.append((message, list(user_messages), dict(state)))
+        if message == fragments[0]:
+            return _availability_action()
+        fact = (
+            "business.opening_hours"
+            if message == fragments[1]
+            else "service.loan_available"
+        )
+        action = _business_info_action()
+        action["info"]["requested_facts"] = [fact]
+        return action
+
+    async def fake_executor(
+        message,
+        user_messages,
+        state,
+        decision,
+        prospecto,
+        telefono,
+        page=None,
+        image_path="",
+    ):
+        executed.append((message, decision["operation"], list(user_messages)))
+        responses = {
+            fragments[0]: "Disponibilidad confirmada.",
+            fragments[1]: "Atendemos de 10:00 a 00:00.",
+            fragments[2]: "Prestamos pelota sin cargo.",
+        }
+        return {
+            "handled": True,
+            "response": responses[message],
+            "status": "complete",
+            "observations": [],
+        }
+
+    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate", fake_orchestrator)
+    monkeypatch.setattr(legacy, "_canonical_v184_accept_decision", lambda _row: True)
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v184_execute_decision_v212_base",
+        fake_executor,
+    )
+    monkeypatch.setattr(legacy, "_canonical_v183_record_decision", lambda *_a, **_k: None)
+    monkeypatch.setattr(legacy, "_canonical_v183_save", lambda *_a, **_k: None)
+    monkeypatch.setattr(legacy, "get_conversation_state", lambda _phone: {})
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v184_hydrate",
+        lambda _phone, state, _prospect: dict(state),
+    )
+
+    result = asyncio.run(
+        legacy._canonical_v234_execute_objective_list(
+            physical_turn="\n".join(fragments),
+            subintents=subintents,
+            state={"shared_context": "preserved"},
+            prospecto={"nombre": "Sebastian"},
+            telefono="+5493513441882",
+        )
+    )
+
+    assert [row[0] for row in orchestrated] == fragments
+    assert all(row[1] == [row[0]] for row in orchestrated)
+    assert all(row[2]["shared_context"] == "preserved" for row in orchestrated)
+    assert [row[0] for row in executed] == fragments
+    assert [row[1] for row in executed] == [
+        "query_availability",
+        "business_info",
+        "business_info",
+    ]
+    assert result["objective_coverage"]["complete"] is True
+    assert result["objective_coverage"]["missing_objective_ids"] == []
+    assert len(result["canonical_objectives"]) == 3
+    assert result["multi_subintent_bridge"] == {
+        "version": "v234_canonical_objective_list",
+        "subintent_count": 3,
+        "canonical_objective_count": 3,
+        "partial_response_count": 3,
+        "all_subintent_responses_preserved": True,
+    }
+    assert result["response"] == (
+        "Disponibilidad confirmada.\n\n"
+        "Atendemos de 10:00 a 00:00.\n\n"
+        "Prestamos pelota sin cargo."
+    )
+
+
+def test_unified_objective_list_does_not_emit_incomplete_response(monkeypatch) -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    subintents = [
+        {"intencion": "consulta_informativa", "fragmento": "horarios"},
+        {"intencion": "consulta_informativa", "fragmento": "pelota"},
+    ]
+
+    async def fake_orchestrator(message, user_messages, state, image_path=""):
+        action = _business_info_action()
+        action["info"]["requested_facts"] = [message]
+        return action
+
+    async def fake_executor(message, *_args, **_kwargs):
+        return {
+            "handled": True,
+            "response": "Atendemos todos los días." if message == "horarios" else "",
+            "status": "complete",
+            "observations": [],
+        }
+
+    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate", fake_orchestrator)
+    monkeypatch.setattr(legacy, "_canonical_v184_accept_decision", lambda _row: True)
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v184_execute_decision_v212_base",
+        fake_executor,
+    )
+    monkeypatch.setattr(legacy, "_canonical_v183_record_decision", lambda *_a, **_k: None)
+    monkeypatch.setattr(legacy, "_canonical_v183_save", lambda *_a, **_k: None)
+    monkeypatch.setattr(legacy, "get_conversation_state", lambda _phone: {})
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v184_hydrate",
+        lambda _phone, state, _prospect: dict(state),
+    )
+
+    result = asyncio.run(
+        legacy._canonical_v234_execute_objective_list(
+            physical_turn="horarios y pelota",
+            subintents=subintents,
+            state={},
+            prospecto={},
+            telefono="+5493513441882",
+        )
+    )
+
+    assert result is None

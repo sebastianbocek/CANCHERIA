@@ -143689,6 +143689,246 @@ async def _canonical_v184_execute_decision(
 _ejecutar_agente_real_v2_turno_v184_legacy = ejecutar_agente_real_v2_turno
 
 
+async def _canonical_v234_execute_objective_list(
+    *,
+    physical_turn: str,
+    subintents: List[Dict[str, str]],
+    state: Dict[str, Any],
+    prospecto: Dict[str, Any],
+    telefono: str,
+    page=None,
+    image_path: str = "",
+) -> Optional[Dict[str, Any]]:
+    """FAST PATH descubre obligaciones; Canonical planifica y ejecuta cada una.
+
+    El lote completo se planifica antes del primer efecto. Así una subintención
+    inválida nunca provoca una respuesta parcial ni obliga a repetir un write.
+    Cada objetivo se interpreta con el mismo estado canónico de entrada y se
+    ejecuta con estado rehidratado, de modo que los efectos confirmados por una
+    tool sean visibles para el objetivo siguiente.
+    """
+    objectives: List[Dict[str, Any]] = []
+    flattened_actions: List[Dict[str, Any]] = []
+
+    for index, item in enumerate(subintents, start=1):
+        fragment = str(item.get("fragmento") or "").strip()
+        intent = str(item.get("intencion") or "otra").strip() or "otra"
+        if not fragment:
+            return None
+
+        decision = await _canonical_v184_orchestrate(
+            fragment,
+            [fragment],
+            copy.deepcopy(state),
+            image_path=image_path,
+        )
+        actions = _canonical_v188_action_list(decision)
+        if (
+            decision.get("_suppress_legacy_fallback")
+            or decision.get("operation") == "delegate_legacy"
+            or not actions
+            or any(not _canonical_v184_accept_decision(action) for action in actions)
+        ):
+            print(
+                "   ↩️ [CANONICAL V234 OBJECTIVE PLANNING] "
+                f"objetivo={index} intent={intent} sin decisión canónica completa"
+            )
+            return None
+
+        operations = [str(action.get("operation") or "") for action in actions]
+        objectives.append({
+            "objective_id": f"objective_{index}",
+            "index": index,
+            "intent": intent,
+            "fragment": fragment,
+            "operations": operations,
+            "decision": decision,
+        })
+        flattened_actions.extend(copy.deepcopy(actions))
+
+    # Conserva la barrera financiera del ejecutor V188: más de una escritura
+    # independiente en un único turno requiere una política transaccional
+    # explícita. El fallback ocurre antes de ejecutar cualquier efecto.
+    write_count = sum(
+        1
+        for action in flattened_actions
+        if str(action.get("operation") or "") in _CANONICAL_V188_WRITE_OPS
+    )
+    if write_count > 1:
+        print(
+            "   ↩️ [CANONICAL V234 OBJECTIVE PLANNING] "
+            f"writes={write_count} → fallback seguro anterior a efectos"
+        )
+        return None
+
+    aggregate_decision = copy.deepcopy(objectives[0]["decision"])
+    aggregate_decision["_v188_actions"] = flattened_actions
+    aggregate_decision["objectives"] = [
+        {
+            "objective_id": objective["objective_id"],
+            "intent": objective["intent"],
+            "fragment": objective["fragment"],
+            "operations": list(objective["operations"]),
+        }
+        for objective in objectives
+    ]
+    aggregate_decision["multi_objective"] = True
+    aggregate_decision["coverage_expected"] = len(objectives)
+
+    turn_id = f"canonical_v234_{uuid.uuid4().hex}"
+    _canonical_v183_record_decision(
+        telefono,
+        turn_id,
+        physical_turn,
+        aggregate_decision,
+    )
+    recorded_state = copy.deepcopy(state)
+    recorded_state["last_decision"] = aggregate_decision
+    _canonical_v183_save(telefono, recorded_state)
+
+    results: List[Dict[str, Any]] = []
+    responses: List[str] = []
+    observations: List[Dict[str, Any]] = []
+    executed_ids: List[str] = []
+    response_ids: List[str] = []
+    waiting_user = False
+    write_executed = False
+
+    # V212 agrega una continuación comercial cuando TODO el turno es sólo
+    # informativo. Aquí se ejecuta su base para evitar una CTA por fragmento;
+    # la continuación natural del objetivo transaccional queda en su renderer.
+    objective_executor = globals().get(
+        "_canonical_v184_execute_decision_v212_base",
+        _canonical_v184_execute_decision,
+    )
+
+    for objective in objectives:
+        objective_id = str(objective["objective_id"])
+        fragment = str(objective["fragment"])
+        decision = copy.deepcopy(objective["decision"])
+        current_state = _canonical_v184_hydrate(
+            telefono,
+            get_conversation_state(telefono),
+            prospecto or {},
+        )
+        print(
+            "   🧭 [CANONICAL V234 EXEC OBJECTIVE] "
+            f"{objective_id}/{len(objectives)} "
+            f"intent={objective['intent']} operations={objective['operations']}"
+        )
+        result = await objective_executor(
+            fragment,
+            [fragment],
+            current_state,
+            decision,
+            prospecto,
+            telefono,
+            page=page,
+            image_path=image_path,
+        )
+        if not isinstance(result, dict) or not result.get("handled"):
+            # Si todavía no hubo writes, el stack anterior puede resolver el
+            # turno completo. Después de un write jamás reintentamos el lote.
+            if not write_executed:
+                return None
+            return await _canonical_v184_silent_failure(
+                source=f"canonical_v234_unhandled_{objective_id}",
+                message=physical_turn,
+                telefono=telefono,
+                prospecto=prospecto or {},
+                page=page,
+                observations=observations,
+                original_response="",
+            )
+        if result.get("silent_handoff") or result.get("delivery_policy") == "suppress_customer":
+            return result
+
+        executed_ids.append(objective_id)
+        results.append(result)
+        response = str(result.get("response") or "").strip()
+        if response:
+            responses.append(response)
+            response_ids.append(objective_id)
+        observations.extend(
+            copy.deepcopy(observation)
+            for observation in (result.get("observations") or [])
+            if isinstance(observation, dict)
+        )
+        waiting_user = waiting_user or str(result.get("status") or "") == "waiting_user"
+        write_executed = write_executed or any(
+            operation in _CANONICAL_V188_WRITE_OPS
+            for operation in objective["operations"]
+        )
+
+    expected_ids = [str(objective["objective_id"]) for objective in objectives]
+    missing_ids = [
+        objective_id
+        for objective_id in expected_ids
+        if objective_id not in executed_ids or objective_id not in response_ids
+    ]
+    coverage = {
+        "expected_objective_ids": expected_ids,
+        "executed_objective_ids": executed_ids,
+        "response_objective_ids": response_ids,
+        "missing_objective_ids": missing_ids,
+        "complete": not missing_ids,
+    }
+    if missing_ids:
+        print(
+            "   🛑 [CANONICAL V234 COVERAGE AUDIT] "
+            f"incompleta missing={missing_ids} → no se envía respuesta parcial"
+        )
+        if not write_executed:
+            return None
+        return await _canonical_v184_silent_failure(
+            source="canonical_v234_incomplete_coverage_after_write",
+            message=physical_turn,
+            telefono=telefono,
+            prospecto=prospecto or {},
+            page=page,
+            observations=observations,
+            original_response="",
+        )
+
+    final_response = _canonical_v188_merge_responses(responses)
+    if not final_response:
+        return None
+
+    merged = copy.deepcopy(results[-1])
+    merged.update({
+        "handled": True,
+        "delegate_legacy": False,
+        "response": final_response,
+        "observations": observations,
+        "status": "waiting_user" if waiting_user else "complete",
+        "canonical_decision": aggregate_decision,
+        "canonical_subresults": results,
+        "canonical_objectives": aggregate_decision["objectives"],
+        "canonical_multi_intent": True,
+        "objective_coverage": coverage,
+        "multi_subintent_bridge": {
+            "version": "v234_canonical_objective_list",
+            "subintent_count": len(subintents),
+            "canonical_objective_count": len(objectives),
+            "partial_response_count": len(response_ids),
+            "all_subintent_responses_preserved": True,
+        },
+        "safe_exit": {
+            "state": "verified_operation" if observations else "canonical_response",
+            "evidence": [
+                str(observation.get("observation_id") or "")
+                for observation in observations
+                if observation.get("observation_id")
+            ],
+        },
+    })
+    print(
+        "   ✅ [CANONICAL V234 COVERAGE AUDIT] "
+        f"objectives={len(objectives)} responses={len(response_ids)} complete=True"
+    )
+    return merged
+
+
 async def ejecutar_agente_real_v2_turno(
     mensaje: str,
     conv_state: Dict,
@@ -143708,21 +143948,12 @@ async def ejecutar_agente_real_v2_turno(
         and _memory_owner_key(telefono_key) != "unknown"
     )
     if can_use_canonical:
-        # V233 — RESTORE FAST PATH MULTI-INTENT AUTHORITY
-        # ------------------------------------------------
-        # El Orchestrator canónico reconstruye muy bien un goal transaccional,
-        # pero en producción demostró que puede colapsar un turno con varias
-        # preguntas independientes a una sola query_availability incluso después
-        # de su self-review. El descomponedor FAST PATH anterior ya tenía una
-        # propiedad más fuerte: enumera primero TODAS las obligaciones y ejecuta
-        # cada fragmento sin permitir que el compositor descarte siblings.
-        #
-        # Esta compuerta no interpreta texto en Python. Consume exclusivamente
-        # la descomposición semántica estructurada del router IA. Cuando declara
-        # más de una intención real, devuelve el turno completo al stack FAST
-        # PATH capturado antes de V184; ese stack conserva una única respuesta
-        # de WhatsApp, tools verificadas y la ejecución secuencial de fragments.
-        # Una sola intención continúa por el camino canónico normal.
+        # V234 — FAST PATH DISCOVERY → CANONICAL OBJECTIVE LIST
+        # -----------------------------------------------------
+        # El FAST PATH enumera exhaustivamente las obligaciones, pero no las
+        # ejecuta. Cada fragmento se convierte en una decisión canónica, se
+        # valida antes del primer efecto, se ejecuta con contexto compartido y
+        # finalmente se audita 1:1 antes de producir un único mensaje.
         physical_turn = _canonical_v200_current_turn_text(
             mensaje,
             user_messages or [mensaje],
@@ -143743,21 +143974,35 @@ async def ejecutar_agente_real_v2_turno(
 
         if len(fast_path_subintents) > 1:
             print(
-                "   🧩 [CANONICAL V233 FAST PATH COVERAGE] "
+                "   🧩 [CANONICAL V234 OBJECTIVE DISCOVERY] "
                 f"subintenciones={len(fast_path_subintents)} "
                 f"intents={[item.get('intencion') for item in fast_path_subintents]} "
-                "→ ejecución lossless anterior a V184"
+                "→ lista de objetivos canónicos"
             )
-            return await _ejecutar_agente_real_v2_turno_v184_legacy(
-                physical_turn,
-                conv_state,
-                prospecto,
-                telefono,
-                user_messages=user_messages or [mensaje],
+            state = _canonical_v184_hydrate(
+                telefono_key,
+                conv_state if isinstance(conv_state, dict) else get_conversation_state(telefono_key),
+                prospecto or {},
+            )
+            unified = await _canonical_v234_execute_objective_list(
+                physical_turn=physical_turn,
+                subintents=fast_path_subintents,
+                state=state,
+                prospecto=prospecto or {},
+                telefono=telefono_key,
                 page=page,
                 image_path=image_path,
-                dry_run=dry_run,
-                eval_context=eval_context,
+            )
+            if isinstance(unified, dict) and unified.get("handled"):
+                return unified
+            print(
+                "   ↩️ [CANONICAL V234 OBJECTIVE LIST] "
+                "planificación incompleta sin efectos → fallback FAST PATH legacy"
+            )
+            return await _ejecutar_agente_real_v2_turno_v184_legacy(
+                physical_turn, conv_state, prospecto, telefono,
+                user_messages=user_messages or [mensaje], page=page,
+                image_path=image_path, dry_run=dry_run, eval_context=eval_context,
             )
 
         state: Dict[str, Any] = {}
