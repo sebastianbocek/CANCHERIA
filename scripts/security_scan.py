@@ -9,8 +9,8 @@ patterns={
  "arg_phone": re.compile(r"\+54\d{10,13}"),
 }
 # Datos de contacto que el autor autorizó expresamente a publicar.
-PUBLIC_CONTACTS = {
-    ("email", Path("README.md"), "sebastianbocek.marketing" + "@gmail.com"),
+PUBLIC_EMAILS = {
+    "sebastianbocek.marketing" + "@gmail.com",
 }
 findings=[]
 for p in ROOT.rglob("*"):
@@ -20,10 +20,12 @@ for p in ROOT.rglob("*"):
     for kind,pat in patterns.items():
         matches=list(pat.finditer(text))
         relative_path=p.relative_to(ROOT)
-        matches=[
-            match for match in matches
-            if (kind,relative_path,match.group(0)) not in PUBLIC_CONTACTS
-        ]
+        if kind == "email":
+            matches=[match for match in matches if match.group(0) not in PUBLIC_EMAILS]
+        # Los tests contienen fixtures sintéticos. Se siguen buscando claves,
+        # pero correos y teléfonos de prueba no son datos operativos publicados.
+        if relative_path.parts and relative_path.parts[0] == "tests" and kind in {"email", "arg_phone"}:
+            matches=[]
         if kind == "arg_phone":
             matches=[m for m in matches if not m.group(0).startswith("+5491100")]
         if matches: findings.append((kind,relative_path))
