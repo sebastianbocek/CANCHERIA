@@ -143716,12 +143716,19 @@ async def _canonical_v234_execute_objective_list(
         if not fragment:
             return None
 
-        decision = await _canonical_v184_orchestrate(
-            fragment,
-            [fragment],
-            copy.deepcopy(state),
-            image_path=image_path,
-        )
+        try:
+            decision = await _canonical_v184_orchestrate(
+                fragment,
+                [fragment],
+                copy.deepcopy(state),
+                image_path=image_path,
+            )
+        except Exception as exc:
+            print(
+                "   🛑 [CANONICAL V234 OBJECTIVE PLANNING] "
+                f"objetivo={index} intent={intent} error={type(exc).__name__}: {exc}"
+            )
+            return None
         actions = _canonical_v188_action_list(decision)
         if (
             decision.get("_suppress_legacy_fallback")
@@ -143996,13 +144003,17 @@ async def ejecutar_agente_real_v2_turno(
             if isinstance(unified, dict) and unified.get("handled"):
                 return unified
             print(
-                "   ↩️ [CANONICAL V234 OBJECTIVE LIST] "
-                "planificación incompleta sin efectos → fallback FAST PATH legacy"
+                "   🛑 [CANONICAL V234 OBJECTIVE LIST] "
+                "planificación incompleta → derivación segura, sin cambiar de ejecutor"
             )
-            return await _ejecutar_agente_real_v2_turno_v184_legacy(
-                physical_turn, conv_state, prospecto, telefono,
-                user_messages=user_messages or [mensaje], page=page,
-                image_path=image_path, dry_run=dry_run, eval_context=eval_context,
+            return await _canonical_v184_silent_failure(
+                source="canonical_v234_objective_planning_incomplete",
+                message=physical_turn,
+                telefono=telefono_key,
+                prospecto=prospecto or {},
+                page=page,
+                observations=[],
+                original_response="",
             )
 
         state: Dict[str, Any] = {}

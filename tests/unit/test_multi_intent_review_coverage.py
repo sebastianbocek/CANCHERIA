@@ -391,3 +391,58 @@ def test_unified_objective_list_does_not_emit_incomplete_response(monkeypatch) -
     )
 
     assert result is None
+
+
+def test_live_entry_never_falls_back_to_legacy_executor_for_multi_intent(
+    monkeypatch,
+) -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    messages = ["consultá disponibilidad", "y decime si prestan pelota"]
+
+    async def fake_detector(_message):
+        return [
+            {"intencion": "pedir_horarios", "fragmento": messages[0]},
+            {"intencion": "consulta_informativa", "fragmento": messages[1]},
+        ]
+
+    async def incomplete_unified(**_kwargs):
+        return None
+
+    async def legacy_must_not_run(*_args, **_kwargs):
+        raise AssertionError("FAST PATH no debe volver a ejecutar objetivos")
+
+    async def fake_safe_failure(**kwargs):
+        return {
+            "handled": True,
+            "silent_handoff": True,
+            "source": kwargs["source"],
+        }
+
+    monkeypatch.setattr(legacy, "detectar_multiples_intenciones", fake_detector)
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v234_execute_objective_list",
+        incomplete_unified,
+    )
+    monkeypatch.setattr(
+        legacy,
+        "_ejecutar_agente_real_v2_turno_v184_legacy",
+        legacy_must_not_run,
+    )
+    monkeypatch.setattr(legacy, "_canonical_v184_silent_failure", fake_safe_failure)
+
+    result = asyncio.run(
+        legacy.ejecutar_agente_real_v2_turno(
+            "\n".join(messages),
+            {},
+            {},
+            "+5493513441882",
+            user_messages=messages,
+        )
+    )
+
+    assert result["handled"] is True
+    assert result["silent_handoff"] is True
+    assert result["source"] == "canonical_v234_objective_planning_incomplete"

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.41 - 2026-10-13
+
+- Elimina el último fallback de ejecución al stack FAST PATH para turnos multiobjetivo.
+- Mantiene FAST PATH exclusivamente como detector exhaustivo y Canonical como único intérprete y ejecutor.
+- Ante una planificación incompleta, deriva de forma segura sin enviar respuestas parciales ni cambiar de arquitectura.
+
 ## 0.2.40 - 2026-10-13
 
 - Unifica FAST PATH y Canonical: el primero enumera todas las obligaciones y el segundo interpreta y ejecuta cada objetivo con contexto compartido.
