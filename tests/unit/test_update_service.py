@@ -132,10 +132,15 @@ def test_windows_update_preflight_reports_locked_executable_before_replacing_fil
     files = {"WPSetter.py": "hash", "configurador_cancheria.exe": "hash"}
 
     monkeypatch.setattr(update_helper.os, "name", "nt")
+    monkeypatch.setattr(
+        update_helper,
+        "_safe_destination",
+        lambda root, relative: Path(root) / relative,
+    )
     real_replace = update_helper.os.replace
 
     def locked_replace(source, destination):
-        if Path(source) == executable:
+        if source == executable:
             raise PermissionError("locked")
         return real_replace(source, destination)
 
