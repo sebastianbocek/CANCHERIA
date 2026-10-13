@@ -358,6 +358,7 @@ def test_notification_counts_sum_only_unresolved_admin_work():
         "bookings": 3,
         "hours": 0,
         "cash": 0,
+        "bar": 0,
         "operation": 0,
         "cases": 2,
         "tournaments": 0,

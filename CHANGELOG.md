@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.37 - 2026-10-13
+
+- Incorpora la pestaña **Bar** inmediatamente después de **Caja**, con punto de venta, pedidos, cobros, gastos, inventario y estadísticas comerciales.
+- Agrega catálogo administrable, categorías extensibles, movimientos de stock auditables y persistencia transaccional en SQLite.
+- Separa los estados de preparación/entrega de los estados financieros y admite pagos parciales, combinados y reembolsos.
+- Integra ingresos y gastos confirmados del Bar con Caja mediante claves de idempotencia para impedir contabilizaciones duplicadas.
+- Descuenta stock una sola vez al confirmar la entrega, evita sobreventa y permite reponer devoluciones únicamente cuando la mercadería regresa.
+- Añade rankings de productos, ventas por categoría, filtros por período y categoría, paginación e inventario crítico con datos reales.
+- Agrega pruebas automatizadas para productos, pedidos, stock, pagos, devoluciones, estadísticas, persistencia, integración financiera y PyInstaller.
+
 ## 0.2.36 - 2026-10-10
 
 - Permite abrir desde Horas una ficha completa de las reservas pasadas al usar **Mostrar todos**.

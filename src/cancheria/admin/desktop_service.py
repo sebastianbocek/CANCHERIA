@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import csv
+import inspect
 import json
 import re
 import uuid
@@ -14,15 +15,30 @@ from cancheria.config.court_sports import sport_icon, sport_menu_options
 from cancheria.domain.reservations.calendar import CalendarioLlamadas
 from cancheria.domain.events import registration as event_registration
 from cancheria.domain.finance.ledger import FinancialLedger, cents_to_pesos
+from cancheria.domain.bar import BarService
 from cancheria.infrastructure.persistence.json_store import JSONStore
 from cancheria.legacy_bridge import legacy_callable
 
 
 ACTIVE_STATES = {str(value).strip().lower() for value in cfg.ACTIVE_BOOKING_STATUSES}
 NOTIFICATION_KEYS = (
-    "bookings", "hours", "cash", "operation", "cases", "tournaments", "fixed_turns",
+    "bookings", "hours", "cash", "bar", "operation", "cases", "tournaments", "fixed_turns",
     "blacklist", "commands",
 )
+
+
+def _call_with_optional_now(callback, *args, now: dt.datetime):
+    """Pass the service clock when the callback supports it.
+
+    A few integrations and older test doubles still expose the historical
+    signature without ``now``.  Signature binding keeps those compatible
+    without swallowing a TypeError raised inside the callback itself.
+    """
+    try:
+        inspect.signature(callback).bind(*args, now=now)
+    except (TypeError, ValueError):
+        return callback(*args)
+    return callback(*args, now=now)
 
 
 class DesktopAdminService:
@@ -38,7 +54,10 @@ class DesktopAdminService:
         self.runtime = self.root / "runtime"
         self.calendar = CalendarioLlamadas(str(self.runtime / "calendario_turnos.csv"))
         try:
-            self.calendar.finalizar_turnos_vencidos()
+            _call_with_optional_now(
+                self.calendar.finalizar_turnos_vencidos,
+                now=self.calendar.local_now(),
+            )
         except OSError:
             # El contador aplica además un filtro defensivo; un bloqueo de E/S
             # transitorio no debe impedir que CANCHERIA o sus alertas inicien.
@@ -50,6 +69,9 @@ class DesktopAdminService:
         self._cash_closures_store = JSONStore(self.runtime / "caja_cierres.json")
         self.cash_ledger = FinancialLedger(self.runtime / "caja.db")
         self._migrate_v230_cash_json()
+        self.bar = BarService(
+            self.runtime / "bar.db", self.cash_ledger, courts_provider=self.courts
+        )
 
     def _migrate_v230_cash_json(self) -> None:
         """Preserve manual movements created by the first Caja implementation."""
@@ -78,7 +100,9 @@ class DesktopAdminService:
         finalize = getattr(self.calendar, "finalizar_turnos_vencidos", None)
         if callable(finalize):
             try:
-                finalize()
+                local_now = getattr(self.calendar, "local_now", None)
+                now = local_now() if callable(local_now) else dt.datetime.now()
+                _call_with_optional_now(finalize, now=now)
             except OSError:
                 pass
         rows = self.calendar.asegurar_ids_reservas()
@@ -144,10 +168,12 @@ class DesktopAdminService:
             logical.setdefault(identity, []).append(row)
         has_ended = getattr(self.calendar, "logical_reservation_has_ended", None)
         if callable(has_ended):
+            local_now = getattr(self.calendar, "local_now", None)
+            now = local_now() if callable(local_now) else dt.datetime.now()
             logical = {
                 identity: group
                 for identity, group in logical.items()
-                if not has_ended(group)
+                if not _call_with_optional_now(has_ended, group, now=now)
             }
         active = [row for group in logical.values() for row in group]
         pending = [
@@ -200,6 +226,7 @@ class DesktopAdminService:
             "bookings": bookings,
             "hours": 0,
             "cash": 0,
+            "bar": 0,
             "operation": 0,
             "cases": cases,
             "tournaments": tournaments,
@@ -689,6 +716,50 @@ class DesktopAdminService:
             destination, start_date=start_date, end_date=end_date,
             payment_method=method,
         )
+
+    # Bar / inventory is deliberately exposed through the administration
+    # facade so the desktop UI never depends on the WhatsApp agent.
+    def bar_snapshot(self, *, start_date: str, end_date: str, category: str = "Todos") -> dict[str, Any]:
+        return self.bar.snapshot(start_date=start_date, end_date=end_date, category=category)
+
+    def bar_products(self, *, include_inactive: bool = False) -> list[dict[str, Any]]:
+        return self.bar.products(include_inactive=include_inactive)
+
+    def bar_categories(self) -> list[dict[str, Any]]:
+        return self.bar.categories()
+
+    def create_bar_product(self, **values: Any) -> dict[str, Any]:
+        return self.bar.create_product(**values)
+
+    def update_bar_product(self, product_id: str, **values: Any) -> dict[str, Any]:
+        return self.bar.update_product(product_id, **values)
+
+    def adjust_bar_stock(self, **values: Any) -> dict[str, Any]:
+        return self.bar.adjust_stock(**values)
+
+    def bar_inventory_history(self, product_id: str) -> list[dict[str, Any]]:
+        return self.bar.inventory_history(product_id)
+
+    def create_bar_order(self, **values: Any) -> dict[str, Any]:
+        return self.bar.create_order(**values)
+
+    def update_bar_order(self, order_id: str, **values: Any) -> dict[str, Any]:
+        return self.bar.update_order(order_id, **values)
+
+    def bar_order(self, order_id: str) -> dict[str, Any]:
+        return self.bar.order(order_id)
+
+    def set_bar_order_status(self, order_id: str, status: str, **values: Any) -> dict[str, Any]:
+        return self.bar.set_delivery_status(order_id, status, **values)
+
+    def record_bar_payment(self, order_id: str, **values: Any) -> dict[str, Any]:
+        return self.bar.record_payment(order_id, **values)
+
+    def refund_bar_order(self, order_id: str, **values: Any) -> dict[str, Any]:
+        return self.bar.refund_order(order_id, **values)
+
+    def record_bar_expense(self, **values: Any) -> dict[str, Any]:
+        return self.bar.record_expense(**values)
 
     def command_reference(self) -> str:
         """Use the exact help catalog exposed by the WhatsApp admin command."""

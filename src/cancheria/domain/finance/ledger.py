@@ -89,6 +89,10 @@ def cents_to_pesos(cents: Any) -> int:
 
 def normalize_method(value: Any) -> str:
     text = str(value or "").strip().casefold()
+    if "mercado pago" in text or text == "mp":
+        return "Mercado Pago"
+    if "tarjeta" in text or "card" in text or "débito" in text or "debito" in text:
+        return "Tarjeta"
     if "efectivo" in text or text == "cash":
         return "Mixto" if "transfer" in text else "Efectivo"
     if "transfer" in text or "comprobante" in text:

@@ -39,6 +39,8 @@ jobs:
           --hidden-import playwright.async_api
           --hidden-import pytz
           --hidden-import dotenv
+          --hidden-import cancheria.domain.bar.service
+          --hidden-import cancheria.domain.finance.ledger
           "%CD%\cancheria_desktop.py"
 
       - name: Build configurador_cancheria.exe in repository root

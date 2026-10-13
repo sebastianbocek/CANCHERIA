@@ -339,6 +339,59 @@ class HoursPill(tk.Canvas):
         )
 
 
+class BarButton(tk.Canvas):
+    """Rounded, dependency-free action button used by the Bar dashboard."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        text: str,
+        command,
+        *,
+        color: str,
+        hover: str | None = None,
+        width: int = 142,
+        height: int = 42,
+        font=("Segoe UI", 9, "bold"),
+    ) -> None:
+        super().__init__(
+            parent, width=width, height=height, bg=parent.cget("bg"), bd=0,
+            highlightthickness=0, cursor="hand2", takefocus=1,
+        )
+        self._text = text
+        self._command = command
+        self._color = color
+        self._hover = hover or color
+        self._hovered = False
+        self._font = font
+        self.bind("<Configure>", self._draw)
+        self.bind("<Enter>", lambda _event: self._set_hover(True))
+        self.bind("<Leave>", lambda _event: self._set_hover(False))
+        self.bind("<ButtonRelease-1>", lambda _event: self._invoke())
+        self.bind("<Return>", lambda _event: self._invoke())
+        self.bind("<space>", lambda _event: self._invoke())
+
+    def _set_hover(self, value: bool) -> None:
+        self._hovered = value
+        self._draw()
+
+    def _invoke(self) -> None:
+        if callable(self._command):
+            self._command()
+
+    def _draw(self, _event=None) -> None:
+        self.delete("all")
+        width = max(10, self.winfo_width())
+        height = max(10, self.winfo_height())
+        _hours_rounded_box(
+            self, 1, 1, width - 1, height - 1, 9,
+            fill=self._hover if self._hovered else self._color,
+        )
+        self.create_text(
+            width / 2, height / 2, text=self._text, fill="white", font=self._font,
+        )
+
+
 class AdminTabView(tk.Frame):
     """Scrollable, theme-independent tab bar that preserves Notebook's API."""
 
@@ -354,6 +407,7 @@ class AdminTabView(tk.Frame):
         "Reservas y pagos": "▣",
         "Horas": "◷",
         "Caja": "$",
+        "Bar": "☕",
         "Operación": "⚙",
         "Atención humana": "●",
         "Torneos": "♛",
@@ -746,6 +800,7 @@ class AdminPanel(tk.Toplevel):
         self.bookings_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.hours_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.cash_tab = tk.Frame(self.notebook, bg=self.SURFACE)
+        self.bar_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.operation_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.cases_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.tournaments_tab = tk.Frame(self.notebook, bg=self.SURFACE)
@@ -755,6 +810,7 @@ class AdminPanel(tk.Toplevel):
         self.notebook.add(self.bookings_tab, text="Reservas y pagos")
         self.notebook.add(self.hours_tab, text="Horas")
         self.notebook.add(self.cash_tab, text="Caja")
+        self.notebook.add(self.bar_tab, text="Bar")
         self.notebook.add(self.operation_tab, text="Operación")
         self.notebook.add(self.cases_tab, text="Atención humana")
         self.notebook.add(self.tournaments_tab, text="Torneos")
@@ -765,6 +821,7 @@ class AdminPanel(tk.Toplevel):
             self.bookings_tab: "Reservas y pagos",
             self.hours_tab: "Horas",
             self.cash_tab: "Caja",
+            self.bar_tab: "Bar",
             self.operation_tab: "Operación",
             self.cases_tab: "Atención humana",
             self.tournaments_tab: "Torneos",
@@ -776,6 +833,7 @@ class AdminPanel(tk.Toplevel):
             self.bookings_tab: "bookings",
             self.hours_tab: "hours",
             self.cash_tab: "cash",
+            self.bar_tab: "bar",
             self.operation_tab: "operation",
             self.cases_tab: "cases",
             self.tournaments_tab: "tournaments",
@@ -787,6 +845,7 @@ class AdminPanel(tk.Toplevel):
         self._build_bookings()
         self._build_hours()
         self._build_cash()
+        self._build_bar()
         self._build_operation()
         self._build_cases()
         self._build_tournaments()
@@ -1866,11 +1925,991 @@ class AdminPanel(tk.Toplevel):
                 font=amount_font,
             )
 
+    def _build_bar(self) -> None:
+        """Build the Bar POS dashboard following the supplied visual reference."""
+        self.bar_tab.configure(bg=self.BG)
+        today = dt.date.today()
+        self.bar_start_var = tk.StringVar(value=today.isoformat())
+        self.bar_end_var = tk.StringVar(value=today.isoformat())
+        self.bar_period_var = tk.StringVar(value="Hoy")
+        self.bar_category_var = tk.StringVar(value="Todos")
+        self.bar_summary_vars = {
+            "sales": tk.StringVar(value="$ 0"),
+            "active": tk.StringVar(value="0"),
+            "low": tk.StringVar(value="0"),
+        }
+        self.bar_page = 0
+        self.bar_page_size = 7 if self._compact_height else 9
+        self._bar_snapshot: dict = {}
+        self._bar_selected_order_id = ""
+
+        self.bar_tab.grid_columnconfigure(0, weight=3, uniform="bar-main")
+        self.bar_tab.grid_columnconfigure(1, weight=1, uniform="bar-main")
+        self.bar_tab.grid_rowconfigure(2, weight=1)
+
+        cards = tk.Frame(self.bar_tab, bg=self.BG)
+        cards.grid(row=0, column=0, sticky="nsew", padx=(14, 5), pady=(9, 6))
+        specs = (
+            ("sales", "Ventas de hoy", "$", self.GREEN, "#DDF9EC"),
+            ("active", "Pedidos activos", "▤", self.BLUE, "#E8F1FF"),
+            ("low", "Productos bajos", "◇", self.ORANGE, "#FFF3E6"),
+        )
+        for column, (key, title, icon, color, icon_bg) in enumerate(specs):
+            cards.grid_columnconfigure(column, weight=1, uniform="bar-card")
+            card = tk.Frame(
+                cards, bg=self.SURFACE, highlightbackground=self.BORDER,
+                highlightthickness=1, height=86 if self._compact_height else 104,
+            )
+            card.grid(row=0, column=column, sticky="nsew", padx=4)
+            card.grid_propagate(False)
+            icon_holder = tk.Frame(
+                card, bg=icon_bg, width=52 if self._compact_height else 62,
+                height=52 if self._compact_height else 62,
+            )
+            icon_holder.pack(side="left", padx=(15, 12), pady=16 if self._compact_height else 20)
+            icon_holder.pack_propagate(False)
+            tk.Label(
+                icon_holder, text=icon, bg=icon_bg, fg=color,
+                font=("Segoe UI Symbol", 21, "bold"),
+            ).pack(expand=True)
+            value_area = tk.Frame(card, bg=self.SURFACE)
+            value_area.pack(side="left", fill="y", pady=11 if self._compact_height else 17)
+            tk.Label(
+                value_area, textvariable=self.bar_summary_vars[key], bg=self.SURFACE,
+                fg=color if key != "active" else self.BLUE,
+                font=("Segoe UI", 19 if self._compact_height else 22, "bold"), anchor="w",
+            ).pack(anchor="w")
+            tk.Label(
+                value_area, text=title, bg=self.SURFACE, fg=self.MUTED,
+                font=("Segoe UI", 9), anchor="w",
+            ).pack(anchor="w", pady=(2, 0))
+
+        top_panel = self._bar_panel(self.bar_tab, "▥  Top productos", "Ver todos", self._show_bar_ranking)
+        top_panel.grid(row=0, column=1, sticky="nsew", padx=(5, 14), pady=(9, 6))
+        self.bar_top_rows = tk.Frame(top_panel, bg=self.SURFACE)
+        self.bar_top_rows.pack(fill="both", expand=True, padx=13, pady=(1, 10))
+
+        toolbar = tk.Frame(
+            self.bar_tab, bg=self.SURFACE, highlightbackground=self.BORDER, highlightthickness=1,
+        )
+        toolbar.grid(row=1, column=0, sticky="ew", padx=(14, 5), pady=(0, 6))
+        toolbar.grid_columnconfigure(0, weight=1)
+        filters = tk.Frame(toolbar, bg=self.SURFACE)
+        filters.grid(row=0, column=0, sticky="w", padx=12, pady=8)
+        tk.Label(filters, text="Turno:", bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 7))
+        period = ttk.Combobox(
+            filters, textvariable=self.bar_period_var, state="readonly", width=17,
+            values=("Hoy", "Ayer", "Últimos 7 días", "Mes actual", "Período personalizado"),
+            font=("Segoe UI", 9),
+        )
+        period.pack(side="left", padx=(0, 16), ipady=5)
+        period.bind("<<ComboboxSelected>>", lambda _event: self._apply_bar_period())
+        tk.Frame(filters, bg=self.BORDER, width=1, height=28).pack(side="left", padx=(0, 14))
+        tk.Label(filters, text="Categoría:", bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 7))
+        self.bar_category_buttons: dict[str, tk.Button] = {}
+        for category in ("Todos", "Bebidas", "Comidas", "Snacks"):
+            button = tk.Button(
+                filters, text=category, command=lambda value=category: self._set_bar_category(value),
+                relief="flat", bd=0, padx=8, pady=7, cursor="hand2",
+                font=("Segoe UI", 8, "bold" if category == "Todos" else "normal"),
+            )
+            button.pack(side="left", padx=2)
+            self.bar_category_buttons[category] = button
+        self._style_bar_categories()
+
+        actions = tk.Frame(toolbar, bg=self.SURFACE)
+        actions.grid(row=0, column=1, sticky="e", padx=(6, 10), pady=6)
+        for text, command, color, hover, width in (
+            ("⊕  Nuevo pedido", self._new_bar_order_dialog, self.BLUE, "#0F62E8", 112),
+            ("▣  Cobrar pedido", self._choose_bar_payment, "#079455", "#067442", 120),
+            ("▣  Registrar gasto", self._bar_expense_dialog, self.ORANGE, "#EA650C", 125),
+        ):
+            BarButton(actions, text, command, color=color, hover=hover, width=width, height=38).pack(side="left", padx=3)
+
+        category_panel = self._bar_panel(self.bar_tab, "◔  Ventas por categoría", "Ver detalle", self._show_bar_categories)
+        category_panel.grid(row=1, column=1, sticky="nsew", padx=(5, 14), pady=(0, 6))
+        self.bar_category_rows = tk.Frame(category_panel, bg=self.SURFACE)
+        self.bar_category_rows.pack(fill="both", expand=True, padx=13, pady=(1, 9))
+
+        orders_panel = tk.Frame(self.bar_tab, bg=self.SURFACE, highlightbackground=self.BORDER, highlightthickness=1)
+        orders_panel.grid(row=2, column=0, sticky="nsew", padx=(14, 5), pady=(0, 12))
+        tk.Label(orders_panel, text="Pedidos del bar", bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 12, "bold"), anchor="w").pack(fill="x", padx=14, pady=(9, 6))
+        header = tk.Frame(orders_panel, bg="#F1F5F9", height=34)
+        header.pack(fill="x", padx=12)
+        header.pack_propagate(False)
+        self.bar_table_weights = (9, 27, 19, 17, 13, 13, 7)
+        for index, weight in enumerate(self.bar_table_weights):
+            header.grid_columnconfigure(index, weight=weight, uniform="bar-table")
+        for index, title in enumerate(("Hora", "Pedido", "Cliente / Mesa", "Estado", "Total", "Pago", "Acciones")):
+            tk.Label(
+                header, text=title, bg="#F1F5F9", fg=self.NAVY,
+                font=("Segoe UI", 8, "bold"), anchor="w" if index not in {0, 4, 6} else "center",
+            ).grid(row=0, column=index, sticky="nsew", padx=6)
+        self.bar_rows_frame = tk.Frame(orders_panel, bg=self.SURFACE)
+        self.bar_rows_frame.pack(fill="both", expand=True, padx=12)
+        self.bar_rows_frame.bind("<MouseWheel>", self._bar_mousewheel)
+        footer = tk.Frame(orders_panel, bg="#F5F8FE")
+        footer.pack(fill="x", padx=12, pady=(3, 9))
+        self.bar_pager = tk.Frame(footer, bg="#F5F8FE")
+        self.bar_pager.pack(side="right", padx=8, pady=5)
+        self.bar_page_var = tk.StringVar(value="Sin pedidos en el período")
+        tk.Label(footer, textvariable=self.bar_page_var, bg="#F5F8FE", fg=self.MUTED, font=("Segoe UI", 8)).pack(side="left", padx=10, pady=7)
+
+        inventory_panel = self._bar_panel(self.bar_tab, "▲  Stock crítico / Inventario", "Ver inventario", self._show_bar_inventory)
+        inventory_panel.grid(row=2, column=1, sticky="nsew", padx=(5, 14), pady=(0, 12))
+        stock_actions = tk.Frame(inventory_panel, bg=self.SURFACE)
+        stock_actions.pack(fill="x", padx=10, pady=(0, 7))
+        for text, operation, color, width in (("＋ Stock", "add", self.GREEN, 76), ("− Stock", "remove", self.ORANGE, 76)):
+            BarButton(
+                stock_actions, text, lambda op=operation: self._bar_stock_dialog(op),
+                color=color, width=width, height=36, font=("Segoe UI", 8, "bold"),
+            ).pack(side="left", padx=2)
+        BarButton(
+            stock_actions, "＋ Nuevo producto", self._bar_product_dialog,
+            color=self.BLUE, width=116, height=36, font=("Segoe UI", 7, "bold"),
+        ).pack(side="left", padx=2)
+        self.bar_inventory_rows = tk.Frame(inventory_panel, bg=self.SURFACE)
+        self.bar_inventory_rows.pack(fill="both", expand=True, padx=13, pady=(0, 9))
+
+    def _bar_panel(self, parent: tk.Widget, title: str, link: str, command) -> tk.Frame:
+        panel = tk.Frame(parent, bg=self.SURFACE, highlightbackground=self.BORDER, highlightthickness=1)
+        heading = tk.Frame(panel, bg=self.SURFACE)
+        heading.pack(fill="x", padx=12, pady=(8, 4))
+        tk.Label(heading, text=title, bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 10, "bold"), anchor="w").pack(side="left")
+        tk.Button(
+            heading, text=link, command=command, bg=self.SURFACE, fg=self.BLUE,
+            activebackground=self.SURFACE, activeforeground="#0F62E8", relief="flat", bd=0,
+            cursor="hand2", font=("Segoe UI", 8),
+        ).pack(side="right")
+        return panel
+
+    def _apply_bar_period(self) -> None:
+        today = dt.date.today()
+        choice = self.bar_period_var.get()
+        if choice == "Hoy":
+            start = end = today
+        elif choice == "Ayer":
+            start = end = today - dt.timedelta(days=1)
+        elif choice == "Últimos 7 días":
+            start, end = today - dt.timedelta(days=6), today
+        elif choice == "Mes actual":
+            start, end = today.replace(day=1), today
+        else:
+            start_text = simpledialog.askstring("Período personalizado", "Fecha desde (AAAA-MM-DD):", initialvalue=self.bar_start_var.get(), parent=self)
+            if not start_text:
+                self.bar_period_var.set("Hoy")
+                return
+            end_text = simpledialog.askstring("Período personalizado", "Fecha hasta (AAAA-MM-DD):", initialvalue=self.bar_end_var.get(), parent=self)
+            if not end_text:
+                self.bar_period_var.set("Hoy")
+                return
+            try:
+                start, end = dt.date.fromisoformat(start_text), dt.date.fromisoformat(end_text)
+                if end < start:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Bar", "Ingresá un período válido.", parent=self)
+                self.bar_period_var.set("Hoy")
+                return
+        self.bar_start_var.set(start.isoformat())
+        self.bar_end_var.set(end.isoformat())
+        self._refresh_bar(reset_page=True)
+
+    def _set_bar_category(self, value: str) -> None:
+        self.bar_category_var.set(value)
+        self._style_bar_categories()
+        self._refresh_bar(reset_page=True)
+
+    def _style_bar_categories(self) -> None:
+        selected = self.bar_category_var.get()
+        for value, button in getattr(self, "bar_category_buttons", {}).items():
+            active = value == selected
+            button.configure(
+                bg=self.BLUE if active else "#F3F6FB", fg="white" if active else self.NAVY,
+                activebackground=self.BLUE if active else "#DBEAFE",
+                activeforeground="white" if active else self.BLUE,
+            )
+
+    def _refresh_bar(self, reset_page: bool = False) -> None:
+        if not hasattr(self, "bar_rows_frame"):
+            return
+        method = getattr(self.service, "bar_snapshot", None)
+        if not callable(method):
+            return
+        snapshot = method(
+            start_date=self.bar_start_var.get(), end_date=self.bar_end_var.get(),
+            category=self.bar_category_var.get(),
+        )
+        self._bar_snapshot = dict(snapshot)
+        self.bar_summary_vars["sales"].set(self._money(snapshot.get("sales_today")))
+        self.bar_summary_vars["active"].set(str(snapshot.get("active_orders", 0)))
+        self.bar_summary_vars["low"].set(str(snapshot.get("low_products_count", 0)))
+        if reset_page:
+            self.bar_page = 0
+        self._render_bar_orders(list(snapshot.get("orders") or []))
+        self._render_bar_top(list(snapshot.get("top_products") or []))
+        self._render_bar_categories(list(snapshot.get("category_sales") or []))
+        self._render_bar_inventory(list(snapshot.get("critical_stock") or []))
+
+    def _render_bar_top(self, rows: list[dict]) -> None:
+        for child in self.bar_top_rows.winfo_children():
+            child.destroy()
+        if not rows:
+            tk.Label(
+                self.bar_top_rows, text="Sin ventas confirmadas en el período",
+                bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI", 8),
+            ).pack(expand=True)
+            return
+        maximum = max(int(row.get("quantity") or 0) for row in rows[:5]) or 1
+        for row in rows[:5]:
+            line = tk.Frame(self.bar_top_rows, bg=self.SURFACE)
+            line.pack(fill="x", pady=2)
+            tk.Label(
+                line, text=str(row.get("name") or "")[:18], bg=self.SURFACE,
+                fg=self.NAVY, font=("Segoe UI", 8), width=15, anchor="w",
+            ).pack(side="left")
+            canvas = tk.Canvas(line, bg=self.SURFACE, height=12, highlightthickness=0)
+            canvas.pack(side="left", fill="x", expand=True, padx=5)
+            quantity = int(row.get("quantity") or 0)
+
+            def draw(event, widget=canvas, value=quantity, top=maximum):
+                widget.delete("all")
+                width = max(10, event.width)
+                widget.create_rectangle(0, 2, width, 10, fill="#E7ECF4", outline="")
+                widget.create_rectangle(0, 2, width * value / top, 10, fill=self.BLUE, outline="")
+
+            canvas.bind("<Configure>", draw)
+            tk.Label(
+                line, text=str(quantity), bg=self.SURFACE, fg=self.NAVY,
+                font=("Segoe UI", 8), width=4, anchor="e",
+            ).pack(side="right")
+
+    def _render_bar_categories(self, rows: list[dict]) -> None:
+        for child in self.bar_category_rows.winfo_children():
+            child.destroy()
+        if not rows:
+            tk.Label(
+                self.bar_category_rows, text="Sin cobros para calcular categorías",
+                bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI", 8),
+            ).pack(expand=True)
+            return
+        for row in rows[:5]:
+            line = tk.Frame(self.bar_category_rows, bg=self.SURFACE)
+            line.pack(fill="x", pady=2)
+            tk.Label(
+                line, text=str(row.get("name") or "")[:16], bg=self.SURFACE,
+                fg=self.NAVY, font=("Segoe UI", 8), width=13, anchor="w",
+            ).pack(side="left")
+            canvas = tk.Canvas(line, bg=self.SURFACE, height=12, highlightthickness=0)
+            canvas.pack(side="left", fill="x", expand=True, padx=5)
+            percent = float(row.get("percent") or 0)
+
+            def draw(event, widget=canvas, value=percent):
+                widget.delete("all")
+                width = max(10, event.width)
+                widget.create_rectangle(0, 2, width, 10, fill="#E7ECF4", outline="")
+                widget.create_rectangle(0, 2, width * value / 100, 10, fill=self.BLUE, outline="")
+
+            canvas.bind("<Configure>", draw)
+            tk.Label(
+                line, text=f"{percent:g}%", bg=self.SURFACE, fg=self.NAVY,
+                font=("Segoe UI", 8), width=5, anchor="e",
+            ).pack(side="right")
+
+    def _render_bar_inventory(self, rows: list[dict]) -> None:
+        for child in self.bar_inventory_rows.winfo_children():
+            child.destroy()
+        if not rows:
+            tk.Label(
+                self.bar_inventory_rows, text="No hay productos registrados",
+                bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI", 8),
+            ).pack(expand=True)
+            return
+        visible = [row for row in rows if row.get("stock_level") != "ok"] or rows
+        colors = {"critical": self.RED, "low": self.ORANGE, "ok": self.GREEN}
+        for row in visible[:8 if not self._compact_height else 6]:
+            line = tk.Frame(self.bar_inventory_rows, bg=self.SURFACE)
+            line.pack(fill="x", pady=3)
+            color = colors.get(str(row.get("stock_level")), self.GREEN)
+            dot = tk.Canvas(line, width=12, height=12, bg=self.SURFACE, highlightthickness=0)
+            dot.pack(side="left", padx=(1, 8))
+            dot.create_oval(1, 1, 11, 11, fill=color, outline=color)
+            tk.Label(
+                line, text=str(row.get("name") or "")[:22], bg=self.SURFACE,
+                fg=self.NAVY, font=("Segoe UI", 8), anchor="w",
+            ).pack(side="left", fill="x", expand=True)
+            tk.Label(
+                line, text=f"{row.get('stock', 0)} {row.get('unit', 'unidades')}",
+                bg=self.SURFACE, fg=color, font=("Segoe UI", 8, "bold"), anchor="e",
+            ).pack(side="right")
+
+    def _render_bar_orders(self, orders: list[dict]) -> None:
+        for child in self.bar_rows_frame.winfo_children():
+            child.destroy()
+        for child in self.bar_pager.winfo_children():
+            child.destroy()
+        pages = max(1, (len(orders) + self.bar_page_size - 1) // self.bar_page_size)
+        self.bar_page = min(self.bar_page, pages - 1)
+        start = self.bar_page * self.bar_page_size
+        visible = orders[start:start + self.bar_page_size]
+        end = start + len(visible)
+        period = f"{self.bar_start_var.get()} a {self.bar_end_var.get()}"
+        self.bar_page_var.set(f"{period} · Mostrando {start + 1 if visible else 0} a {end} de {len(orders)} pedidos")
+        self._bar_page_button("‹", self.bar_page - 1, self.bar_page > 0)
+        for page in range(max(0, self.bar_page - 1), min(pages, max(0, self.bar_page - 1) + 3)):
+            self._bar_page_button(str(page + 1), page, True, selected=page == self.bar_page)
+        self._bar_page_button("›", self.bar_page + 1, self.bar_page < pages - 1)
+        if not visible:
+            tk.Label(
+                self.bar_rows_frame, text="Todavía no hay pedidos del bar para este período.",
+                bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI", 9), pady=45,
+            ).pack(fill="both", expand=True)
+            return
+        delivery_colors = {
+            "open": ("#DBEAFE", "#0B68E8"), "preparing": ("#FFEDD5", "#C65100"),
+            "delivered": ("#DCFCE7", "#07864C"), "cancelled": ("#FEE2E2", "#DC2626"),
+        }
+        payment_colors = {
+            "pending": ("#F1F5F9", self.MUTED), "partial": ("#FEF3C7", "#B45309"),
+            "paid": ("#DCFCE7", "#07864C"), "refunded": ("#FEE2E2", "#DC2626"),
+        }
+        for row in visible:
+            line = tk.Frame(self.bar_rows_frame, bg=self.SURFACE, height=37)
+            line.pack(fill="x")
+            line.pack_propagate(False)
+            for index, weight in enumerate(self.bar_table_weights):
+                line.grid_columnconfigure(index, weight=weight, uniform="bar-table")
+            try:
+                hour = dt.datetime.fromisoformat(str(row.get("created_at"))).strftime("%H:%M")
+            except ValueError:
+                hour = "--:--"
+            for column, value in enumerate((hour, str(row.get("summary") or "")[:36], str(row.get("display_location") or "")[:24])):
+                tk.Label(
+                    line, text=value, bg=self.SURFACE, fg=self.NAVY,
+                    font=("Segoe UI", 8, "bold" if column == 0 else "normal"),
+                    anchor="center" if column == 0 else "w",
+                ).grid(row=0, column=column, sticky="nsew", padx=6)
+            delivery_bg, delivery_fg = delivery_colors.get(row.get("delivery_status"), ("#F1F5F9", self.NAVY))
+            holder = tk.Frame(line, bg=self.SURFACE)
+            holder.grid(row=0, column=3, sticky="nsew", padx=4, pady=6)
+            tk.Label(
+                holder, text=row.get("delivery_label"), bg=delivery_bg, fg=delivery_fg,
+                font=("Segoe UI", 7, "bold"), padx=7, pady=2,
+            ).pack(expand=True, fill="x")
+            tk.Label(
+                line, text=self._money(row.get("total")), bg=self.SURFACE, fg=self.NAVY,
+                font=("Segoe UI", 8, "bold"), anchor="e",
+            ).grid(row=0, column=4, sticky="nsew", padx=6)
+            pay_bg, pay_fg = payment_colors.get(row.get("payment_status"), ("#F1F5F9", self.MUTED))
+            pay_holder = tk.Frame(line, bg=self.SURFACE)
+            pay_holder.grid(row=0, column=5, sticky="nsew", padx=4, pady=6)
+            tk.Label(
+                pay_holder, text=row.get("payment_label"), bg=pay_bg, fg=pay_fg,
+                font=("Segoe UI", 7, "bold"), padx=5, pady=2,
+            ).pack(expand=True, fill="x")
+            tk.Button(
+                line, text="•••", command=lambda item=row: self._bar_order_menu(item),
+                bg=self.SURFACE, fg=self.NAVY, activebackground="#DBEAFE", relief="flat",
+                bd=0, cursor="hand2", font=("Segoe UI", 9, "bold"),
+            ).grid(row=0, column=6, sticky="nsew", padx=4)
+            tk.Frame(self.bar_rows_frame, bg="#E6EDF7", height=1).pack(fill="x")
+
+    def _bar_page_button(self, text: str, page: int, enabled: bool, *, selected: bool = False) -> None:
+        tk.Button(
+            self.bar_pager, text=text, command=lambda target=page: self._bar_go_page(target),
+            state="normal" if enabled else "disabled", width=3, pady=3, relief="flat", bd=0,
+            bg=self.BLUE if selected else self.SURFACE, fg="white" if selected else self.NAVY,
+            disabledforeground="#94A3B8", cursor="hand2", font=("Segoe UI", 8, "bold"),
+        ).pack(side="left", padx=1)
+
+    def _bar_go_page(self, page: int) -> None:
+        total = len(self._bar_snapshot.get("orders") or [])
+        pages = max(1, (total + self.bar_page_size - 1) // self.bar_page_size)
+        self.bar_page = min(max(0, page), pages - 1)
+        self._render_bar_orders(list(self._bar_snapshot.get("orders") or []))
+
+    def _bar_mousewheel(self, event) -> str:
+        self._bar_go_page(self.bar_page + (-1 if event.delta > 0 else 1))
+        return "break"
+
+    def _bar_product_dialog(self, product: dict | None = None) -> None:
+        edit = product is not None
+        dialog = tk.Toplevel(self)
+        dialog.title("Editar producto" if edit else "Nuevo producto")
+        dialog.configure(bg=self.SURFACE)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        categories_method = getattr(self.service, "bar_categories", None)
+        category_names = [row.get("name", "") for row in categories_method()] if callable(categories_method) else []
+        product = dict(product or {})
+        values = {
+            "name": tk.StringVar(value=str(product.get("name") or "")),
+            "category": tk.StringVar(value=str(product.get("category") or (category_names[0] if category_names else "Bebidas"))),
+            "sale_price": tk.StringVar(value=str(product.get("sale_price") or "")),
+            "cost_price": tk.StringVar(value="" if product.get("cost_price") is None else str(product.get("cost_price"))),
+            "stock": tk.StringVar(value=str(product.get("stock") or 0)),
+            "minimum_stock": tk.StringVar(value=str(product.get("minimum_stock") or 0)),
+            "unit": tk.StringVar(value=str(product.get("unit") or "unidad")),
+            "active": tk.BooleanVar(value=bool(product.get("active", True))),
+        }
+        tk.Label(
+            dialog, text="Producto del Bar", bg=self.SURFACE, fg=self.NAVY,
+            font=("Segoe UI", 15, "bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=18, pady=(16, 8))
+        fields = (
+            ("Nombre", "name"), ("Categoría", "category"),
+            ("Precio de venta", "sale_price"), ("Precio de costo (opcional)", "cost_price"),
+            ("Stock actual", "stock"), ("Stock mínimo", "minimum_stock"),
+            ("Unidad de medida", "unit"),
+        )
+        for index, (label, key) in enumerate(fields, start=1):
+            tk.Label(dialog, text=label, bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 9, "bold")).grid(
+                row=index, column=0, sticky="w", padx=18, pady=7
+            )
+            if key == "category":
+                widget = ttk.Combobox(dialog, textvariable=values[key], values=category_names, width=31)
+            else:
+                widget = tk.Entry(dialog, textvariable=values[key], width=34)
+            if edit and key == "stock":
+                widget.configure(state="disabled")
+            widget.grid(row=index, column=1, sticky="ew", padx=(4, 18), pady=7, ipady=3)
+        tk.Checkbutton(
+            dialog, text="Producto activo", variable=values["active"], bg=self.SURFACE,
+            activebackground=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 9),
+        ).grid(row=8, column=0, columnspan=2, sticky="w", padx=16, pady=6)
+
+        def save() -> None:
+            try:
+                payload = {
+                    "name": values["name"].get(), "category": values["category"].get(),
+                    "sale_price": values["sale_price"].get(), "cost_price": values["cost_price"].get(),
+                    "minimum_stock": values["minimum_stock"].get(), "unit": values["unit"].get(),
+                    "active": values["active"].get(),
+                }
+                if edit:
+                    self.service.update_bar_product(product["product_id"], **payload)
+                else:
+                    self.service.create_bar_product(
+                        **payload, stock=values["stock"].get(), responsible="Administrador"
+                    )
+                dialog.destroy()
+                self._refresh_bar()
+            except Exception as exc:
+                messagebox.showerror("Producto", str(exc), parent=dialog)
+
+        BarButton(
+            dialog, "Guardar producto", save, color=self.BLUE, width=160, height=40,
+        ).grid(row=9, column=0, columnspan=2, pady=(8, 16))
+
+    def _bar_stock_dialog(self, operation: str, product: dict | None = None) -> None:
+        products_method = getattr(self.service, "bar_products", None)
+        products = products_method(include_inactive=True) if callable(products_method) else []
+        if not products:
+            messagebox.showinfo("Inventario", "Primero registrá un producto.", parent=self)
+            self._bar_product_dialog()
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title("Agregar stock" if operation == "add" else "Descontar stock")
+        dialog.configure(bg=self.SURFACE)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        labels = {f"{row['name']} · actual {row['stock']} {row['unit']}": row for row in products}
+        initial = next((label for label, row in labels.items() if product and row["product_id"] == product.get("product_id")), next(iter(labels)))
+        selected = tk.StringVar(value=initial)
+        quantity = tk.StringVar(value="1")
+        reason = tk.StringVar(value="Recepción de mercadería" if operation == "add" else "Ajuste de inventario")
+        responsible = tk.StringVar(value="Administrador")
+        tk.Label(dialog, text="Movimiento de inventario", bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 14, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=18, pady=(16, 10)
+        )
+        for index, (label, variable) in enumerate((
+            ("Producto", selected), ("Cantidad", quantity), ("Motivo", reason), ("Responsable", responsible)
+        ), start=1):
+            tk.Label(dialog, text=label, bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 9, "bold")).grid(
+                row=index, column=0, sticky="w", padx=18, pady=8
+            )
+            widget = ttk.Combobox(dialog, textvariable=variable, values=tuple(labels), state="readonly", width=39) if label == "Producto" else tk.Entry(dialog, textvariable=variable, width=42)
+            widget.grid(row=index, column=1, padx=(4, 18), pady=8, ipady=3)
+
+        def save() -> None:
+            try:
+                target = labels[selected.get()]
+                self.service.adjust_bar_stock(
+                    product_id=target["product_id"], quantity=quantity.get(), operation=operation,
+                    reason=reason.get(), responsible=responsible.get(),
+                )
+                dialog.destroy()
+                self._refresh_bar()
+            except Exception as exc:
+                messagebox.showerror("Inventario", str(exc), parent=dialog)
+
+        BarButton(
+            dialog, "＋ Confirmar stock" if operation == "add" else "− Confirmar descuento",
+            save, color=self.GREEN if operation == "add" else self.ORANGE, width=190, height=40,
+        ).grid(row=5, column=0, columnspan=2, pady=(8, 16))
+
+    def _new_bar_order_dialog(self, order: dict | None = None) -> None:
+        edit = order is not None
+        products_method = getattr(self.service, "bar_products", None)
+        products = products_method() if callable(products_method) else []
+        if not products:
+            messagebox.showinfo("Nuevo pedido", "Registrá al menos un producto activo antes de crear pedidos.", parent=self)
+            self._bar_product_dialog()
+            return
+        order = dict(order or {})
+        dialog = tk.Toplevel(self)
+        dialog.title("Editar pedido" if edit else "Nuevo pedido")
+        dialog.configure(bg=self.SURFACE)
+        dialog.geometry("720x650")
+        dialog.minsize(650, 560)
+        dialog.transient(self)
+        dialog.grid_columnconfigure(0, weight=1)
+        dialog.grid_rowconfigure(2, weight=1)
+        tk.Label(
+            dialog, text="Editar pedido" if edit else "Nuevo pedido del Bar",
+            bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 16, "bold"), anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=20, pady=(16, 8))
+
+        details = tk.Frame(dialog, bg="#F8FAFC", highlightbackground=self.BORDER, highlightthickness=1)
+        details.grid(row=1, column=0, sticky="ew", padx=20, pady=(0, 10))
+        client = tk.StringVar(value=str(order.get("client") or ""))
+        origin = tk.StringVar(value=str(order.get("origin") or "Mostrador"))
+        location = tk.StringVar(value=str(order.get("location") or ""))
+        notes = tk.StringVar(value=str(order.get("notes") or ""))
+        for column in range(4):
+            details.grid_columnconfigure(column, weight=1)
+        for column, (label, variable) in enumerate((("Cliente", client), ("Origen", origin), ("Cancha / Mesa", location), ("Observaciones", notes))):
+            tk.Label(details, text=label, bg="#F8FAFC", fg=self.NAVY, font=("Segoe UI", 8, "bold")).grid(
+                row=0, column=column, sticky="w", padx=8, pady=(8, 3)
+            )
+            if label == "Origen":
+                widget = ttk.Combobox(details, textvariable=variable, values=("Cancha", "Mesa", "Mostrador"), state="readonly", width=16)
+            elif label == "Cancha / Mesa":
+                widget = ttk.Combobox(details, textvariable=variable, width=17)
+            else:
+                widget = tk.Entry(details, textvariable=variable, width=20)
+            widget.grid(row=1, column=column, sticky="ew", padx=8, pady=(0, 9), ipady=3)
+            if label == "Cancha / Mesa":
+                location_widget = widget
+
+        def update_locations(*_args) -> None:
+            if origin.get() == "Cancha":
+                courts = tuple(getattr(self.service, "courts", lambda: [])())
+                location_widget.configure(values=courts, state="readonly")
+                if location.get() not in courts:
+                    location.set(courts[0] if courts else "")
+            else:
+                location_widget.configure(values=(), state="normal")
+                if origin.get() == "Mostrador" and not location.get():
+                    location.set("Mostrador")
+
+        origin.trace_add("write", update_locations)
+        update_locations()
+
+        product_box = tk.Frame(dialog, bg=self.SURFACE, highlightbackground=self.BORDER, highlightthickness=1)
+        product_box.grid(row=2, column=0, sticky="nsew", padx=20)
+        product_box.grid_columnconfigure(1, weight=1)
+        tk.Label(product_box, text="Producto", bg="#F1F5F9", fg=self.NAVY, font=("Segoe UI", 9, "bold"), anchor="w").grid(row=0, column=0, columnspan=2, sticky="ew", padx=1, pady=1)
+        tk.Label(product_box, text="Precio", bg="#F1F5F9", fg=self.NAVY, font=("Segoe UI", 9, "bold")).grid(row=0, column=2, sticky="ew")
+        tk.Label(product_box, text="Cantidad", bg="#F1F5F9", fg=self.NAVY, font=("Segoe UI", 9, "bold")).grid(row=0, column=3, sticky="ew", padx=(0, 8))
+        existing = {item["product_id"]: int(item["quantity"]) for item in order.get("items", [])}
+        quantities: dict[str, tk.IntVar] = {}
+        total_var = tk.StringVar(value="$ 0")
+
+        def update_total(*_args) -> None:
+            total = 0
+            for product in products:
+                try:
+                    quantity = max(0, int(quantities[product["product_id"]].get()))
+                except (tk.TclError, ValueError):
+                    quantity = 0
+                total += int(product.get("sale_price") or 0) * quantity
+            total_var.set(self._money(total))
+
+        for index, product in enumerate(products, start=1):
+            variable = tk.IntVar(value=existing.get(product["product_id"], 0))
+            quantities[product["product_id"]] = variable
+            variable.trace_add("write", update_total)
+            color = self.RED if product.get("stock_level") == "critical" else self.ORANGE if product.get("stock_level") == "low" else self.GREEN
+            dot = tk.Canvas(product_box, width=12, height=12, bg=self.SURFACE, highlightthickness=0)
+            dot.grid(row=index, column=0, padx=(9, 5), pady=6)
+            dot.create_oval(1, 1, 11, 11, fill=color, outline=color)
+            tk.Label(
+                product_box, text=f"{product['name']}  · stock {product['stock']} {product['unit']}",
+                bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 9), anchor="w",
+            ).grid(row=index, column=1, sticky="ew", pady=5)
+            tk.Label(product_box, text=self._money(product["sale_price"]), bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 9, "bold")).grid(row=index, column=2, padx=12)
+            tk.Spinbox(product_box, from_=0, to=max(0, int(product["stock"])), textvariable=variable, width=6, command=update_total).grid(row=index, column=3, padx=(0, 10), pady=4, ipady=2)
+        update_total()
+
+        bottom = tk.Frame(dialog, bg=self.SURFACE)
+        bottom.grid(row=3, column=0, sticky="ew", padx=20, pady=14)
+        tk.Label(bottom, text="Total", bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI", 10)).pack(side="left")
+        tk.Label(bottom, textvariable=total_var, bg=self.SURFACE, fg=self.BLUE, font=("Segoe UI", 16, "bold")).pack(side="left", padx=9)
+
+        def save() -> None:
+            try:
+                items = [{"product_id": product_id, "quantity": variable.get()} for product_id, variable in quantities.items() if variable.get() > 0]
+                payload = {
+                    "items": items, "client": client.get(), "origin": origin.get(),
+                    "location": location.get(), "notes": notes.get(), "responsible": "Administrador",
+                }
+                if edit:
+                    self.service.update_bar_order(order["order_id"], **payload)
+                else:
+                    self.service.create_bar_order(**payload)
+                dialog.destroy()
+                self._refresh_bar(reset_page=True)
+            except Exception as exc:
+                messagebox.showerror("Pedido", str(exc), parent=dialog)
+
+        BarButton(bottom, "Guardar pedido", save, color=self.BLUE, width=150, height=42).pack(side="right")
+
+    def _choose_bar_payment(self) -> None:
+        orders = [
+            row for row in self._bar_snapshot.get("orders", [])
+            if row.get("balance_cents", 0) > 0 and row.get("delivery_status") != "cancelled"
+        ]
+        selected = next((row for row in orders if row["order_id"] == self._bar_selected_order_id), None)
+        if selected is not None:
+            self._bar_payment_dialog(selected)
+            return
+        if not orders:
+            messagebox.showinfo("Cobrar pedido", "No hay pedidos pendientes de cobro en el período.", parent=self)
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title("Seleccionar pedido")
+        dialog.configure(bg=self.SURFACE)
+        dialog.geometry("520x360")
+        dialog.transient(self)
+        tk.Label(dialog, text="Seleccioná el pedido a cobrar", bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=18, pady=14)
+        listbox = tk.Listbox(dialog, font=("Segoe UI", 10), relief="flat", highlightbackground=self.BORDER, highlightthickness=1)
+        listbox.pack(fill="both", expand=True, padx=18, pady=(0, 12))
+        for row in orders:
+            listbox.insert("end", f"#{row['order_number']} · {row['display_location']} · saldo {self._money(row['balance'])}")
+
+        def choose() -> None:
+            selection = listbox.curselection()
+            if not selection:
+                return
+            target = orders[selection[0]]
+            dialog.destroy()
+            self._bar_payment_dialog(target)
+
+        BarButton(dialog, "Continuar", choose, color=self.GREEN, width=130, height=40).pack(pady=(0, 14))
+
+    def _bar_payment_dialog(self, order: dict) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Cobrar pedido #{order['order_number']}")
+        dialog.configure(bg=self.SURFACE)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        amount = tk.StringVar(value=str(order.get("balance") or 0))
+        method = tk.StringVar(value="Efectivo")
+        responsible = tk.StringVar(value="Administrador")
+        notes = tk.StringVar()
+        tk.Label(
+            dialog, text=f"Pedido #{order['order_number']} · Total {self._money(order['total'])}\nCobrado {self._money(order['paid'])} · Saldo {self._money(order['balance'])}",
+            justify="left", bg="#ECFDF5", fg=self.NAVY, font=("Segoe UI", 10, "bold"), padx=16, pady=12,
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=16, pady=14)
+        for index, (label, variable) in enumerate((("Importe", amount), ("Método", method), ("Responsable", responsible), ("Observaciones", notes)), start=1):
+            tk.Label(dialog, text=label, bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 9, "bold")).grid(row=index, column=0, sticky="w", padx=16, pady=7)
+            widget = ttk.Combobox(dialog, textvariable=variable, values=("Efectivo", "Transferencia", "Tarjeta", "Mercado Pago", "Otros"), state="readonly", width=29) if label == "Método" else tk.Entry(dialog, textvariable=variable, width=32)
+            widget.grid(row=index, column=1, padx=16, pady=7, ipady=3)
+
+        def save() -> None:
+            try:
+                self.service.record_bar_payment(
+                    order["order_id"], amount=amount.get(), method=method.get(),
+                    responsible=responsible.get(), notes=notes.get(),
+                )
+                dialog.destroy()
+                self._refresh_bar()
+                self._refresh_cash()
+            except Exception as exc:
+                messagebox.showerror("Cobrar pedido", str(exc), parent=dialog)
+
+        BarButton(dialog, "Confirmar cobro", save, color=self.GREEN, width=160, height=42).grid(row=5, column=0, columnspan=2, pady=15)
+
+    def _bar_expense_dialog(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("Registrar gasto del Bar")
+        dialog.configure(bg=self.SURFACE)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        values = {
+            "amount": tk.StringVar(), "category": tk.StringVar(value="Compra de mercadería"),
+            "date": tk.StringVar(value=dt.datetime.now().isoformat(timespec="minutes")),
+            "method": tk.StringVar(value="Efectivo"), "description": tk.StringVar(),
+            "supplier": tk.StringVar(), "responsible": tk.StringVar(value="Administrador"),
+        }
+        tk.Label(dialog, text="Gasto relacionado con el Bar", bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 14, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=18, pady=(16, 8))
+        for index, (label, key) in enumerate((
+            ("Importe", "amount"), ("Categoría", "category"), ("Fecha y hora", "date"),
+            ("Método", "method"), ("Descripción", "description"), ("Proveedor (opcional)", "supplier"),
+            ("Responsable", "responsible"),
+        ), start=1):
+            tk.Label(dialog, text=label, bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 9, "bold")).grid(row=index, column=0, sticky="w", padx=18, pady=7)
+            if key == "category":
+                widget = ttk.Combobox(dialog, textvariable=values[key], values=("Compra de mercadería", "Proveedores", "Insumos", "Mantenimiento", "Otros"), state="readonly", width=31)
+            elif key == "method":
+                widget = ttk.Combobox(dialog, textvariable=values[key], values=("Efectivo", "Transferencia", "Tarjeta", "Mercado Pago", "Otros"), state="readonly", width=31)
+            else:
+                widget = tk.Entry(dialog, textvariable=values[key], width=34)
+            widget.grid(row=index, column=1, padx=(4, 18), pady=7, ipady=3)
+
+        def save() -> None:
+            try:
+                self.service.record_bar_expense(
+                    amount=values["amount"].get(), category=values["category"].get(),
+                    occurred_at=values["date"].get(), method=values["method"].get(),
+                    description=values["description"].get(), supplier=values["supplier"].get(),
+                    responsible=values["responsible"].get(),
+                )
+                dialog.destroy()
+                self._refresh_cash()
+                self._refresh_bar()
+            except Exception as exc:
+                messagebox.showerror("Gasto del Bar", str(exc), parent=dialog)
+
+        BarButton(dialog, "Registrar gasto", save, color=self.ORANGE, width=160, height=42).grid(row=8, column=0, columnspan=2, pady=15)
+
+    def _bar_order_menu(self, order: dict) -> None:
+        self._bar_selected_order_id = str(order.get("order_id") or "")
+        menu = tk.Menu(self, tearoff=0, font=("Segoe UI", 9))
+        menu.add_command(label="Ver detalle", command=lambda: self._show_bar_order(order))
+        if order.get("delivery_status") in {"open", "preparing"}:
+            menu.add_command(label="Editar pedido", command=lambda: self._new_bar_order_dialog(self.service.bar_order(order["order_id"])))
+        state_menu = tk.Menu(menu, tearoff=0, font=("Segoe UI", 9))
+        for state, label in (("open", "Abierto"), ("preparing", "En preparación"), ("delivered", "Entregado")):
+            state_menu.add_command(label=label, command=lambda value=state: self._bar_change_status(order, value))
+        menu.add_cascade(label="Cambiar estado", menu=state_menu)
+        if int(order.get("balance_cents") or 0) > 0 and order.get("delivery_status") != "cancelled":
+            menu.add_command(label="Registrar cobro", command=lambda: self._bar_payment_dialog(order))
+        if int(order.get("paid_cents") or 0) > 0:
+            menu.add_command(label="Registrar reembolso", command=lambda: self._bar_refund_dialog(order))
+        if order.get("delivery_status") != "cancelled":
+            menu.add_separator()
+            menu.add_command(label="Cancelar pedido", command=lambda: self._bar_cancel_order(order))
+        menu.add_separator()
+        menu.add_command(label="Consultar historial", command=lambda: self._bar_history_dialog(order))
+        try:
+            menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
+        finally:
+            menu.grab_release()
+
+    def _bar_change_status(self, order: dict, status: str) -> None:
+        if status == order.get("delivery_status"):
+            return
+        if status == "delivered" and not messagebox.askyesno(
+            "Confirmar entrega",
+            "Al confirmar la entrega se descontará el stock exactamente una vez.\n\n¿Continuar?",
+            parent=self,
+        ):
+            return
+        try:
+            self.service.set_bar_order_status(order["order_id"], status, responsible="Administrador")
+            self._refresh_bar()
+        except Exception as exc:
+            messagebox.showerror("Estado del pedido", str(exc), parent=self)
+
+    def _bar_cancel_order(self, order: dict) -> None:
+        if not messagebox.askyesno("Cancelar pedido", f"¿Cancelar el pedido #{order['order_number']}?", parent=self):
+            return
+        restock = False
+        if order.get("delivery_status") == "delivered" and order.get("stock_deducted_at") and not order.get("stock_restored_at"):
+            restock = messagebox.askyesno(
+                "Mercadería devuelta",
+                "¿La mercadería regresó físicamente al inventario?\n\nElegí No si no fue devuelta.",
+                parent=self,
+            )
+        try:
+            self.service.set_bar_order_status(
+                order["order_id"], "cancelled", responsible="Administrador", restock_returned=restock,
+            )
+            self._refresh_bar()
+        except Exception as exc:
+            messagebox.showerror("Cancelar pedido", str(exc), parent=self)
+
+    def _bar_refund_dialog(self, order: dict) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Reembolsar pedido #{order['order_number']}")
+        dialog.configure(bg=self.SURFACE)
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        amount = tk.StringVar(value=str(order.get("paid") or 0))
+        method = tk.StringVar(value=str(order.get("payment_method") or "Efectivo"))
+        notes = tk.StringVar(value="Reembolso confirmado")
+        for index, (label, variable) in enumerate((("Importe", amount), ("Método", method), ("Motivo", notes))):
+            tk.Label(dialog, text=label, bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 9, "bold")).grid(row=index, column=0, sticky="w", padx=16, pady=9)
+            widget = ttk.Combobox(dialog, textvariable=variable, values=("Efectivo", "Transferencia", "Tarjeta", "Mercado Pago", "Otros"), state="readonly", width=29) if label == "Método" else tk.Entry(dialog, textvariable=variable, width=32)
+            widget.grid(row=index, column=1, padx=16, pady=9, ipady=3)
+
+        def save() -> None:
+            try:
+                self.service.refund_bar_order(
+                    order["order_id"], amount=amount.get(), method=method.get(),
+                    responsible="Administrador", notes=notes.get(),
+                )
+                dialog.destroy()
+                self._refresh_bar()
+                self._refresh_cash()
+            except Exception as exc:
+                messagebox.showerror("Reembolso", str(exc), parent=dialog)
+
+        BarButton(dialog, "Confirmar reembolso", save, color=self.RED, width=180, height=42).grid(row=3, column=0, columnspan=2, pady=15)
+
+    def _show_bar_order(self, order: dict) -> None:
+        order = self.service.bar_order(order["order_id"])
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Pedido #{order['order_number']}")
+        dialog.configure(bg=self.SURFACE)
+        dialog.geometry("650x520")
+        dialog.transient(self)
+        tk.Label(dialog, text=f"Pedido #{order['order_number']}", bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=20, pady=(16, 4))
+        tk.Label(
+            dialog,
+            text=(f"{order['origin']} · {order['display_location']} · {order.get('client') or 'Sin cliente'}\n"
+                  f"Entrega: {order['delivery_label']} · Pago: {order['payment_label']}\n"
+                  f"Total: {self._money(order['total'])} · Cobrado: {self._money(order['paid'])} · Saldo: {self._money(order['balance'])}"),
+            bg="#EFF6FF", fg=self.NAVY, justify="left", anchor="w", font=("Segoe UI", 10), padx=14, pady=10,
+        ).pack(fill="x", padx=20, pady=(0, 10))
+        tree = ttk.Treeview(dialog, columns=("product", "qty", "price", "subtotal"), show="headings", style="Admin.Treeview")
+        for key, title, width in (("product", "Producto", 250), ("qty", "Cantidad", 80), ("price", "Precio", 100), ("subtotal", "Subtotal", 110)):
+            tree.heading(key, text=title)
+            tree.column(key, width=width, anchor="w" if key == "product" else "center")
+        for item in order["items"]:
+            tree.insert("", "end", values=(item["product_name"], item["quantity"], self._money(item["unit_price_cents"] / 100), self._money(item["line_total_cents"] / 100)))
+        tree.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+        tk.Label(dialog, text=f"Observaciones: {order.get('notes') or '-'}", bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI", 9), anchor="w").pack(fill="x", padx=20, pady=(0, 14))
+
+    def _bar_history_dialog(self, order: dict) -> None:
+        order = self.service.bar_order(order["order_id"])
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Historial pedido #{order['order_number']}")
+        dialog.configure(bg=self.SURFACE)
+        dialog.geometry("720x420")
+        tree = ttk.Treeview(dialog, columns=("date", "event", "from", "to", "user", "notes"), show="headings", style="Admin.Treeview")
+        for key, title, width in (("date", "Fecha", 135), ("event", "Evento", 110), ("from", "Anterior", 85), ("to", "Nuevo", 85), ("user", "Responsable", 100), ("notes", "Detalle", 170)):
+            tree.heading(key, text=title)
+            tree.column(key, width=width, anchor="w")
+        for row in order["history"]:
+            tree.insert("", "end", values=(row["occurred_at"].replace("T", " "), row["event_type"], row["previous_value"], row["new_value"], row["responsible"], row["notes"]))
+        tree.pack(fill="both", expand=True, padx=16, pady=16)
+
+    def _show_bar_inventory(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("Inventario del Bar")
+        dialog.configure(bg=self.BG)
+        dialog.geometry("1040x620")
+        dialog.transient(self)
+        title = tk.Frame(dialog, bg=self.SURFACE, highlightbackground=self.BORDER, highlightthickness=1)
+        title.pack(fill="x", padx=16, pady=(16, 8))
+        tk.Label(title, text="Inventario y catálogo", bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 17, "bold")).pack(side="left", padx=18, pady=13)
+        actions = tk.Frame(title, bg=self.SURFACE)
+        actions.pack(side="right", padx=12, pady=8)
+        tree = ttk.Treeview(
+            dialog, columns=("name", "category", "price", "cost", "stock", "minimum", "unit", "status"),
+            show="headings", style="Admin.Treeview", selectmode="browse",
+        )
+        for key, label, width in (
+            ("name", "Producto", 190), ("category", "Categoría", 110), ("price", "Precio", 95),
+            ("cost", "Costo", 90), ("stock", "Stock", 70), ("minimum", "Mínimo", 70),
+            ("unit", "Unidad", 90), ("status", "Estado", 90),
+        ):
+            tree.heading(key, text=label)
+            tree.column(key, width=width, anchor="w" if key in {"name", "category", "unit"} else "center")
+        tree.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+
+        def refresh() -> None:
+            tree.delete(*tree.get_children())
+            for row in self.service.bar_products(include_inactive=True):
+                tree.insert("", "end", iid=row["product_id"], values=(
+                    row["name"], row["category"], self._money(row["sale_price"]),
+                    "-" if row["cost_price"] is None else self._money(row["cost_price"]),
+                    row["stock"], row["minimum_stock"], row["unit"], "Activo" if row["active"] else "Inactivo",
+                ))
+
+        def selected() -> dict | None:
+            choice = tree.selection()
+            if not choice:
+                messagebox.showinfo("Inventario", "Seleccioná un producto.", parent=dialog)
+                return None
+            return next((row for row in self.service.bar_products(include_inactive=True) if row["product_id"] == choice[0]), None)
+
+        def edit() -> None:
+            row = selected()
+            if row:
+                self._bar_product_dialog(row)
+                dialog.after(300, refresh)
+
+        def stock(operation: str) -> None:
+            row = selected()
+            if row:
+                self._bar_stock_dialog(operation, row)
+                dialog.after(300, refresh)
+
+        def history() -> None:
+            row = selected()
+            if row:
+                self._bar_inventory_history_dialog(row)
+
+        for text, command, color, width in (
+            ("Editar", edit, self.BLUE, 86), ("＋ Stock", lambda: stock("add"), self.GREEN, 92),
+            ("− Stock", lambda: stock("remove"), self.ORANGE, 92), ("Historial", history, self.NAVY, 92),
+            ("＋ Nuevo producto", self._bar_product_dialog, self.BLUE, 132),
+        ):
+            BarButton(actions, text, command, color=color, width=width, height=36, font=("Segoe UI", 8, "bold")).pack(side="left", padx=2)
+        refresh()
+
+    def _bar_inventory_history_dialog(self, product: dict) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Movimientos · {product['name']}")
+        dialog.configure(bg=self.SURFACE)
+        dialog.geometry("760x420")
+        tree = ttk.Treeview(dialog, columns=("date", "operation", "quantity", "reason", "order", "user"), show="headings", style="Admin.Treeview")
+        for key, title, width in (("date", "Fecha", 135), ("operation", "Operación", 90), ("quantity", "Cantidad", 75), ("reason", "Motivo", 190), ("order", "Pedido", 110), ("user", "Responsable", 110)):
+            tree.heading(key, text=title)
+            tree.column(key, width=width, anchor="w")
+        for row in self.service.bar_inventory_history(product["product_id"]):
+            tree.insert("", "end", values=(row["occurred_at"].replace("T", " "), row["operation"], row["delta"], row["reason"], row.get("order_id") or "-", row["responsible"]))
+        tree.pack(fill="both", expand=True, padx=16, pady=16)
+
+    def _show_bar_ranking(self) -> None:
+        self._show_bar_report("Ranking completo de productos", self._bar_snapshot.get("top_products", []), ("name", "quantity"), ("Producto", "Unidades vendidas"))
+
+    def _show_bar_categories(self) -> None:
+        self._show_bar_report("Ventas por categoría", self._bar_snapshot.get("category_sales", []), ("name", "amount", "percent"), ("Categoría", "Venta neta", "Participación"))
+
+    def _show_bar_report(self, title: str, rows: list[dict], keys: tuple[str, ...], labels: tuple[str, ...]) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.configure(bg=self.SURFACE)
+        dialog.geometry("600x430")
+        tk.Label(dialog, text=title, bg=self.SURFACE, fg=self.NAVY, font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=16, pady=(14, 8))
+        tree = ttk.Treeview(dialog, columns=keys, show="headings", style="Admin.Treeview")
+        for key, label in zip(keys, labels):
+            tree.heading(key, text=label)
+            tree.column(key, width=200 if key == "name" else 130, anchor="w" if key == "name" else "center")
+        for row in rows:
+            values = []
+            for key in keys:
+                value = row.get(key, "")
+                if key == "amount":
+                    value = self._money(value)
+                elif key == "percent":
+                    value = f"{value:g}%"
+                values.append(value)
+            tree.insert("", "end", values=values)
+        tree.pack(fill="both", expand=True, padx=16, pady=(0, 16))
+
     def _on_tab_changed(self, _event=None) -> None:
         if self.notebook.select() == str(self.hours_tab):
             self._refresh_hours()
         elif self.notebook.select() == str(self.cash_tab):
             self._refresh_cash()
+        elif self.notebook.select() == str(self.bar_tab):
+            self._refresh_bar()
         elif self.notebook.select() == str(self.tournaments_tab):
             self._refresh_tournaments()
         elif self.notebook.select() == str(self.fixed_turns_tab):
@@ -2286,6 +3325,7 @@ class AdminPanel(tk.Toplevel):
             self._refresh_blacklist()
             self._refresh_hours()
             self._refresh_cash()
+            self._refresh_bar()
         except Exception as exc:
             messagebox.showerror("Administración", f"No pude actualizar el panel:\n{exc}", parent=self)
 
@@ -2313,7 +3353,7 @@ class AdminPanel(tk.Toplevel):
             key: max(0, int(counts.get(key, 0) or 0))
             for key in (
                 "bookings", "hours", "operation", "cases", "tournaments", "fixed_turns",
-                "cash", "blacklist", "commands"
+                "cash", "bar", "blacklist", "commands"
             )
         }
         normalized["total"] = sum(normalized.values())
@@ -2353,6 +3393,7 @@ class AdminPanel(tk.Toplevel):
             "bookings": bookings,
             "hours": 0,
             "cash": 0,
+            "bar": 0,
             "operation": 0,
             "cases": cases,
             "tournaments": 0,
@@ -2427,6 +3468,8 @@ class AdminPanel(tk.Toplevel):
                 self._refresh_blacklist()
             if self.notebook.select() == str(self.cash_tab):
                 self._refresh_cash()
+            if self.notebook.select() == str(self.bar_tab):
+                self._refresh_bar()
         except Exception:
             # A transient file write must not interrupt the administrator.
             pass

@@ -94,6 +94,8 @@ if (-not $SkipExeBuild) {
         "--hidden-import", "cancheria.paths",
         "--hidden-import", "cancheria.config.legacy_config",
         "--hidden-import", "cancheria.domain.events.registration",
+        "--hidden-import", "cancheria.domain.bar.service",
+        "--hidden-import", "cancheria.domain.finance.ledger",
         "--hidden-import", "cancheria.domain.reservations.calendar",
         "--hidden-import", "cancheria.admin.desktop_service",
         "--hidden-import", "cancheria.desktop.admin_panel",
@@ -215,7 +217,7 @@ if (-not (Test-Path -LiteralPath $Installer -PathType Leaf)) {
 }
 $Hash = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash
 & $BuildPython (Join-Path $Root "scripts\build_update_packages.py") `
-    --payload $PayloadRoot --platform windows --version "0.2.36"
+    --payload $PayloadRoot --platform windows --version "0.2.37"
 if ($LASTEXITCODE -ne 0) { throw "Falló la creación del paquete de actualización Windows" }
 Write-Output "INSTALLER=$Installer"
 Write-Output "SHA256=$Hash"
