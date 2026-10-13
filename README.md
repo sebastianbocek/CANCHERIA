@@ -98,6 +98,14 @@ La pestaña **Caja** concentra los ingresos, gastos, saldos pendientes y reserva
 
 ![Sección de Caja del panel de administración](docs/images/cancheria-panel-caja.png)
 
+### Sección de Bar
+
+La pestaña **Bar** incorpora un punto de venta completo para bebidas, comidas y otros productos. Permite crear pedidos vinculados a canchas, mesas o mostrador; administrar por separado su preparación, entrega y pago; registrar cobros totales o parciales con distintos métodos; y cargar gastos del sector. Los cobros y gastos confirmados se integran con **Caja** sin duplicar movimientos.
+
+El inventario permite crear y editar productos, agregar o descontar existencias y consultar el historial de cada movimiento. Al confirmar una entrega, CANCHERIA descuenta el stock una sola vez, actualiza los avisos de stock crítico y recalcula las ventas del período, los productos más vendidos y la participación por categoría.
+
+![Sección de Bar del panel de administración](docs/images/cancheria-panel-bar.png)
+
 ---
 
 ## Instalación rápida
@@ -212,6 +220,10 @@ El panel visual permite trabajar sin recordar comandos:
   su ID: repetir una confirmación no duplica dinero y confirmar el total después
   de una seña registra únicamente el saldo todavía no contabilizado. El sistema
   no inventa cobros históricos cuando no existe evidencia de la fecha de pago.
+- **Bar:** administrar el catálogo, inventario y pedidos del punto de venta;
+  separar los estados de entrega y pago; registrar cobros totales o parciales,
+  gastos y movimientos de stock; consultar productos críticos y estadísticas;
+  e integrar cada operación confirmada con **Caja** sin duplicaciones.
 - **Operación:** revisar el estado operativo del complejo, seleccionar una fecha
   desde el calendario y administrar bloqueos o disponibilidad de la jornada.
 - **Atención humana:** consultar los casos derivados por el agente, ver su
