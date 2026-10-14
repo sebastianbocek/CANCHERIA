@@ -57294,15 +57294,51 @@ def _agent_v2_build_policy_fact_contract(
     ]
     if len(composable_domains) > 1:
         contracts = []
+        known_fact_domain = {
+            "court.catalog": "court_catalog",
+            "court.types": "court_catalog",
+            "court.differences": "court_catalog",
+            "court.comparison": "court_catalog",
+            "court.features": "court_catalog",
+            "court.characteristics": "court_catalog",
+            "court.details": "court_catalog",
+            "court.price": "court_catalog",
+            "court.simultaneous_capacity": "court_catalog",
+            "booking.allowed_duration": "duration_policy",
+            "booking.duration_policy": "duration_policy",
+            "duration.policy": "duration_policy",
+            "business.opening_hours": "attention_schedule",
+            "business.attention_schedule": "attention_schedule",
+            "attention.schedule": "attention_schedule",
+            "attention.days": "attention_schedule",
+            "attention.hours": "attention_schedule",
+        }
         for domain in composable_domains:
+            # Cada hijo recibe sólo los hechos de su dominio. Sin esta
+            # separación, `court.simultaneous_capacity` podía interceptar el
+            # hijo duration_policy y borrar la duración solicitada.
+            domain_facts = [
+                fact
+                for fact in requested_facts
+                if known_fact_domain.get(fact, domain) == domain
+                or (
+                    domain == "service_policy"
+                    and fact.startswith(("service.", "services.", "quincho."))
+                )
+            ]
             contract = _agent_v2_build_policy_fact_contract(
                 question,
                 [domain],
                 business,
-                requested_facts=requested_facts,
+                requested_facts=domain_facts,
                 target_resources=list(target_resources),
-                requested_durations=requested_durations,
+                requested_durations=(
+                    requested_durations if domain == "duration_policy" else []
+                ),
                 target_labels=target_labels,
+                requested_court_count=(
+                    requested_court_count if domain == "court_catalog" else None
+                ),
             )
             if isinstance(contract, dict) and contract not in contracts:
                 contracts.append(contract)
@@ -141257,6 +141293,13 @@ def _canonical_v232_merge_info_contract(
     for field in ("include_court", "include_quincho"):
         if merged.get(field) is None and (incoming or {}).get(field) is not None:
             merged[field] = copy.deepcopy((incoming or {}).get(field))
+    if (
+        merged.get("requested_court_count") in (None, "")
+        and (incoming or {}).get("requested_court_count") not in (None, "")
+    ):
+        merged["requested_court_count"] = copy.deepcopy(
+            (incoming or {}).get("requested_court_count")
+        )
     return merged
 
 
@@ -141501,6 +141544,13 @@ null para que Python solicite sólo lo faltante; nunca borres la obligación.
     - Para duración: operation=business_info, intent_mode=information, info.question_domains=["duration_policy"], info.requested_facts=["booking.allowed_duration"], info.requested_durations=[duración consultada].
     - No pidas día/hora ni heredes day/time/court/reservation_id históricos para contestar una política general.
     - create_booking requiere voluntad transaccional actual de reservar/confirmar, o una continuación inequívoca de un pending de booking. Una pregunta “¿se puede...?” aislada no concede esa autoridad.
+8A1. CANTIDAD DE CANCHAS Y DURACIÓN SON DIMENSIONES DISTINTAS. En una frase
+como “¿se pueden reservar 2 canchas 4 horas?”, el 2 modifica “canchas” y el 4
+modifica “horas”. Devolvé UNA business_info con requested_facts incluyendo
+"court.simultaneous_capacity" y "booking.allowed_duration",
+question_domains incluyendo "court_catalog" y "duration_policy",
+requested_court_count=2 y requested_durations=[4]. Nunca uses la cantidad de
+canchas como duración ni descartes la duración explícita.
 8A2. PRECIO DE LA HORA VS DURACIÓN:
     - Si el usuario pregunta cuánto sale/cuesta/vale la hora de cancha, preservá query_price aunque en el mismo turno también pregunte duraciones, horarios o servicios.
     - Si una expresión coloquial sobre “la hora de cancha” puede estar preguntando tanto la tarifa como las duraciones permitidas y NO menciona una duración numérica concreta, no descartes el precio: emití ambas sub-intenciones (business_info duration_policy + query_price) cuando corresponda.
@@ -141562,6 +141612,7 @@ Respondé SOLO JSON con esta forma:
   "info": {
     "requested_facts": [], "target_resources": [], "target_labels": [],
     "question_domains": [], "requested_durations": [],
+    "requested_court_count": null,
     "include_court": null, "include_quincho": null
   },
   "context_resolution": {
@@ -141600,6 +141651,7 @@ Respondé SOLO JSON con esta forma:
       "info": {
         "requested_facts": [], "target_resources": [], "target_labels": [],
         "question_domains": [], "requested_durations": [],
+        "requested_court_count": null,
         "include_court": null, "include_quincho": null
       },
       "context_resolution": {
@@ -143503,6 +143555,7 @@ async def _canonical_v184_execute_info(
         "target_labels": list(info.get("target_labels") or []),
         "question_domains": question_domains,
         "requested_durations": requested_durations,
+        "requested_court_count": info.get("requested_court_count"),
     }
     obs, world, perception, goals = await _canonical_v184_run_tool(
         operation=operation, tool="consultar_informacion_negocio", args=args, state=state, message=message,
@@ -143995,10 +144048,22 @@ async def _canonical_v235_execute_objective_ledger(
                     if str(candidate["action"].get("operation") or "") != operation:
                         continue
                     existing_markers = _semantic_markers(candidate["action"])
+                    incoming_count = (action.get("info") or {}).get(
+                        "requested_court_count"
+                    )
+                    existing_count = (candidate["action"].get("info") or {}).get(
+                        "requested_court_count"
+                    )
+                    incompatible_counts = bool(
+                        incoming_count not in (None, "")
+                        and existing_count not in (None, "")
+                        and str(incoming_count) != str(existing_count)
+                    )
                     if (
                         incoming_markers
                         and existing_markers
                         and incoming_markers.intersection(existing_markers)
+                        and not incompatible_counts
                     ):
                         candidate["action"]["info"] = _canonical_v232_merge_info_contract(
                             dict(candidate["action"].get("info") or {}),
@@ -147764,6 +147829,281 @@ async def _canonical_v184_orchestrate(
         state,
         image_path=image_path,
     )
+
+
+# ============================================================================
+# V237 — ADJUDICACIÓN SEMÁNTICA DE ROLES CUANTITATIVOS
+# ============================================================================
+# Incidente 14/10/2026 15:30:
+#   usuario: "¿se puede reservar 2 canchas 4 horas?"
+#   plan: requested_durations=[2]
+#   respuesta: "Sí, se puede jugar 2 horas."
+#
+# El planificador mezcló dos magnitudes distintas. Esta revisión transformer
+# especializada no decide la intención ni ejecuta nada: asigna cada cantidad a
+# su unidad semántica y aporta evidencia literal. Python sólo verifica el
+# receipt y lo materializa en el contrato factual antes de consultar config.
+# ============================================================================
+
+
+async def _canonical_v237_policy_quantity_receipt(
+    physical_turn: str,
+    existing_info: Dict[str, Any],
+) -> Dict[str, Any]:
+    system = r'''Sos el adjudicador de roles cuantitativos de CANCHERIA.
+Analizá EXCLUSIVAMENTE latest_user_turn y separá cantidades de recursos de
+duraciones. No uses memoria, no respondas al cliente y no decidas si se crea
+una reserva.
+
+Reglas:
+- Una cantidad que modifica "cancha/canchas" es requested_court_count.
+- Una cantidad que modifica "hora/horas" es una duración.
+- Pueden coexistir y jamás se intercambian.
+- "2 canchas 4 horas" significa requested_court_count=2 y duración=4.
+- evidence debe ser un fragmento LITERAL mínimo del turno que contenga número
+  y sustantivo/unidad. Si no existe evidencia literal, devolvé null/vacío.
+
+Respondé SOLO JSON:
+{
+  "has_parallel_court_question": false,
+  "requested_court_count": null,
+  "court_count_evidence": null,
+  "has_duration_question": false,
+  "requested_durations": [
+    {"hours": 0.0, "evidence": "fragmento literal"}
+  ]
+}'''
+    payload = {
+        "latest_user_turn": str(physical_turn or "").strip(),
+        "existing_info_hypothesis": copy.deepcopy(existing_info or {}),
+    }
+    response = await call_openai_async(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ],
+        temperature=0.0,
+        max_tokens=420,
+        response_format={"type": "json_object"},
+    )
+    register_cost(response)
+    raw = str(response.choices[0].message.content or "").strip()
+    return _loads_llm_json_object(raw)
+
+
+def _canonical_v237_verified_quantity_patch(
+    physical_turn: str,
+    receipt: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    patch = {
+        "has_parallel_court_question": bool(
+            receipt.get("has_parallel_court_question")
+        ),
+        "requested_court_count": None,
+        "requested_durations": [],
+    }
+
+    if patch["has_parallel_court_question"]:
+        evidence = str(receipt.get("court_count_evidence") or "").strip()
+        try:
+            requested_count = int(float(receipt.get("requested_court_count")))
+        except (TypeError, ValueError):
+            return None
+        grounded_count = _agent_v2_requested_court_count({}, evidence)
+        if (
+            requested_count < 2
+            or grounded_count != requested_count
+            or not _canonical_v200_literal_evidence(physical_turn, evidence)
+        ):
+            return None
+        patch["requested_court_count"] = requested_count
+
+    has_duration = bool(receipt.get("has_duration_question"))
+    patch["has_duration_question"] = has_duration
+    if has_duration:
+        rows = receipt.get("requested_durations") or []
+        if not isinstance(rows, list):
+            return None
+        durations = []
+        for row in rows:
+            if not isinstance(row, dict):
+                return None
+            evidence = str(row.get("evidence") or "").strip()
+            try:
+                hours = round(float(row.get("hours")), 4)
+            except (TypeError, ValueError):
+                return None
+            grounded = [
+                round(float(value), 4)
+                for value in _agent_v2_extract_duration_candidates(evidence)
+            ]
+            if (
+                hours <= 0
+                or hours not in grounded
+                or not _canonical_v200_literal_evidence(physical_turn, evidence)
+            ):
+                return None
+            if hours not in durations:
+                durations.append(hours)
+        if not durations:
+            return None
+        patch["requested_durations"] = durations
+    return patch
+
+
+def _canonical_v237_apply_quantity_patch(
+    decision: Dict[str, Any],
+    patch: Dict[str, Any],
+) -> Dict[str, Any]:
+    result = copy.deepcopy(decision or {})
+    rows = result.get("_v188_actions")
+    if not isinstance(rows, list) or not rows:
+        rows = [result]
+
+    candidate_indexes = []
+    for index, action in enumerate(rows):
+        if not isinstance(action, dict):
+            continue
+        info = dict(action.get("info") or {})
+        domains = {str(value or "").strip() for value in info.get("question_domains") or []}
+        facts = {str(value or "").strip() for value in info.get("requested_facts") or []}
+        if (
+            str(action.get("operation") or "").strip() == "business_info"
+            and (
+                info.get("requested_durations")
+                or info.get("requested_court_count") not in (None, "")
+                or "duration_policy" in domains
+                or "booking.allowed_duration" in facts
+                or "court.simultaneous_capacity" in facts
+            )
+        ):
+            candidate_indexes.append(index)
+    if not candidate_indexes:
+        return result
+
+    # Una adjudicación corresponde a un único fragmento físico. Consolidamos
+    # sus dos magnitudes en la primera action factual pertinente.
+    target_index = candidate_indexes[0]
+    action = copy.deepcopy(rows[target_index])
+    info = dict(action.get("info") or {})
+    facts = [
+        str(value)
+        for value in info.get("requested_facts") or []
+        if str(value) not in {"booking.allowed_duration", "court.simultaneous_capacity"}
+    ]
+    domains = [
+        str(value)
+        for value in info.get("question_domains") or []
+        if str(value) not in {"duration_policy", "court_catalog"}
+    ]
+
+    if patch.get("has_parallel_court_question"):
+        facts.append("court.simultaneous_capacity")
+        domains.append("court_catalog")
+        info["requested_court_count"] = patch.get("requested_court_count")
+    else:
+        info.pop("requested_court_count", None)
+
+    if patch.get("has_duration_question"):
+        facts.append("booking.allowed_duration")
+        domains.append("duration_policy")
+        info["requested_durations"] = list(patch.get("requested_durations") or [])
+    else:
+        info["requested_durations"] = []
+
+    info["requested_facts"] = list(dict.fromkeys(facts))
+    info["question_domains"] = list(dict.fromkeys(domains))
+    action["info"] = info
+    rows[target_index] = action
+    result["_v188_actions"] = rows
+
+    if target_index == 0:
+        result["info"] = copy.deepcopy(info)
+        if isinstance(result.get("actions"), list) and result["actions"]:
+            for raw in result["actions"]:
+                if (
+                    isinstance(raw, dict)
+                    and str(raw.get("operation") or "").strip() == "business_info"
+                ):
+                    raw["info"] = copy.deepcopy(info)
+                    break
+    result["_v237_quantity_roles_verified"] = True
+    return result
+
+
+_canonical_v184_orchestrate_v237_base = _canonical_v184_orchestrate
+
+
+async def _canonical_v184_orchestrate(
+    message: str,
+    user_messages: List[str],
+    state: Dict[str, Any],
+    *,
+    image_path: str = "",
+) -> Dict[str, Any]:
+    decision = await _canonical_v184_orchestrate_v237_base(
+        message,
+        user_messages,
+        state,
+        image_path=image_path,
+    )
+    actions = _canonical_v188_action_list(decision)
+    needs_quantity_review = any(
+        isinstance(action, dict)
+        and str(action.get("operation") or "").strip() == "business_info"
+        and (
+            bool((action.get("info") or {}).get("requested_durations"))
+            or (action.get("info") or {}).get("requested_court_count") not in (None, "")
+            or "court.simultaneous_capacity"
+            in set((action.get("info") or {}).get("requested_facts") or [])
+        )
+        for action in actions
+    )
+    if not needs_quantity_review:
+        return decision
+
+    physical_turn = _canonical_v200_current_turn_text(message, user_messages)
+    existing_info = {}
+    for action in actions:
+        if isinstance(action, dict) and str(action.get("operation") or "") == "business_info":
+            existing_info = _canonical_v232_merge_info_contract(
+                existing_info,
+                dict(action.get("info") or {}),
+            )
+    try:
+        receipt = await _canonical_v237_policy_quantity_receipt(
+            physical_turn,
+            existing_info,
+        )
+        patch = _canonical_v237_verified_quantity_patch(physical_turn, receipt)
+    except Exception as exc:
+        patch = None
+        receipt = {"error": f"{type(exc).__name__}: {exc}"}
+    if patch is None:
+        failed = copy.deepcopy(decision)
+        failed["operation"] = "delegate_legacy"
+        failed["confidence"] = 0.0
+        failed["reason"] = "policy_quantity_roles_unverified"
+        failed["_canonical_internal_error"] = json.dumps(
+            receipt,
+            ensure_ascii=False,
+            default=str,
+        )
+        failed["_suppress_legacy_fallback"] = True
+        print(
+            "   🛑 [CANONICAL V237 QUANTITY ROLES] "
+            "receipt inválido → no se envía una respuesta cuantitativa insegura"
+        )
+        return failed
+
+    corrected = _canonical_v237_apply_quantity_patch(decision, patch)
+    print(
+        "   🧮 [CANONICAL V237 QUANTITY ROLES] "
+        f"court_count={patch.get('requested_court_count')} "
+        f"durations={patch.get('requested_durations')}"
+    )
+    return corrected
 
 
 # ============================================================================

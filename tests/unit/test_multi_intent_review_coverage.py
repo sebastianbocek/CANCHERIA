@@ -777,3 +777,105 @@ def test_objective_contract_recovers_availability_misclassified_as_business_info
     assert "Prestamos pelota" in result["response"]
     assert "4 horas no está habilitada" in result["response"]
     assert result["objective_coverage"]["complete"] is True
+
+
+def test_quantity_role_adjudicator_separates_two_courts_from_four_hours(
+    monkeypatch,
+) -> None:
+    """Regresión exacta del incidente real de v0.2.43 (14/10 15:30)."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    message = "se puede reservar 2 canchas 4 horas?"
+    wrong = _business_info_action()
+    wrong["info"] = {
+        "requested_facts": ["booking.allowed_duration"],
+        "target_resources": [],
+        "target_labels": [],
+        "question_domains": ["duration_policy"],
+        "requested_durations": [2],
+    }
+    wrong["_v188_actions"] = [dict(wrong)]
+
+    async def fake_base(*_args, **_kwargs):
+        return wrong
+
+    receipt = {
+        "has_parallel_court_question": True,
+        "requested_court_count": 2,
+        "court_count_evidence": "2 canchas",
+        "has_duration_question": True,
+        "requested_durations": [
+            {"hours": 4, "evidence": "4 horas"},
+        ],
+    }
+
+    async def fake_openai(*_args, **_kwargs):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=json.dumps(receipt)),
+                finish_reason="stop",
+            )],
+            usage=None,
+        )
+
+    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate_v237_base", fake_base)
+    monkeypatch.setattr(legacy, "call_openai_async", fake_openai)
+    monkeypatch.setattr(legacy, "register_cost", lambda *_args, **_kwargs: None)
+
+    corrected = asyncio.run(
+        legacy._canonical_v184_orchestrate(message, [message], {})
+    )
+
+    action = corrected["_v188_actions"][0]
+    info = action["info"]
+    assert info["requested_court_count"] == 2
+    assert info["requested_durations"] == [4.0]
+    assert "court.simultaneous_capacity" in info["requested_facts"]
+    assert "booking.allowed_duration" in info["requested_facts"]
+    assert set(info["question_domains"]) >= {"court_catalog", "duration_policy"}
+    assert corrected["_v237_quantity_roles_verified"] is True
+
+
+def test_parallel_court_and_duration_contract_preserves_both_dimensions() -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    business = {
+        "canchas": [
+            {"nombre": "Cancha 1"},
+            {"nombre": "Cancha 2"},
+        ],
+        "precios": [
+            {"description": "Cancha 1", "amount": 20000},
+            {"description": "Cancha 2", "amount": 20000},
+        ],
+        "duraciones_permitidas_horas": [1, 1.5, 2],
+        "requiere_senia": False,
+    }
+
+    contract = legacy._agent_v2_build_policy_fact_contract(
+        "se puede reservar 2 canchas 4 horas?",
+        ["court_catalog", "duration_policy"],
+        business,
+        requested_facts=[
+            "court.simultaneous_capacity",
+            "booking.allowed_duration",
+        ],
+        requested_durations=[4],
+        requested_court_count=2,
+    )
+
+    assert contract["type"] == "composite_policy"
+    children = {child["type"]: child for child in contract["contracts"]}
+    assert children["parallel_courts_policy"]["requested_court_count"] == 2
+    assert children["parallel_courts_policy"]["can_reserve_count"] is True
+    assert children["duration_policy"]["requested_durations"] == [
+        {"hours": 4.0, "allowed": False}
+    ]
+    rendered = legacy.build_agent_v2_policy_fact_message(
+        {"data": {"policy_fact_contract": contract}}
+    )
+    assert "2 canchas" in rendered
+    assert "4 horas" in rendered
+    assert "4 horas no está habilitada" in rendered

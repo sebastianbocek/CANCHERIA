@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.44 - 2026-10-14
+
+- Separa semánticamente cantidad de canchas y duración dentro de una misma consulta.
+- Agrega evidencia literal y validación fail-closed para roles cuantitativos antes de consultar políticas del negocio.
+- Incorpora `requested_court_count` al contrato canónico y preserva simultáneamente capacidad de canchas y duración solicitada.
+- Corrige el caso real “2 canchas 4 horas”, que antes respondía erróneamente sobre 2 horas.
+
 ## 0.2.43 - 2026-10-14
 
 - Corrige la pérdida de disponibilidad en turnos multiobjetivo cuando el planificador canónico reinterpretaba `pedir_horarios` como información general.
