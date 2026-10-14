@@ -124359,7 +124359,14 @@ def _agent_v2_v123_prepare_subintents(items: Any, original_message: str) -> List
         if signature in seen:
             continue
         seen.add(signature)
-        prepared.append({"intencion": intent, "fragmento": fragment})
+        prepared_row = {"intencion": intent, "fragmento": fragment}
+        # Los receipts V235 viajan intactos hasta el ledger canónico. Son
+        # metadatos de procedencia; no otorgan autoridad semántica ni de write.
+        for field in ("discovery_id", "discovery_source"):
+            value = str(raw.get(field) or "").strip()
+            if value:
+                prepared_row[field] = value
+        prepared.append(prepared_row)
     return prepared
 
 
@@ -128413,11 +128420,13 @@ async def _agent_v2_v126r5_audit_subintent_coverage(
         {
             "intencion": str(item.get("intencion") or "otra"),
             "fragmento": str(item.get("fragmento") or ""),
+            "discovery_id": str(item.get("discovery_id") or f"fast_path_{index}"),
+            "discovery_source": str(item.get("discovery_source") or "fast_path"),
         }
-        for item in (initial or [])
+        for index, item in enumerate((initial or []), start=1)
         if isinstance(item, dict)
     ]
-    if len(rows) <= 1:
+    if not rows:
         return rows
 
     allowed = {
@@ -128535,25 +128544,51 @@ async def _agent_v2_v126r5_audit_subintent_coverage(
         audited.append({
             "intencion": intent,
             "fragmento": fragment,
+            "discovery_id": f"semantic_review_{len(audited) + 1}",
+            "discovery_source": "semantic_review",
         })
 
     if not audited:
         return rows
 
+    # El auditor es una segunda fuente de descubrimiento, no una autoridad que
+    # pueda borrar obligaciones. Conservamos primero todos los receipts del
+    # FAST PATH y añadimos las divisiones/correcciones nuevas del review. Una
+    # fila inicial sólo se considera representada cuando el review conserva su
+    # fragmento completo; citar apenas una subfrase no demuestra cobertura.
+    merged: List[Dict[str, Any]] = [dict(row) for row in rows]
+    represented = {
+        (
+            str(row.get("intencion") or "").casefold(),
+            normalizar_texto_ia(row.get("fragmento") or ""),
+        )
+        for row in merged
+    }
+    for row in audited:
+        signature = (
+            str(row.get("intencion") or "").casefold(),
+            normalizar_texto_ia(row.get("fragmento") or ""),
+        )
+        if signature in represented:
+            continue
+        represented.add(signature)
+        merged.append(dict(row))
+
     print(
         "   🧩 [AgentV2 V126R5 SIBLING AUDIT] "
         f"before={[(x['intencion'], x['fragmento'][:36]) for x in rows]} "
-        f"after={[(x['intencion'], x['fragmento'][:36]) for x in audited]}"
+        f"review={[(x['intencion'], x['fragmento'][:36]) for x in audited]} "
+        f"ledger={[(x['intencion'], x['fragmento'][:36]) for x in merged]}"
     )
-    return audited
+    return merged
 
 
 async def detectar_multiples_intenciones(mensaje: str) -> List[Dict]:
     initial = await _detectar_multiples_intenciones_v126r5_base(mensaje)
-    # El segundo pase sólo existe cuando el primer router vio más de una unidad:
-    # ahí es donde aparecen los errores de frontera sibling/addon que V126R5 trata.
-    if len(initial or []) <= 1:
-        return initial
+    # V235: la revisión corre aunque el primer pase haya devuelto una sola fila.
+    # Precisamente una fila amplia puede contener varias obligaciones comprimidas;
+    # condicionar el review al conteo del primer modelo volvía imposible reparar
+    # ese falso negativo.
     return await _agent_v2_v126r5_audit_subintent_coverage(
         mensaje,
         initial,
@@ -132929,14 +132964,13 @@ async def _agent_v2_v126r5_audit_subintent_coverage(
     mensaje: str,
     initial: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    audited = await _agent_v2_v126r5_audit_subintent_coverage_v130_base(
+    # V235: el auditor base ya devuelve un ledger conservativo e inmutable.
+    # La reparación V130 era condicional (sólo restauraba ciertos READs cuando
+    # coexistía exactamente un lane transaccional) y dejaba escapar consultas
+    # de disponibilidad absorbidas por políticas. Ya no participa del live path.
+    return await _agent_v2_v126r5_audit_subintent_coverage_v130_base(
         mensaje,
         initial,
-    )
-    return _agent_v2_v130_restore_semantic_lanes(
-        mensaje,
-        initial,
-        audited,
     )
 
 
@@ -143689,7 +143723,7 @@ async def _canonical_v184_execute_decision(
 _ejecutar_agente_real_v2_turno_v184_legacy = ejecutar_agente_real_v2_turno
 
 
-async def _canonical_v234_execute_objective_list(
+async def _canonical_v235_execute_objective_ledger(
     *,
     physical_turn: str,
     subintents: List[Dict[str, str]],
@@ -143708,7 +143742,6 @@ async def _canonical_v234_execute_objective_list(
     tool sean visibles para el objetivo siguiente.
     """
     objectives: List[Dict[str, Any]] = []
-    flattened_actions: List[Dict[str, Any]] = []
 
     for index, item in enumerate(subintents, start=1):
         fragment = str(item.get("fragmento") or "").strip()
@@ -143725,7 +143758,7 @@ async def _canonical_v234_execute_objective_list(
             )
         except Exception as exc:
             print(
-                "   🛑 [CANONICAL V234 OBJECTIVE PLANNING] "
+                "   🛑 [CANONICAL V235 OBJECTIVE PLANNING] "
                 f"objetivo={index} intent={intent} error={type(exc).__name__}: {exc}"
             )
             return None
@@ -143737,7 +143770,7 @@ async def _canonical_v234_execute_objective_list(
             or any(not _canonical_v184_accept_decision(action) for action in actions)
         ):
             print(
-                "   ↩️ [CANONICAL V234 OBJECTIVE PLANNING] "
+                "   ↩️ [CANONICAL V235 OBJECTIVE PLANNING] "
                 f"objetivo={index} intent={intent} sin decisión canónica completa"
             )
             return None
@@ -143745,34 +143778,122 @@ async def _canonical_v234_execute_objective_list(
         operations = [str(action.get("operation") or "") for action in actions]
         objectives.append({
             "objective_id": f"objective_{index}",
+            "discovery_id": str(item.get("discovery_id") or f"fast_path_{index}"),
+            "discovery_source": str(item.get("discovery_source") or "fast_path"),
             "index": index,
             "intent": intent,
             "fragment": fragment,
             "operations": operations,
             "decision": decision,
+            "actions": copy.deepcopy(actions),
         })
-        flattened_actions.extend(copy.deepcopy(actions))
+
+    # V235 — ACTION LEDGER
+    # El ledger de objetivos puede contener una fila amplia del FAST PATH junto
+    # con siblings atómicos agregados por el review. Planificamos todo antes de
+    # ejecutar y deduplicamos sólo contratos canónicos ya interpretados. Python
+    # nunca vuelve a clasificar el texto libre del usuario.
+    execution_units: List[Dict[str, Any]] = []
+
+    def _semantic_markers(action: Dict[str, Any]) -> set:
+        info = dict(action.get("info") or {})
+        markers = set()
+        # requested_facts es el contrato más específico. Dominios/labels sólo
+        # son fallback cuando la IA no emitió facts; usarlos en paralelo podría
+        # fusionar preguntas distintas que comparten un dominio genérico.
+        fields = (
+            ("requested_facts",)
+            if list(info.get("requested_facts") or [])
+            else ("question_domains", "target_labels")
+        )
+        for field in fields:
+            for value in (info.get(field) or []):
+                markers.add((
+                    field,
+                    json.dumps(value, ensure_ascii=False, sort_keys=True, default=str),
+                ))
+        return markers
+
+    def _append_objective_id(unit: Dict[str, Any], objective_id: str) -> None:
+        objective_ids = unit.setdefault("objective_ids", [])
+        if objective_id not in objective_ids:
+            objective_ids.append(objective_id)
+
+    for objective in objectives:
+        for action in objective["actions"]:
+            operation = str(action.get("operation") or "").strip()
+            merged_unit = None
+
+            if operation == "business_info":
+                incoming_markers = _semantic_markers(action)
+                for candidate in execution_units:
+                    if str(candidate["action"].get("operation") or "") != operation:
+                        continue
+                    existing_markers = _semantic_markers(candidate["action"])
+                    if (
+                        incoming_markers
+                        and existing_markers
+                        and incoming_markers.intersection(existing_markers)
+                    ):
+                        candidate["action"]["info"] = _canonical_v232_merge_info_contract(
+                            dict(candidate["action"].get("info") or {}),
+                            dict(action.get("info") or {}),
+                        )
+                        candidate["fragment"] = physical_turn
+                        merged_unit = candidate
+                        break
+            elif operation == "query_availability":
+                incoming_target = _canonical_v189_normalized_booking_target(action)
+                for candidate in execution_units:
+                    if str(candidate["action"].get("operation") or "") != operation:
+                        continue
+                    if (
+                        any(incoming_target.values())
+                        and any(_canonical_v189_normalized_booking_target(candidate["action"]).values())
+                        and
+                        _canonical_v189_normalized_booking_target(candidate["action"])
+                        == incoming_target
+                    ):
+                        merged_unit = candidate
+                        break
+
+            if merged_unit is None:
+                merged_unit = {
+                    "unit_id": f"action_{len(execution_units) + 1}",
+                    "fragment": objective["fragment"],
+                    "action": copy.deepcopy(action),
+                    "objective_ids": [],
+                }
+                execution_units.append(merged_unit)
+            _append_objective_id(merged_unit, str(objective["objective_id"]))
+
+    if not execution_units:
+        return None
 
     # Conserva la barrera financiera del ejecutor V188: más de una escritura
     # independiente en un único turno requiere una política transaccional
     # explícita. El fallback ocurre antes de ejecutar cualquier efecto.
     write_count = sum(
         1
-        for action in flattened_actions
-        if str(action.get("operation") or "") in _CANONICAL_V188_WRITE_OPS
+        for unit in execution_units
+        if str(unit["action"].get("operation") or "") in _CANONICAL_V188_WRITE_OPS
     )
     if write_count > 1:
         print(
-            "   ↩️ [CANONICAL V234 OBJECTIVE PLANNING] "
+            "   ↩️ [CANONICAL V235 OBJECTIVE PLANNING] "
             f"writes={write_count} → fallback seguro anterior a efectos"
         )
         return None
 
     aggregate_decision = copy.deepcopy(objectives[0]["decision"])
-    aggregate_decision["_v188_actions"] = flattened_actions
+    aggregate_decision["_v188_actions"] = [
+        copy.deepcopy(unit["action"]) for unit in execution_units
+    ]
     aggregate_decision["objectives"] = [
         {
             "objective_id": objective["objective_id"],
+            "discovery_id": objective["discovery_id"],
+            "discovery_source": objective["discovery_source"],
             "intent": objective["intent"],
             "fragment": objective["fragment"],
             "operations": list(objective["operations"]),
@@ -143782,7 +143903,7 @@ async def _canonical_v234_execute_objective_list(
     aggregate_decision["multi_objective"] = True
     aggregate_decision["coverage_expected"] = len(objectives)
 
-    turn_id = f"canonical_v234_{uuid.uuid4().hex}"
+    turn_id = f"canonical_v235_{uuid.uuid4().hex}"
     _canonical_v183_record_decision(
         telefono,
         turn_id,
@@ -143798,6 +143919,8 @@ async def _canonical_v234_execute_objective_list(
     observations: List[Dict[str, Any]] = []
     executed_ids: List[str] = []
     response_ids: List[str] = []
+    executed_unit_ids: List[str] = []
+    response_unit_ids: List[str] = []
     waiting_user = False
     write_executed = False
 
@@ -143809,19 +143932,20 @@ async def _canonical_v234_execute_objective_list(
         _canonical_v184_execute_decision,
     )
 
-    for objective in objectives:
-        objective_id = str(objective["objective_id"])
-        fragment = str(objective["fragment"])
-        decision = copy.deepcopy(objective["decision"])
+    for unit in execution_units:
+        unit_id = str(unit["unit_id"])
+        objective_ids = [str(value) for value in unit["objective_ids"]]
+        fragment = str(unit["fragment"])
+        decision = copy.deepcopy(unit["action"])
         current_state = _canonical_v184_hydrate(
             telefono,
             get_conversation_state(telefono),
             prospecto or {},
         )
         print(
-            "   🧭 [CANONICAL V234 EXEC OBJECTIVE] "
-            f"{objective_id}/{len(objectives)} "
-            f"intent={objective['intent']} operations={objective['operations']}"
+            "   🧭 [CANONICAL V235 EXEC ACTION] "
+            f"{unit_id}/{len(execution_units)} "
+            f"objectives={objective_ids} operation={decision.get('operation')}"
         )
         result = await objective_executor(
             fragment,
@@ -143839,7 +143963,7 @@ async def _canonical_v234_execute_objective_list(
             if not write_executed:
                 return None
             return await _canonical_v184_silent_failure(
-                source=f"canonical_v234_unhandled_{objective_id}",
+                source=f"canonical_v235_unhandled_{unit_id}",
                 message=physical_turn,
                 telefono=telefono,
                 prospecto=prospecto or {},
@@ -143850,12 +143974,18 @@ async def _canonical_v234_execute_objective_list(
         if result.get("silent_handoff") or result.get("delivery_policy") == "suppress_customer":
             return result
 
-        executed_ids.append(objective_id)
+        for objective_id in objective_ids:
+            if objective_id not in executed_ids:
+                executed_ids.append(objective_id)
+        executed_unit_ids.append(unit_id)
         results.append(result)
         response = str(result.get("response") or "").strip()
         if response:
             responses.append(response)
-            response_ids.append(objective_id)
+            for objective_id in objective_ids:
+                if objective_id not in response_ids:
+                    response_ids.append(objective_id)
+            response_unit_ids.append(unit_id)
         observations.extend(
             copy.deepcopy(observation)
             for observation in (result.get("observations") or [])
@@ -143864,7 +143994,7 @@ async def _canonical_v234_execute_objective_list(
         waiting_user = waiting_user or str(result.get("status") or "") == "waiting_user"
         write_executed = write_executed or any(
             operation in _CANONICAL_V188_WRITE_OPS
-            for operation in objective["operations"]
+            for operation in [str(decision.get("operation") or "")]
         )
 
     expected_ids = [str(objective["objective_id"]) for objective in objectives]
@@ -143873,22 +144003,33 @@ async def _canonical_v234_execute_objective_list(
         for objective_id in expected_ids
         if objective_id not in executed_ids or objective_id not in response_ids
     ]
+    expected_unit_ids = [str(unit["unit_id"]) for unit in execution_units]
+    missing_unit_ids = [
+        unit_id
+        for unit_id in expected_unit_ids
+        if unit_id not in executed_unit_ids or unit_id not in response_unit_ids
+    ]
     coverage = {
         "expected_objective_ids": expected_ids,
         "executed_objective_ids": executed_ids,
         "response_objective_ids": response_ids,
         "missing_objective_ids": missing_ids,
-        "complete": not missing_ids,
+        "expected_action_ids": expected_unit_ids,
+        "executed_action_ids": executed_unit_ids,
+        "response_action_ids": response_unit_ids,
+        "missing_action_ids": missing_unit_ids,
+        "complete": not missing_ids and not missing_unit_ids,
     }
-    if missing_ids:
+    if missing_ids or missing_unit_ids:
         print(
-            "   🛑 [CANONICAL V234 COVERAGE AUDIT] "
-            f"incompleta missing={missing_ids} → no se envía respuesta parcial"
+            "   🛑 [CANONICAL V235 COVERAGE AUDIT] "
+            f"missing_objectives={missing_ids} missing_actions={missing_unit_ids} "
+            "→ no se envía respuesta parcial"
         )
         if not write_executed:
             return None
         return await _canonical_v184_silent_failure(
-            source="canonical_v234_incomplete_coverage_after_write",
+            source="canonical_v235_incomplete_coverage_after_write",
             message=physical_turn,
             telefono=telefono,
             prospecto=prospecto or {},
@@ -143914,10 +144055,11 @@ async def _canonical_v234_execute_objective_list(
         "canonical_multi_intent": True,
         "objective_coverage": coverage,
         "multi_subintent_bridge": {
-            "version": "v234_canonical_objective_list",
+            "version": "v235_canonical_objective_ledger",
             "subintent_count": len(subintents),
             "canonical_objective_count": len(objectives),
-            "partial_response_count": len(response_ids),
+            "canonical_action_count": len(execution_units),
+            "partial_response_count": len(responses),
             "all_subintent_responses_preserved": True,
         },
         "safe_exit": {
@@ -143930,8 +144072,9 @@ async def _canonical_v234_execute_objective_list(
         },
     })
     print(
-        "   ✅ [CANONICAL V234 COVERAGE AUDIT] "
-        f"objectives={len(objectives)} responses={len(response_ids)} complete=True"
+        "   ✅ [CANONICAL V235 COVERAGE AUDIT] "
+        f"objectives={len(objectives)} actions={len(execution_units)} "
+        f"covered={len(response_ids)} complete=True"
     )
     return merged
 
@@ -143955,8 +144098,8 @@ async def ejecutar_agente_real_v2_turno(
         and _memory_owner_key(telefono_key) != "unknown"
     )
     if can_use_canonical:
-        # V234 — FAST PATH DISCOVERY → CANONICAL OBJECTIVE LIST
-        # -----------------------------------------------------
+        # V235 — FAST PATH DISCOVERY → CANONICAL OBJECTIVE LEDGER
+        # -------------------------------------------------------
         # El FAST PATH enumera exhaustivamente las obligaciones, pero no las
         # ejecuta. Cada fragmento se convierte en una decisión canónica, se
         # valida antes del primer efecto, se ejecuta con contexto compartido y
@@ -143981,7 +144124,7 @@ async def ejecutar_agente_real_v2_turno(
 
         if len(fast_path_subintents) > 1:
             print(
-                "   🧩 [CANONICAL V234 OBJECTIVE DISCOVERY] "
+                "   🧩 [CANONICAL V235 OBJECTIVE DISCOVERY] "
                 f"subintenciones={len(fast_path_subintents)} "
                 f"intents={[item.get('intencion') for item in fast_path_subintents]} "
                 "→ lista de objetivos canónicos"
@@ -143991,7 +144134,7 @@ async def ejecutar_agente_real_v2_turno(
                 conv_state if isinstance(conv_state, dict) else get_conversation_state(telefono_key),
                 prospecto or {},
             )
-            unified = await _canonical_v234_execute_objective_list(
+            unified = await _canonical_v235_execute_objective_ledger(
                 physical_turn=physical_turn,
                 subintents=fast_path_subintents,
                 state=state,
@@ -144003,11 +144146,11 @@ async def ejecutar_agente_real_v2_turno(
             if isinstance(unified, dict) and unified.get("handled"):
                 return unified
             print(
-                "   🛑 [CANONICAL V234 OBJECTIVE LIST] "
+                "   🛑 [CANONICAL V235 OBJECTIVE LEDGER] "
                 "planificación incompleta → derivación segura, sin cambiar de ejecutor"
             )
             return await _canonical_v184_silent_failure(
-                source="canonical_v234_objective_planning_incomplete",
+                source="canonical_v235_objective_planning_incomplete",
                 message=physical_turn,
                 telefono=telefono_key,
                 prospecto=prospecto or {},

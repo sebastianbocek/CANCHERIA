@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.42 - 2026-10-13
+
+- Reemplaza la lista mutable de subintenciones por un ledger canónico de objetivos y acciones con identidad y procedencia trazables.
+- Impide que la revisión semántica elimine obligaciones descubiertas por el FAST PATH; la revisión sólo puede conservar, dividir o agregar cobertura.
+- Planifica el lote completo antes de ejecutar y deduplica exclusivamente contratos canónicos equivalentes, sin reclasificar texto con reglas de palabras.
+- Audita cobertura tanto por objetivo original como por acción canónica y bloquea cualquier respuesta parcial si falta ejecutar o responder una acción.
+- Corrige el caso disponibilidad + horarios de atención + préstamo de pelota + duración inválida, que ahora conserva y responde las cuatro obligaciones.
+
 ## 0.2.41 - 2026-10-13
 
 - Elimina el último fallback de ejecución al stack FAST PATH para turnos multiobjetivo.

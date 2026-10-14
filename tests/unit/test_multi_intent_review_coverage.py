@@ -190,7 +190,7 @@ def test_live_canonical_entry_routes_fast_path_inventory_to_canonical_objectives
             "handled": True,
             "response": "disponibilidad\n\nhorarios de atención\n\npréstamo de pelota",
             "multi_subintent_bridge": {
-                "version": "v234_canonical_objective_list",
+                "version": "v235_canonical_objective_ledger",
                 "subintent_count": 3,
             },
         }
@@ -206,7 +206,7 @@ def test_live_canonical_entry_routes_fast_path_inventory_to_canonical_objectives
     )
     monkeypatch.setattr(
         legacy,
-        "_canonical_v234_execute_objective_list",
+        "_canonical_v235_execute_objective_ledger",
         fake_unified,
     )
 
@@ -228,7 +228,7 @@ def test_live_canonical_entry_routes_fast_path_inventory_to_canonical_objectives
         {"intencion": "consulta_informativa", "fragmento": messages[2]},
     ]
     assert result["handled"] is True
-    assert result["multi_subintent_bridge"]["version"] == "v234_canonical_objective_list"
+    assert result["multi_subintent_bridge"]["version"] == "v235_canonical_objective_ledger"
     assert result["multi_subintent_bridge"]["subintent_count"] == 3
     assert "disponibilidad" in result["response"]
     assert "horarios de atención" in result["response"]
@@ -307,7 +307,7 @@ def test_unified_objective_list_canonicalizes_executes_and_audits_every_request(
     )
 
     result = asyncio.run(
-        legacy._canonical_v234_execute_objective_list(
+        legacy._canonical_v235_execute_objective_ledger(
             physical_turn="\n".join(fragments),
             subintents=subintents,
             state={"shared_context": "preserved"},
@@ -329,9 +329,10 @@ def test_unified_objective_list_canonicalizes_executes_and_audits_every_request(
     assert result["objective_coverage"]["missing_objective_ids"] == []
     assert len(result["canonical_objectives"]) == 3
     assert result["multi_subintent_bridge"] == {
-        "version": "v234_canonical_objective_list",
+        "version": "v235_canonical_objective_ledger",
         "subintent_count": 3,
         "canonical_objective_count": 3,
+        "canonical_action_count": 3,
         "partial_response_count": 3,
         "all_subintent_responses_preserved": True,
     }
@@ -381,7 +382,7 @@ def test_unified_objective_list_does_not_emit_incomplete_response(monkeypatch) -
     )
 
     result = asyncio.run(
-        legacy._canonical_v234_execute_objective_list(
+        legacy._canonical_v235_execute_objective_ledger(
             physical_turn="horarios y pelota",
             subintents=subintents,
             state={},
@@ -423,7 +424,7 @@ def test_live_entry_never_falls_back_to_legacy_executor_for_multi_intent(
     monkeypatch.setattr(legacy, "detectar_multiples_intenciones", fake_detector)
     monkeypatch.setattr(
         legacy,
-        "_canonical_v234_execute_objective_list",
+        "_canonical_v235_execute_objective_ledger",
         incomplete_unified,
     )
     monkeypatch.setattr(
@@ -445,4 +446,214 @@ def test_live_entry_never_falls_back_to_legacy_executor_for_multi_intent(
 
     assert result["handled"] is True
     assert result["silent_handoff"] is True
-    assert result["source"] == "canonical_v234_objective_planning_incomplete"
+    assert result["source"] == "canonical_v235_objective_planning_incomplete"
+
+
+def test_semantic_review_cannot_delete_a_fast_path_obligation(monkeypatch) -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    message = (
+        "Hola tenes cancha de futbol para hoy? y cuales horarios de atencion tienen?\n"
+        "hace falta llevar pelota o prestan ustedes?\n"
+        "se puede reservar 2 canchas 3 horas?"
+    )
+    initial = [
+        {
+            "intencion": "pedir_horarios",
+            "fragmento": "Hola tenes cancha de futbol para hoy? y cuales horarios de atencion tienen?",
+        },
+        {
+            "intencion": "consulta_informativa",
+            "fragmento": "hace falta llevar pelota o prestan ustedes?",
+        },
+        {
+            "intencion": "reservar_cancha",
+            "fragmento": "se puede reservar 2 canchas 3 horas?",
+        },
+    ]
+    destructive_review = {
+        "intenciones": [
+            {
+                "intencion": "consulta_informativa",
+                "fragmento": "cuales horarios de atencion tienen?",
+            },
+            initial[1],
+            initial[2],
+        ],
+        "reason": "review perdió disponibilidad",
+    }
+
+    async def fake_openai(*_args, **_kwargs):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=json.dumps(destructive_review)),
+                finish_reason="stop",
+            )],
+            usage=None,
+        )
+
+    monkeypatch.setattr(legacy, "call_openai_async", fake_openai)
+    monkeypatch.setattr(legacy, "register_cost", lambda *_args, **_kwargs: None)
+
+    ledger = asyncio.run(
+        legacy._agent_v2_v126r5_audit_subintent_coverage(message, initial)
+    )
+
+    fragments = [row["fragmento"] for row in ledger]
+    assert initial[0]["fragmento"] in fragments
+    assert "cuales horarios de atencion tienen?" in fragments
+    assert len(ledger) == 4
+    assert all(row.get("discovery_id") for row in ledger)
+
+
+def test_semantic_review_can_expand_a_single_compressed_fast_path_row(
+    monkeypatch,
+) -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    message = "tenes cancha para hoy y cuales son los horarios de atencion?"
+    initial = [{"intencion": "pedir_horarios", "fragmento": message}]
+    review = {
+        "intenciones": [
+            {
+                "intencion": "pedir_horarios",
+                "fragmento": "tenes cancha para hoy",
+            },
+            {
+                "intencion": "consulta_informativa",
+                "fragmento": "cuales son los horarios de atencion?",
+            },
+        ]
+    }
+
+    async def fake_openai(*_args, **_kwargs):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=json.dumps(review)),
+                finish_reason="stop",
+            )],
+            usage=None,
+        )
+
+    monkeypatch.setattr(legacy, "call_openai_async", fake_openai)
+    monkeypatch.setattr(legacy, "register_cost", lambda *_args, **_kwargs: None)
+
+    ledger = asyncio.run(
+        legacy._agent_v2_v126r5_audit_subintent_coverage(message, initial)
+    )
+
+    assert [row["intencion"] for row in ledger] == [
+        "pedir_horarios",
+        "pedir_horarios",
+        "consulta_informativa",
+    ]
+    assert ledger[0]["fragmento"] == message
+    assert ledger[1]["discovery_source"] == "semantic_review"
+
+
+def test_objective_ledger_keeps_availability_when_duration_is_invalid(
+    monkeypatch,
+) -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    combined = "Hola tenes cancha de futbol para hoy? y cuales horarios de atencion tienen?"
+    hours = "cuales horarios de atencion tienen?"
+    ball = "hace falta llevar pelota o prestan ustedes?"
+    duration = "se puede reservar 2 canchas 3 horas?"
+    physical_turn = "\n".join([combined, ball, duration])
+    subintents = [
+        {"intencion": "pedir_horarios", "fragmento": combined},
+        {"intencion": "consulta_informativa", "fragmento": ball},
+        {"intencion": "reservar_cancha", "fragmento": duration},
+        {"intencion": "consulta_informativa", "fragmento": hours},
+    ]
+
+    availability = _availability_action()
+    combined_info = _business_info_action()
+    combined_info["info"]["requested_facts"] = [
+        "business.opening_hours",
+        "service.loan_available",
+    ]
+
+    def info_action(fact, domain, *, requested_durations=None):
+        action = _business_info_action()
+        action["info"]["requested_facts"] = [fact]
+        action["info"]["question_domains"] = [domain]
+        action["info"]["target_labels"] = []
+        if requested_durations:
+            action["info"]["requested_durations"] = requested_durations
+        return action
+
+    async def fake_orchestrator(message, _user_messages, _state, image_path=""):
+        if message == combined:
+            return {
+                **availability,
+                "_v188_actions": [availability, combined_info],
+            }
+        if message == hours:
+            return info_action("business.opening_hours", "attention_schedule")
+        if message == ball:
+            return info_action("service.loan_available", "service_policy")
+        return info_action(
+            "booking.allowed_durations",
+            "duration_policy",
+            requested_durations=[3],
+        )
+
+    executed = []
+
+    async def fake_executor(
+        message,
+        _user_messages,
+        _state,
+        decision,
+        *_args,
+        **_kwargs,
+    ):
+        operation = decision["operation"]
+        executed.append(operation)
+        if operation == "query_availability":
+            response = "Disponibilidad: 19:00, 20:00 y 21:00."
+        elif "booking.allowed_durations" in (decision.get("info") or {}).get("requested_facts", []):
+            response = "No, 3 horas no está habilitada."
+        else:
+            response = "Atendemos de 10:00 a 00:00 y prestamos pelota."
+        return {
+            "handled": True,
+            "response": response,
+            "status": "complete",
+            "observations": [],
+        }
+
+    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate", fake_orchestrator)
+    monkeypatch.setattr(legacy, "_canonical_v184_accept_decision", lambda _row: True)
+    monkeypatch.setattr(legacy, "_canonical_v184_execute_decision_v212_base", fake_executor)
+    monkeypatch.setattr(legacy, "_canonical_v183_record_decision", lambda *_a, **_k: None)
+    monkeypatch.setattr(legacy, "_canonical_v183_save", lambda *_a, **_k: None)
+    monkeypatch.setattr(legacy, "get_conversation_state", lambda _phone: {})
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v184_hydrate",
+        lambda _phone, state, _prospect: dict(state),
+    )
+
+    result = asyncio.run(
+        legacy._canonical_v235_execute_objective_ledger(
+            physical_turn=physical_turn,
+            subintents=subintents,
+            state={},
+            prospecto={},
+            telefono="+5493513441882",
+        )
+    )
+
+    assert executed == ["query_availability", "business_info", "business_info"]
+    assert "Disponibilidad" in result["response"]
+    assert "prestamos pelota" in result["response"]
+    assert "3 horas no está habilitada" in result["response"]
+    assert result["objective_coverage"]["complete"] is True
+    assert result["objective_coverage"]["missing_action_ids"] == []
+    assert len(result["objective_coverage"]["response_objective_ids"]) == 4
