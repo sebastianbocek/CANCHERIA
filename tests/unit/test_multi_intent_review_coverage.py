@@ -657,3 +657,123 @@ def test_objective_ledger_keeps_availability_when_duration_is_invalid(
     assert result["objective_coverage"]["complete"] is True
     assert result["objective_coverage"]["missing_action_ids"] == []
     assert len(result["objective_coverage"]["response_objective_ids"]) == 4
+
+
+def test_objective_contract_recovers_availability_misclassified_as_business_info(
+    monkeypatch,
+) -> None:
+    """Regresión exacta del incidente real de v0.2.42 (14/10 01:15)."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    combined = (
+        "Hola tenes cancha de futbol para hoy? y cuales horarios de atencion tienen?"
+    )
+    ball = "hace falta llevar pelota o prestan ustedes?"
+    duration = "se puede reservar 2 canchas 4 horas?"
+    physical_turn = "\n".join([combined, "ah y me olvidé", duration])
+    subintents = [
+        {"intencion": "pedir_horarios", "fragmento": combined},
+        {"intencion": "consulta_informativa", "fragmento": ball},
+        {"intencion": "reservar_cancha", "fragmento": duration},
+    ]
+
+    def info_action(fact, domain, *, requested_durations=None):
+        action = _business_info_action()
+        action["info"]["requested_facts"] = [fact]
+        action["info"]["question_domains"] = [domain]
+        action["info"]["target_labels"] = []
+        if requested_durations:
+            action["info"]["requested_durations"] = requested_durations
+        return action
+
+    planner_calls = []
+
+    async def fake_orchestrator(message, _user_messages, state, image_path=""):
+        contract = dict(state.get("_v236_objective_contract") or {})
+        planner_calls.append((message, contract))
+        if contract:
+            assert contract["discovery_intent"] == "pedir_horarios"
+            assert contract["required_operations"] == ["query_availability"]
+            return _availability_action()
+        if message == combined:
+            # Reproduce el plan defectuoso observado en producción.
+            return info_action("business.opening_hours", "attention_schedule")
+        if message == ball:
+            return info_action("service.loan_available", "service_policy")
+        return info_action(
+            "booking.allowed_duration",
+            "duration_policy",
+            requested_durations=[4],
+        )
+
+    executed = []
+
+    async def fake_executor(
+        _message,
+        _user_messages,
+        _state,
+        decision,
+        *_args,
+        **_kwargs,
+    ):
+        operation = decision["operation"]
+        executed.append(operation)
+        if operation == "query_availability":
+            response = "Disponibilidad de hoy: 19:00, 20:00 y 21:00."
+        elif "booking.allowed_duration" in (decision.get("info") or {}).get(
+            "requested_facts", []
+        ):
+            response = "4 horas no está habilitada."
+        elif "service.loan_available" in (decision.get("info") or {}).get(
+            "requested_facts", []
+        ):
+            response = "Prestamos pelota."
+        else:
+            response = "Atendemos de 10:00 a 00:00."
+        return {
+            "handled": True,
+            "response": response,
+            "status": "complete",
+            "observations": [],
+        }
+
+    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate", fake_orchestrator)
+    monkeypatch.setattr(legacy, "_canonical_v184_accept_decision", lambda _row: True)
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v184_execute_decision_v212_base",
+        fake_executor,
+    )
+    monkeypatch.setattr(legacy, "_canonical_v183_record_decision", lambda *_a, **_k: None)
+    monkeypatch.setattr(legacy, "_canonical_v183_save", lambda *_a, **_k: None)
+    monkeypatch.setattr(legacy, "get_conversation_state", lambda _phone: {})
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v184_hydrate",
+        lambda _phone, state, _prospect: dict(state),
+    )
+
+    result = asyncio.run(
+        legacy._canonical_v235_execute_objective_ledger(
+            physical_turn=physical_turn,
+            subintents=subintents,
+            state={},
+            prospecto={},
+            telefono="+5493513441882",
+        )
+    )
+
+    assert len(planner_calls) == 4
+    assert any(contract for _, contract in planner_calls)
+    assert executed == [
+        "query_availability",
+        "business_info",
+        "business_info",
+        "business_info",
+    ]
+    assert "Disponibilidad de hoy" in result["response"]
+    assert "Atendemos de 10:00" in result["response"]
+    assert "Prestamos pelota" in result["response"]
+    assert "4 horas no está habilitada" in result["response"]
+    assert result["objective_coverage"]["complete"] is True

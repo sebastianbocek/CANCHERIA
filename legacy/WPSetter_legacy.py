@@ -141396,6 +141396,14 @@ async def _canonical_v184_orchestrate(
             "requires_deposit": bool(REQUIRES_DEPOSIT),
             "events": _canonical_v184_event_summaries(),
         },
+        # V236: contrato emitido por el descubridor exhaustivo independiente.
+        # Sólo aparece durante una replanificación enfocada y no se persiste.
+        # No contiene una respuesta ni clasifica texto: exige que el
+        # Orchestrator conserve una capacidad que ya fue descubierta y luego
+        # vuelva a interpretarla con todo el contexto canónico.
+        "objective_contract": copy.deepcopy(
+            state.get("_v236_objective_contract") or {}
+        ),
     }
 
     system = r'''Sos el ÚNICO AI ORCHESTRATOR semántico de CANCHERIA.
@@ -141440,6 +141448,14 @@ del pedido sea inequívoco; si existe ambigüedad real, dejala como faltante.
     - No colapses preguntas que requieren tools distintas.
     - Podés combinar como máximo UNA operación write con varias operaciones read; no inventes writes adicionales.
     - IMPORTANTE: query_availability NO es una sub-intención independiente cuando create_booking apunta al MISMO día/hora/recurso. create_booking ya incluye el preflight determinista de disponibilidad. En ese caso devolvé sólo create_booking para ese objetivo; conservá query_availability únicamente si consulta OTRO día/hora/recurso independiente.
+3A1. CONTRATO DE OBJETIVO DESCUBIERTO: objective_contract normalmente está
+vacío. Cuando contiene required_operations, una capa semántica independiente ya
+verificó que ese fragmento expresa esa obligación. Reinterpretá libremente sus
+argumentos con el contexto canónico, pero actions DEBE incluir al menos una de
+required_operations. No conviertas disponibilidad de canchas en horarios de
+atención. Conservá además cualquier pregunta complementaria del fragmento como
+otra action. Si faltan argumentos, mantené la operación requerida con sus campos
+null para que Python solicite sólo lo faltante; nunca borres la obligación.
 3B. ESTILO CONVERSACIONAL DEL TURNO: además de las operaciones, describí en conversation_style las señales sociales del turno físico actual.
     - greeting_present=true si el usuario saludó en cualquiera de latest_user_messages, aunque además haya una consulta real. Copiá en greeting_evidence un fragmento LITERAL del saludo.
     - closing=true si el usuario está cerrando/despidiéndose.
@@ -143723,6 +143739,79 @@ async def _canonical_v184_execute_decision(
 _ejecutar_agente_real_v2_turno_v184_legacy = ejecutar_agente_real_v2_turno
 
 
+_CANONICAL_V236_DISCOVERY_REQUIREMENTS = {
+    # Estos intents de lectura tienen una correspondencia inequívoca con una
+    # tool canónica. Los intents transaccionales no se fuerzan aquí: una frase
+    # como "¿se puede reservar 4 horas?" puede estar correctamente
+    # reinterpretada como política y no como autorización de escritura.
+    "pedir_horarios": ("query_availability",),
+    "pedir_precio": ("query_price",),
+    "consultar_mi_turno": ("query_reservation",),
+}
+
+
+def _canonical_v236_required_operations(discovery_intent: str) -> Tuple[str, ...]:
+    return tuple(
+        _CANONICAL_V236_DISCOVERY_REQUIREMENTS.get(
+            str(discovery_intent or "").strip().casefold(),
+            (),
+        )
+    )
+
+
+def _canonical_v236_has_required_operation(
+    actions: List[Dict[str, Any]],
+    required_operations: Tuple[str, ...],
+) -> bool:
+    if not required_operations:
+        return True
+    present = {
+        str(action.get("operation") or "").strip()
+        for action in actions
+        if isinstance(action, dict)
+    }
+    return bool(present.intersection(required_operations))
+
+
+def _canonical_v236_merge_focused_actions(
+    original_actions: List[Dict[str, Any]],
+    focused_actions: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Une el replan enfocado sin perder preguntas complementarias.
+
+    La unión opera exclusivamente sobre contratos canónicos estructurados. No
+    inspecciona palabras del cliente ni inventa una operación. La decisión
+    enfocada tiene prioridad y el plan inicial sólo aporta siblings que la IA
+    ya había estructurado.
+    """
+    merged: List[Dict[str, Any]] = [
+        copy.deepcopy(action)
+        for action in focused_actions
+        if isinstance(action, dict)
+    ]
+    for original in original_actions:
+        if not isinstance(original, dict):
+            continue
+        operation = str(original.get("operation") or "").strip()
+        same_operation = next(
+            (
+                candidate
+                for candidate in merged
+                if str(candidate.get("operation") or "").strip() == operation
+            ),
+            None,
+        )
+        if same_operation is None:
+            merged.append(copy.deepcopy(original))
+            continue
+        if operation == "business_info":
+            same_operation["info"] = _canonical_v232_merge_info_contract(
+                dict(same_operation.get("info") or {}),
+                dict(original.get("info") or {}),
+            )
+    return merged
+
+
 async def _canonical_v235_execute_objective_ledger(
     *,
     physical_turn: str,
@@ -143774,6 +143863,82 @@ async def _canonical_v235_execute_objective_ledger(
                 f"objetivo={index} intent={intent} sin decisión canónica completa"
             )
             return None
+
+        # V236 — DISCOVERY/CANONICAL COMPATIBILITY CONTRACT
+        # El incidente de v0.2.42 conservaba correctamente el objetivo
+        # `pedir_horarios` en el ledger, pero sus tres planificaciones fueron
+        # reinterpretadas como business_info. La auditoría 1:1 sólo comprobaba
+        # que cada objetivo produjera *alguna* respuesta, no que conservara la
+        # capacidad descubierta. Si falta una operación inequívoca de lectura,
+        # pedimos una replanificación semántica enfocada. No ejecutamos nada
+        # hasta que el contrato sea satisfecho.
+        required_operations = _canonical_v236_required_operations(intent)
+        if not _canonical_v236_has_required_operation(actions, required_operations):
+            initial_operations = [
+                str(action.get("operation") or "").strip()
+                for action in actions
+            ]
+            focused_state = copy.deepcopy(state)
+            focused_state["_v236_objective_contract"] = {
+                "discovery_id": str(item.get("discovery_id") or f"fast_path_{index}"),
+                "discovery_source": str(item.get("discovery_source") or "fast_path"),
+                "discovery_intent": intent,
+                "required_operations": list(required_operations),
+                "fragment": fragment,
+                "reason": "preserve_independently_discovered_obligation",
+            }
+            try:
+                focused_decision = await _canonical_v184_orchestrate(
+                    fragment,
+                    [fragment],
+                    focused_state,
+                    image_path=image_path,
+                )
+            except Exception as exc:
+                print(
+                    "   🛑 [CANONICAL V236 OBJECTIVE CONTRACT] "
+                    f"objetivo={index} intent={intent} replan_error="
+                    f"{type(exc).__name__}: {exc}"
+                )
+                return None
+            focused_actions = _canonical_v188_action_list(focused_decision)
+            focused_operations = [
+                str(action.get("operation") or "").strip()
+                for action in focused_actions
+            ]
+            print(
+                "   🧭 [CANONICAL V236 OBJECTIVE CONTRACT] "
+                f"objetivo={index} intent={intent} "
+                f"required={list(required_operations)} "
+                f"initial={initial_operations} focused={focused_operations}"
+            )
+            if (
+                focused_decision.get("_suppress_legacy_fallback")
+                or focused_decision.get("operation") == "delegate_legacy"
+                or not focused_actions
+                or any(
+                    not _canonical_v184_accept_decision(action)
+                    for action in focused_actions
+                )
+                or not _canonical_v236_has_required_operation(
+                    focused_actions,
+                    required_operations,
+                )
+            ):
+                print(
+                    "   🛑 [CANONICAL V236 OBJECTIVE CONTRACT] "
+                    f"objetivo={index} intent={intent} contrato incumplido; "
+                    "no se ejecuta respuesta parcial"
+                )
+                return None
+            actions = _canonical_v236_merge_focused_actions(
+                actions,
+                focused_actions,
+            )
+            decision = copy.deepcopy(focused_decision)
+            decision["_v188_actions"] = copy.deepcopy(actions)
+            decision["actions"] = copy.deepcopy(actions)
+            decision["_v236_objective_contract_satisfied"] = True
 
         operations = [str(action.get("operation") or "") for action in actions]
         objectives.append({

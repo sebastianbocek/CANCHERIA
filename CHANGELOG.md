@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.43 - 2026-10-14
+
+- Corrige la pérdida de disponibilidad en turnos multiobjetivo cuando el planificador canónico reinterpretaba `pedir_horarios` como información general.
+- Agrega un contrato de compatibilidad entre el descubrimiento exhaustivo FAST PATH y cada acción canónica inequívoca de lectura.
+- Replanifica semánticamente el objetivo que incumple el contrato, conserva sus preguntas complementarias y bloquea respuestas parciales si la obligación sigue ausente.
+- Incorpora una regresión automatizada del caso real: disponibilidad de hoy, horarios de atención, préstamo de pelota y duración no habilitada en un único turno físico.
+
 ## 0.2.42 - 2026-10-13
 
 - Reemplaza la lista mutable de subintenciones por un ledger canónico de objetivos y acciones con identidad y procedencia trazables.
