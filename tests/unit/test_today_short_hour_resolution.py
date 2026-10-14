@@ -443,7 +443,7 @@ def test_ai_reconstructs_complete_goal_when_hour_arrives_last(monkeypatch) -> No
     from cancheria.legacy_bridge import load_legacy_module
 
     legacy = load_legacy_module()
-    captured = {}
+    captured = {"systems": [], "payloads": []}
     ai_decision = {
         "operation": "create_booking",
         "confidence": 0.98,
@@ -482,8 +482,8 @@ def test_ai_reconstructs_complete_goal_when_hour_arrives_last(monkeypatch) -> No
     }
 
     async def fake_openai(*_args, **kwargs):
-        captured["system"] = kwargs["messages"][0]["content"]
-        captured["payload"] = json.loads(kwargs["messages"][1]["content"])
+        captured["systems"].append(kwargs["messages"][0]["content"])
+        captured["payloads"].append(json.loads(kwargs["messages"][1]["content"]))
         return SimpleNamespace(
             choices=[SimpleNamespace(
                 message=SimpleNamespace(content=json.dumps(ai_decision)),
@@ -530,9 +530,9 @@ def test_ai_reconstructs_complete_goal_when_hour_arrives_last(monkeypatch) -> No
     assert decision["booking"]["resource_type"] == "Futbol 5"
     assert decision["goal_reconstruction"]["ready_for_execution"] is True
     assert decision.get("_v229_pending_field_completed") is None
-    assert captured["payload"]["recent_messages"] == state["recent_messages"]
-    assert captured["payload"]["operational_history"]["pending_action"]["field"] == "hora"
-    assert "no existe una secuencia programada" in captured["system"].casefold()
+    assert captured["payloads"][0]["recent_messages"] == state["recent_messages"]
+    assert captured["payloads"][0]["operational_history"]["pending_action"]["field"] == "hora"
+    assert "no existe una secuencia programada" in captured["systems"][0].casefold()
 
 
 def test_ai_reconstructs_complete_goal_when_day_arrives_last(monkeypatch) -> None:
@@ -847,9 +847,10 @@ def test_fresh_booking_goal_is_reviewed_by_ai_before_execution(monkeypatch) -> N
         )
     )
 
-    assert len(payloads) == 2
+    assert len(payloads) == 3
     assert "draft_decision" not in payloads[0]
     assert payloads[1]["draft_decision"]["operation"] == "query_availability"
+    assert payloads[2]["latest_user_turn"] == "Hola tenes cancha para las 21"
     assert decision["operation"] == "create_booking"
     assert decision["booking"]["day"] == "Viernes 09/10"
     assert decision["booking"]["time"] == "21:00"
@@ -946,8 +947,9 @@ def test_focused_ai_recovers_pragmatic_today_when_goal_review_omits_day(
         )
     )
 
-    assert len(calls) == 3
+    assert len(calls) == 4
     assert calls[2]["orchestrator_booking_candidate"]["time"] == "21:00"
+    assert calls[3]["latest_user_turn"] == "Hola tenes cancha para las 21"
     assert decision["booking"]["day"] == "Viernes 09/10"
     assert decision["booking"]["time"] == "21:00"
     assert decision["missing_fields"] == ["resource_type"]

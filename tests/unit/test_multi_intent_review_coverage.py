@@ -843,6 +843,91 @@ def test_semantic_turn_compiler_preserves_all_objectives_and_quantity_roles() ->
     assert corrected["coverage_expected"] == 4
 
 
+def test_semantic_compiler_audits_full_turn_when_draft_collapses_to_one_action(
+    monkeypatch,
+) -> None:
+    """La cobertura no puede depender de que el primer borrador ya sea completo."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    message = (
+        "Hola tenes cancha de futbol para hoy? y cuales horarios de atencion "
+        "tienen? hace falta llevar pelota o prestan ustedes?\n"
+        "ah y me olvidé\n"
+        "se puede reservar 2 canchas 4 horas?"
+    )
+    availability = {
+        "operation": "query_availability",
+        "confidence": 0.98,
+        "intent_mode": "information",
+        "booking": {"day": "Miércoles 14/10", "resource_type": "Futbol 5"},
+    }
+    opening = _business_info_action()
+    opening["info"] = {
+        "requested_facts": ["business.opening_hours"],
+        "question_domains": ["attention_schedule"],
+    }
+    ball = _business_info_action()
+    ball["info"] = {
+        "requested_facts": ["service.loan_available"],
+        "question_domains": ["service_policy"],
+        "target_labels": ["pelota"],
+    }
+    capacity = _business_info_action()
+    capacity["info"] = {
+        "requested_facts": [
+            "court.simultaneous_capacity",
+            "booking.allowed_duration",
+        ],
+        "question_domains": ["court_catalog", "duration_policy"],
+        "requested_court_count": 2,
+        "requested_durations": [4],
+    }
+    compiler_calls = []
+
+    async def collapsed_base(*_args, **_kwargs):
+        return dict(availability)
+
+    async def complete_compiler(physical_turn, draft, _state):
+        compiler_calls.append((physical_turn, draft))
+        return {
+            "coverage_complete": True,
+            "objectives": [
+                {"evidence": "tenes cancha de futbol para hoy?", "action_indexes": [0]},
+                {"evidence": "cuales horarios de atencion tienen?", "action_indexes": [1]},
+                {"evidence": "hace falta llevar pelota o prestan ustedes?", "action_indexes": [2]},
+                {"evidence": "se puede reservar 2 canchas 4 horas?", "action_indexes": [3]},
+            ],
+            "decision": {
+                **availability,
+                "actions": [availability, opening, ball, capacity],
+            },
+        }
+
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v184_orchestrate_v238_base",
+        collapsed_base,
+    )
+    monkeypatch.setattr(legacy, "_canonical_v238_compile_turn", complete_compiler)
+
+    corrected = asyncio.run(
+        legacy._canonical_v184_orchestrate(message, [message], {})
+    )
+
+    assert len(compiler_calls) == 1
+    assert compiler_calls[0][0] == message
+    assert compiler_calls[0][1]["operation"] == "query_availability"
+    assert [row["operation"] for row in corrected["_v188_actions"]] == [
+        "query_availability",
+        "business_info",
+        "business_info",
+        "business_info",
+    ]
+    assert corrected["coverage_expected"] == 4
+    assert corrected["_v238_semantic_compiler_verified"] is True
+
+
 def test_semantic_compiler_failure_keeps_safe_ai_draft_without_handoff(
     monkeypatch,
 ) -> None:

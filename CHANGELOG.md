@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.46 - 2026-10-14
+
+- El compilador semántico multiobjetivo ahora audita todos los turnos físicos reales, aunque el primer borrador canónico haya colapsado erróneamente a una sola acción.
+- Elimina la compuerta circular que exigía detectar múltiples acciones antes de ejecutar precisamente la revisión encargada de descubrirlas.
+- Preserva la degradación segura al borrador validado si la auditoría IA no está disponible, sin generar un handoff humano por ese fallo técnico.
+- Agrega una regresión del caso real donde un borrador de sólo disponibilidad debe recuperar también horarios de atención, préstamo de pelota y la consulta “2 canchas 4 horas”.
+
 ## 0.2.45 - 2026-10-14
 
 - Reemplaza el encadenado FAST PATH → traducción hardcodeada → auditor cuantitativo por un compilador semántico IA del turno físico completo.

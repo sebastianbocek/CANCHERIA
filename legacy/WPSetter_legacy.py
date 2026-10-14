@@ -148268,22 +148268,6 @@ async def _canonical_v184_orchestrate(
         state,
         image_path=image_path,
     )
-    draft_actions = _canonical_v188_action_list(draft)
-    needs_compilation = bool(
-        len(draft_actions) > 1
-        or any(
-            isinstance(action, dict)
-            and str(action.get("operation") or "").strip() == "business_info"
-            and (
-                bool((action.get("info") or {}).get("requested_durations"))
-                or (action.get("info") or {}).get("requested_court_count")
-                not in (None, "")
-            )
-            for action in draft_actions
-        )
-    )
-    if not needs_compilation:
-        return draft
     physical_turn = _canonical_v200_current_turn_text(message, user_messages)
     try:
         receipt = await _canonical_v238_compile_turn(physical_turn, draft, state)
