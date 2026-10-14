@@ -147,9 +147,10 @@ def test_two_pass_orchestrator_keeps_all_requests_from_multiple_messages(
         )
     )
 
-    assert len(payloads) == 2
+    assert len(payloads) == 3
     assert payloads[0]["latest_user_messages"] == messages
     assert payloads[1]["latest_user_messages"] == messages
+    assert payloads[2]["latest_user_turn"] == "\n".join(messages)
     assert [row["operation"] for row in decision["_v188_actions"]] == [
         "query_availability",
         "business_info",
@@ -162,7 +163,7 @@ def test_two_pass_orchestrator_keeps_all_requests_from_multiple_messages(
     assert decision["_v232_review_coverage_merged"] is True
 
 
-def test_live_canonical_entry_routes_fast_path_inventory_to_canonical_objectives(
+def test_live_canonical_entry_uses_one_compiled_multiobjective_plan(
     monkeypatch,
 ) -> None:
     from cancheria.legacy_bridge import load_legacy_module
@@ -176,38 +177,57 @@ def test_live_canonical_entry_routes_fast_path_inventory_to_canonical_objectives
     ]
     physical_turn = "\n".join(messages)
 
-    async def fake_detector(message):
-        calls["detected_message"] = message
-        return [
-            {"intencion": "pedir_horarios", "fragmento": messages[0]},
-            {"intencion": "consulta_informativa", "fragmento": messages[1]},
-            {"intencion": "consulta_informativa", "fragmento": messages[2]},
-        ]
+    plan = _availability_action()
+    plan["_v188_actions"] = [
+        _availability_action(),
+        _business_info_action(),
+    ]
+    plan["objectives"] = [
+        {"objective_id": "objective_1", "evidence": messages[0], "action_indexes": [0]},
+        {"objective_id": "objective_2", "evidence": messages[1], "action_indexes": [1]},
+        {"objective_id": "objective_3", "evidence": messages[2], "action_indexes": [1]},
+    ]
 
-    async def fake_unified(**kwargs):
-        calls["unified"] = kwargs
+    async def fake_orchestrator(message, user_messages, state, image_path=""):
+        calls["orchestrator"] = {
+            "message": message,
+            "user_messages": list(user_messages),
+            "state": dict(state),
+        }
+        return plan
+
+    async def fake_executor(*args, **kwargs):
+        calls["executor_decision"] = args[3]
         return {
             "handled": True,
             "response": "disponibilidad\n\nhorarios de atención\n\npréstamo de pelota",
-            "multi_subintent_bridge": {
-                "version": "v235_canonical_objective_ledger",
-                "subintent_count": 3,
-            },
         }
 
-    async def legacy_must_not_run(*_args, **_kwargs):
-        raise AssertionError("El FAST PATH legacy no debe ejecutar este lote")
+    async def detector_must_not_run(*_args, **_kwargs):
+        raise AssertionError("El router FAST PATH no debe ejecutarse")
 
-    monkeypatch.setattr(legacy, "detectar_multiples_intenciones", fake_detector)
+    async def legacy_must_not_run(*_args, **_kwargs):
+        raise AssertionError("El executor legacy no debe ejecutar este lote")
+
+    monkeypatch.setattr(legacy, "detectar_multiples_intenciones", detector_must_not_run)
     monkeypatch.setattr(
         legacy,
         "_ejecutar_agente_real_v2_turno_v184_legacy",
         legacy_must_not_run,
     )
+    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate", fake_orchestrator)
+    monkeypatch.setattr(legacy, "_canonical_v184_execute_decision", fake_executor)
+    monkeypatch.setattr(legacy, "_canonical_v183_record_decision", lambda *_a, **_k: None)
+    monkeypatch.setattr(legacy, "_canonical_v183_save", lambda *_a, **_k: None)
     monkeypatch.setattr(
         legacy,
-        "_canonical_v235_execute_objective_ledger",
-        fake_unified,
+        "_canonical_v184_hydrate",
+        lambda *_a, **_k: {
+            "active_flow_hint": None,
+            "booking": {},
+            "reservations": [],
+            "event_registration": {},
+        },
     )
 
     result = asyncio.run(
@@ -220,16 +240,10 @@ def test_live_canonical_entry_routes_fast_path_inventory_to_canonical_objectives
         )
     )
 
-    assert calls["detected_message"] == physical_turn
-    assert calls["unified"]["physical_turn"] == physical_turn
-    assert calls["unified"]["subintents"] == [
-        {"intencion": "pedir_horarios", "fragmento": messages[0]},
-        {"intencion": "consulta_informativa", "fragmento": messages[1]},
-        {"intencion": "consulta_informativa", "fragmento": messages[2]},
-    ]
+    assert calls["orchestrator"]["message"] == physical_turn
+    assert calls["orchestrator"]["user_messages"] == messages
+    assert calls["executor_decision"]["objectives"] == plan["objectives"]
     assert result["handled"] is True
-    assert result["multi_subintent_bridge"]["version"] == "v235_canonical_objective_ledger"
-    assert result["multi_subintent_bridge"]["subintent_count"] == 3
     assert "disponibilidad" in result["response"]
     assert "horarios de atención" in result["response"]
     assert "préstamo de pelota" in result["response"]
@@ -394,7 +408,7 @@ def test_unified_objective_list_does_not_emit_incomplete_response(monkeypatch) -
     assert result is None
 
 
-def test_live_entry_never_falls_back_to_legacy_executor_for_multi_intent(
+def test_compiler_review_failure_does_not_emit_handoff(
     monkeypatch,
 ) -> None:
     from cancheria.legacy_bridge import load_legacy_module
@@ -402,51 +416,37 @@ def test_live_entry_never_falls_back_to_legacy_executor_for_multi_intent(
     legacy = load_legacy_module()
     messages = ["consultá disponibilidad", "y decime si prestan pelota"]
 
-    async def fake_detector(_message):
-        return [
-            {"intencion": "pedir_horarios", "fragmento": messages[0]},
-            {"intencion": "consulta_informativa", "fragmento": messages[1]},
-        ]
+    draft = _business_info_action()
+    draft["_v188_actions"] = [
+        _availability_action(),
+        _business_info_action(),
+    ]
 
-    async def incomplete_unified(**_kwargs):
-        return None
+    async def fake_base(*_args, **_kwargs):
+        return dict(draft)
 
-    async def legacy_must_not_run(*_args, **_kwargs):
-        raise AssertionError("FAST PATH no debe volver a ejecutar objetivos")
-
-    async def fake_safe_failure(**kwargs):
+    async def incomplete_compiler(*_args, **_kwargs):
         return {
-            "handled": True,
-            "silent_handoff": True,
-            "source": kwargs["source"],
+            "coverage_complete": False,
+            "objectives": [],
+            "decision": {},
         }
 
-    monkeypatch.setattr(legacy, "detectar_multiples_intenciones", fake_detector)
-    monkeypatch.setattr(
-        legacy,
-        "_canonical_v235_execute_objective_ledger",
-        incomplete_unified,
-    )
-    monkeypatch.setattr(
-        legacy,
-        "_ejecutar_agente_real_v2_turno_v184_legacy",
-        legacy_must_not_run,
-    )
-    monkeypatch.setattr(legacy, "_canonical_v184_silent_failure", fake_safe_failure)
+    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate_v238_base", fake_base)
+    monkeypatch.setattr(legacy, "_canonical_v238_compile_turn", incomplete_compiler)
 
     result = asyncio.run(
-        legacy.ejecutar_agente_real_v2_turno(
+        legacy._canonical_v184_orchestrate(
             "\n".join(messages),
+            messages,
             {},
-            {},
-            "+5493513441882",
-            user_messages=messages,
         )
     )
 
-    assert result["handled"] is True
-    assert result["silent_handoff"] is True
-    assert result["source"] == "canonical_v235_objective_planning_incomplete"
+    assert result["operation"] == "business_info"
+    assert result.get("silent_handoff") is not True
+    assert result.get("_suppress_legacy_fallback") is not True
+    assert result["_v238_semantic_compiler_fallback"] is True
 
 
 def test_semantic_review_cannot_delete_a_fast_path_obligation(monkeypatch) -> None:
@@ -779,62 +779,95 @@ def test_objective_contract_recovers_availability_misclassified_as_business_info
     assert result["objective_coverage"]["complete"] is True
 
 
-def test_quantity_role_adjudicator_separates_two_courts_from_four_hours(
-    monkeypatch,
-) -> None:
-    """Regresión exacta del incidente real de v0.2.43 (14/10 15:30)."""
+def test_semantic_turn_compiler_preserves_all_objectives_and_quantity_roles() -> None:
+    """El compilador integral cubre el turno sin reglas Python por intención."""
     from cancheria.legacy_bridge import load_legacy_module
 
     legacy = load_legacy_module()
-    message = "se puede reservar 2 canchas 4 horas?"
-    wrong = _business_info_action()
-    wrong["info"] = {
-        "requested_facts": ["booking.allowed_duration"],
-        "target_resources": [],
-        "target_labels": [],
-        "question_domains": ["duration_policy"],
-        "requested_durations": [2],
-    }
-    wrong["_v188_actions"] = [dict(wrong)]
-
-    async def fake_base(*_args, **_kwargs):
-        return wrong
-
-    receipt = {
-        "has_parallel_court_question": True,
-        "requested_court_count": 2,
-        "court_count_evidence": "2 canchas",
-        "has_duration_question": True,
-        "requested_durations": [
-            {"hours": 4, "evidence": "4 horas"},
-        ],
-    }
-
-    async def fake_openai(*_args, **_kwargs):
-        return SimpleNamespace(
-            choices=[SimpleNamespace(
-                message=SimpleNamespace(content=json.dumps(receipt)),
-                finish_reason="stop",
-            )],
-            usage=None,
-        )
-
-    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate_v237_base", fake_base)
-    monkeypatch.setattr(legacy, "call_openai_async", fake_openai)
-    monkeypatch.setattr(legacy, "register_cost", lambda *_args, **_kwargs: None)
-
-    corrected = asyncio.run(
-        legacy._canonical_v184_orchestrate(message, [message], {})
+    message = (
+        "Hola tenes cancha de futbol para hoy? y cuales horarios de atencion "
+        "tienen? hace falta llevar pelota o prestan ustedes?\n"
+        "ah y me olvidé\n"
+        "se puede reservar 2 canchas 4 horas?"
     )
+    availability = {
+        "operation": "query_availability", "confidence": 0.98,
+        "intent_mode": "information",
+        "booking": {"day": "Miércoles 14/10", "resource_type": "Futbol 5"},
+    }
+    opening = _business_info_action()
+    opening["info"] = {
+        "requested_facts": ["business.opening_hours"],
+        "question_domains": ["attention_schedule"],
+    }
+    ball = _business_info_action()
+    ball["info"] = {
+        "requested_facts": ["service.loan_available"],
+        "question_domains": ["service_policy"],
+        "target_labels": ["pelota"],
+    }
+    capacity = _business_info_action()
+    capacity["info"] = {
+        "requested_facts": [
+            "court.simultaneous_capacity", "booking.allowed_duration",
+        ],
+        "question_domains": ["court_catalog", "duration_policy"],
+        "requested_court_count": 2,
+        "requested_durations": [4],
+    }
+    receipt = {
+        "coverage_complete": True,
+        "objectives": [
+            {"evidence": "tenes cancha de futbol para hoy?", "action_indexes": [0]},
+            {"evidence": "cuales horarios de atencion tienen?", "action_indexes": [1]},
+            {"evidence": "hace falta llevar pelota o prestan ustedes?", "action_indexes": [2]},
+            {"evidence": "se puede reservar 2 canchas 4 horas?", "action_indexes": [3]},
+        ],
+        "decision": {
+            **availability,
+            "actions": [availability, opening, ball, capacity],
+        },
+    }
+    corrected = legacy._canonical_v238_verified_plan(message, receipt)
 
-    action = corrected["_v188_actions"][0]
-    info = action["info"]
+    assert corrected is not None
+    assert [row["operation"] for row in corrected["_v188_actions"]] == [
+        "query_availability", "business_info", "business_info", "business_info",
+    ]
+    info = corrected["_v188_actions"][3]["info"]
     assert info["requested_court_count"] == 2
-    assert info["requested_durations"] == [4.0]
+    assert info["requested_durations"] == [4]
     assert "court.simultaneous_capacity" in info["requested_facts"]
     assert "booking.allowed_duration" in info["requested_facts"]
-    assert set(info["question_domains"]) >= {"court_catalog", "duration_policy"}
-    assert corrected["_v237_quantity_roles_verified"] is True
+    assert corrected["_v238_semantic_compiler_verified"] is True
+    assert corrected["coverage_expected"] == 4
+
+
+def test_semantic_compiler_failure_keeps_safe_ai_draft_without_handoff(
+    monkeypatch,
+) -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    draft = _business_info_action()
+    draft["info"]["requested_durations"] = [2]
+
+    async def fake_base(*_args, **_kwargs):
+        return dict(draft)
+
+    async def broken_compiler(*_args, **_kwargs):
+        raise RuntimeError("temporary semantic review failure")
+
+    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate_v238_base", fake_base)
+    monkeypatch.setattr(legacy, "_canonical_v238_compile_turn", broken_compiler)
+
+    result = asyncio.run(
+        legacy._canonical_v184_orchestrate("¿prestan pelota?", ["¿prestan pelota?"], {})
+    )
+
+    assert result["operation"] == "business_info"
+    assert result.get("_suppress_legacy_fallback") is not True
+    assert result["_v238_semantic_compiler_fallback"] is True
 
 
 def test_parallel_court_and_duration_contract_preserves_both_dimensions() -> None:

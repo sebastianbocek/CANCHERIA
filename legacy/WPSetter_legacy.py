@@ -141544,13 +141544,11 @@ null para que Python solicite sólo lo faltante; nunca borres la obligación.
     - Para duración: operation=business_info, intent_mode=information, info.question_domains=["duration_policy"], info.requested_facts=["booking.allowed_duration"], info.requested_durations=[duración consultada].
     - No pidas día/hora ni heredes day/time/court/reservation_id históricos para contestar una política general.
     - create_booking requiere voluntad transaccional actual de reservar/confirmar, o una continuación inequívoca de un pending de booking. Una pregunta “¿se puede...?” aislada no concede esa autoridad.
-8A1. CANTIDAD DE CANCHAS Y DURACIÓN SON DIMENSIONES DISTINTAS. En una frase
-como “¿se pueden reservar 2 canchas 4 horas?”, el 2 modifica “canchas” y el 4
-modifica “horas”. Devolvé UNA business_info con requested_facts incluyendo
-"court.simultaneous_capacity" y "booking.allowed_duration",
-question_domains incluyendo "court_catalog" y "duration_policy",
-requested_court_count=2 y requested_durations=[4]. Nunca uses la cantidad de
-canchas como duración ni descartes la duración explícita.
+8A1. ROLES CUANTITATIVOS. Vinculá cada cantidad con la entidad o unidad que
+modifica según la gramática y el significado del turno. La cantidad de recursos
+y la duración son dimensiones independientes y pueden coexistir. Cuando una
+consulta pide ambas políticas, devolvé UNA business_info con los facts y campos
+estructurados correspondientes. Nunca reasignes una cantidad a otra dimensión.
 8A2. PRECIO DE LA HORA VS DURACIÓN:
     - Si el usuario pregunta cuánto sale/cuesta/vale la hora de cancha, preservá query_price aunque en el mismo turno también pregunte duraciones, horarios o servicios.
     - Si una expresión coloquial sobre “la hora de cancha” puede estar preguntando tanto la tarifa como las duraciones permitidas y NO menciona una duración numérica concreta, no descartes el precio: emití ambas sub-intenciones (business_info duration_policy + query_price) cuando corresponda.
@@ -144328,67 +144326,9 @@ async def ejecutar_agente_real_v2_turno(
         and _memory_owner_key(telefono_key) != "unknown"
     )
     if can_use_canonical:
-        # V235 — FAST PATH DISCOVERY → CANONICAL OBJECTIVE LEDGER
-        # -------------------------------------------------------
-        # El FAST PATH enumera exhaustivamente las obligaciones, pero no las
-        # ejecuta. Cada fragmento se convierte en una decisión canónica, se
-        # valida antes del primer efecto, se ejecuta con contexto compartido y
-        # finalmente se audita 1:1 antes de producir un único mensaje.
-        physical_turn = _canonical_v200_current_turn_text(
-            mensaje,
-            user_messages or [mensaje],
-        )
-        try:
-            fast_path_detected = await detectar_multiples_intenciones(physical_turn)
-            fast_path_subintents = _agent_v2_v123_prepare_subintents(
-                fast_path_detected,
-                physical_turn,
-            )
-        except Exception as fast_path_exc:
-            print(
-                "   ⚠️ [CANONICAL V233 FAST PATH COVERAGE] "
-                f"detector no disponible; continúo canónico: "
-                f"{type(fast_path_exc).__name__}: {fast_path_exc}"
-            )
-            fast_path_subintents = []
-
-        if len(fast_path_subintents) > 1:
-            print(
-                "   🧩 [CANONICAL V235 OBJECTIVE DISCOVERY] "
-                f"subintenciones={len(fast_path_subintents)} "
-                f"intents={[item.get('intencion') for item in fast_path_subintents]} "
-                "→ lista de objetivos canónicos"
-            )
-            state = _canonical_v184_hydrate(
-                telefono_key,
-                conv_state if isinstance(conv_state, dict) else get_conversation_state(telefono_key),
-                prospecto or {},
-            )
-            unified = await _canonical_v235_execute_objective_ledger(
-                physical_turn=physical_turn,
-                subintents=fast_path_subintents,
-                state=state,
-                prospecto=prospecto or {},
-                telefono=telefono_key,
-                page=page,
-                image_path=image_path,
-            )
-            if isinstance(unified, dict) and unified.get("handled"):
-                return unified
-            print(
-                "   🛑 [CANONICAL V235 OBJECTIVE LEDGER] "
-                "planificación incompleta → derivación segura, sin cambiar de ejecutor"
-            )
-            return await _canonical_v184_silent_failure(
-                source="canonical_v235_objective_planning_incomplete",
-                message=physical_turn,
-                telefono=telefono_key,
-                prospecto=prospecto or {},
-                page=page,
-                observations=[],
-                original_response="",
-            )
-
+        # V238: una sola compilación semántica del turno físico produce la
+        # lista completa de objetivos y actions. No hay router de etiquetas,
+        # traducción hardcodeada intent→operación ni planificación fragmentada.
         state: Dict[str, Any] = {}
         decision: Dict[str, Any] = {}
         try:
@@ -148104,6 +148044,269 @@ async def _canonical_v184_orchestrate(
         f"durations={patch.get('requested_durations')}"
     )
     return corrected
+
+
+# ============================================================================
+# V238 — COMPILADOR SEMÁNTICO MULTIOBJETIVO DE TURNO COMPLETO
+# ============================================================================
+# V235/V236 dividían el turno con una taxonomía intermedia y luego intentaban
+# traducir cada etiqueta a una operación canónica. V237 añadía otra lectura
+# exclusiva de cantidades. Esa cadena podía aplicar un auditor especializado a
+# un sibling ajeno (por ejemplo, préstamo de pelota), invalidar todo el lote y
+# generar un handoff interno para una consulta perfectamente contestable.
+#
+# V238 usa una sola frontera semántica: una IA relee el turno físico completo,
+# enumera sus objetivos con evidencia literal y entrega directamente la lista
+# de acciones del executor canónico. Python no asigna intenciones por palabras,
+# no traduce etiquetas FAST PATH y no decide qué significa cada número; sólo
+# valida estructura, evidencia, cobertura y límites de seguridad.
+# ============================================================================
+
+
+async def _canonical_v238_compile_turn(
+    physical_turn: str,
+    draft: Dict[str, Any],
+    state: Dict[str, Any],
+) -> Dict[str, Any]:
+    system = r'''Sos el compilador semántico multiobjetivo de CANCHERIA.
+Leé TODO el turno físico del cliente como una unidad, aunque haya llegado en
+varias burbujas. El borrador es una hipótesis: corregilo si absorbió, omitió o
+mezcló peticiones.
+
+Tu tarea:
+1. Enumerar TODAS las preguntas y acciones independientes del cliente.
+2. Crear una action canónica completa por capacidad necesaria, conservando el
+   orden conversacional. No generes una action separada para saludos o relleno.
+3. Vincular fechas, horas, cantidades, duraciones, recursos y modificadores por
+   su relación gramatical y significado. Dos números cercanos pueden cumplir
+   roles distintos; jamás intercambies sus unidades. Toda cantidad debe quedar
+   en el campo de la entidad que modifica.
+4. Las consultas sobre disponibilidad real usan query_availability. Los
+   horarios generales, servicios, equipamiento y políticas usan business_info.
+   Una pregunta sobre qué está permitido no autoriza una escritura.
+5. handoff_human sólo es válido cuando el cliente pidió explícitamente hablar
+   con una persona. Una duda del modelo o un dato faltante no es un handoff.
+6. No inventes hechos comerciales: las actions sólo solicitan facts; las tools
+   deterministas consultarán configuración, calendario y persistencia.
+7. Cada objetivo debe citar evidence LITERAL y contigua del turno. action_indexes
+   usa índices desde 0 y vincula ese objetivo con todas las actions que lo
+   resuelven. Cada action y cada objetivo deben quedar cubiertos.
+
+OPERATIONS válidas:
+greeting, query_availability, create_booking, create_recurring_booking,
+replace_pending_booking, query_reservation, cancel_booking, reschedule_booking,
+add_quincho, remove_quincho, register_booking_payment, choose_booking_cash,
+query_event, register_event, register_event_payment, choose_event_cash,
+cancel_event_registration, business_info, query_price, ask_missing,
+handoff_human, delegate_legacy.
+
+Conservá en decision el mismo schema canónico del borrador. Cada elemento de
+decision.actions debe incluir operation, confidence, intent_mode y los objetos
+booking, recurrence, reservation, event, info, context_resolution y
+missing_fields que correspondan. La primera action también debe ser la decisión
+top-level. Devolvé SOLO JSON:
+{
+  "coverage_complete": true,
+  "objectives": [
+    {"objective_id":"objective_1", "evidence":"cita literal", "action_indexes":[0]}
+  ],
+  "decision": {"operation":"...", "confidence":0.0, "actions":[]}
+}'''
+    state_view = {
+        "active_flow": state.get("active_flow"),
+        "pending": copy.deepcopy(state.get("pending")),
+        "booking": copy.deepcopy(state.get("booking")),
+        "availability": copy.deepcopy(state.get("availability")),
+        "event_registration": copy.deepcopy(state.get("event_registration")),
+        "reservations": [
+            {
+                key: row.get(key)
+                for key in ("reservation_id", "fecha", "hora", "cancha", "estado")
+                if row.get(key) not in (None, "")
+            }
+            for row in (state.get("reservations") or [])
+            if isinstance(row, dict)
+        ][:8],
+    }
+    response = await call_openai_async(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": system},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "latest_user_turn": str(physical_turn or "").strip(),
+                        "canonical_state": state_view,
+                        "draft_decision": copy.deepcopy(draft or {}),
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                ),
+            },
+        ],
+        temperature=0.0,
+        max_tokens=2200,
+        response_format={"type": "json_object"},
+    )
+    register_cost(response)
+    return _loads_llm_json_object(
+        str(response.choices[0].message.content or "").strip()
+    )
+
+
+def _canonical_v238_verified_plan(
+    physical_turn: str,
+    receipt: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(receipt, dict) or receipt.get("coverage_complete") is not True:
+        return None
+    compiled = receipt.get("decision")
+    if not isinstance(compiled, dict):
+        return None
+    raw_actions = compiled.get("actions")
+    if not isinstance(raw_actions, list) or not raw_actions or len(raw_actions) > 5:
+        return None
+
+    actions: List[Dict[str, Any]] = []
+    for raw in raw_actions:
+        if not isinstance(raw, dict):
+            return None
+        action = copy.deepcopy(raw)
+        operation = str(action.get("operation") or "").strip()
+        if operation not in CANONICAL_V184_OPERATIONS or operation == "delegate_legacy":
+            return None
+        try:
+            action["confidence"] = max(
+                0.0,
+                min(1.0, float(action.get("confidence") or 0.0)),
+            )
+        except (TypeError, ValueError):
+            return None
+        for key in (
+            "booking", "recurrence", "reservation", "event", "info",
+            "context_resolution",
+        ):
+            if not isinstance(action.get(key), dict):
+                action[key] = {}
+        if not isinstance(action.get("missing_fields"), list):
+            action["missing_fields"] = []
+        if not _canonical_v184_accept_decision(action):
+            return None
+        actions.append(action)
+
+    objectives = receipt.get("objectives")
+    if not isinstance(objectives, list) or not objectives:
+        return None
+    covered_indexes = set()
+    verified_objectives = []
+    for position, raw in enumerate(objectives, start=1):
+        if not isinstance(raw, dict):
+            return None
+        evidence = str(raw.get("evidence") or "").strip()
+        indexes = raw.get("action_indexes")
+        if (
+            not evidence
+            or not _canonical_v200_literal_evidence(physical_turn, evidence)
+            or not isinstance(indexes, list)
+            or not indexes
+        ):
+            return None
+        normalized_indexes = []
+        for value in indexes:
+            if isinstance(value, bool):
+                return None
+            try:
+                index = int(value)
+            except (TypeError, ValueError):
+                return None
+            if index < 0 or index >= len(actions):
+                return None
+            if index not in normalized_indexes:
+                normalized_indexes.append(index)
+                covered_indexes.add(index)
+        verified_objectives.append({
+            "objective_id": str(raw.get("objective_id") or f"objective_{position}"),
+            "evidence": evidence,
+            "action_indexes": normalized_indexes,
+        })
+    if covered_indexes != set(range(len(actions))):
+        return None
+
+    actions = _canonical_v189_coalesce_actions(actions)
+    if not actions:
+        return None
+    result = copy.deepcopy(compiled)
+    primary = copy.deepcopy(actions[0])
+    for key, value in primary.items():
+        result[key] = copy.deepcopy(value)
+    result["actions"] = copy.deepcopy(actions)
+    result["_v188_actions"] = copy.deepcopy(actions)
+    result["objectives"] = verified_objectives
+    result["multi_objective"] = len(verified_objectives) > 1
+    result["coverage_expected"] = len(verified_objectives)
+    result["_v238_semantic_compiler_verified"] = True
+    return result
+
+
+_canonical_v184_orchestrate_v238_base = _canonical_v184_orchestrate_v237_base
+
+
+async def _canonical_v184_orchestrate(
+    message: str,
+    user_messages: List[str],
+    state: Dict[str, Any],
+    *,
+    image_path: str = "",
+) -> Dict[str, Any]:
+    # El base conserva las protecciones transaccionales y contextuales maduras,
+    # pero omite el adjudicador cuantitativo V237. La compilación siguiente ve
+    # el turno entero y corrige el plan de manera integral.
+    draft = await _canonical_v184_orchestrate_v238_base(
+        message,
+        user_messages,
+        state,
+        image_path=image_path,
+    )
+    draft_actions = _canonical_v188_action_list(draft)
+    needs_compilation = bool(
+        len(draft_actions) > 1
+        or any(
+            isinstance(action, dict)
+            and str(action.get("operation") or "").strip() == "business_info"
+            and (
+                bool((action.get("info") or {}).get("requested_durations"))
+                or (action.get("info") or {}).get("requested_court_count")
+                not in (None, "")
+            )
+            for action in draft_actions
+        )
+    )
+    if not needs_compilation:
+        return draft
+    physical_turn = _canonical_v200_current_turn_text(message, user_messages)
+    try:
+        receipt = await _canonical_v238_compile_turn(physical_turn, draft, state)
+        compiled = _canonical_v238_verified_plan(physical_turn, receipt)
+    except Exception as exc:
+        compiled = None
+        print(
+            "   ⚠️ [CANONICAL V238 SEMANTIC COMPILER] "
+            f"auditor no disponible; conservo borrador IA: {type(exc).__name__}: {exc}"
+        )
+    if compiled is None:
+        # Una falla del auditor no convierte una consulta sencilla en handoff.
+        # El borrador ya atravesó el Orchestrator y sus validadores; se conserva
+        # como degradación segura y observable.
+        draft["_v238_semantic_compiler_fallback"] = True
+        return draft
+    print(
+        "   🧠 [CANONICAL V238 SEMANTIC COMPILER] "
+        f"objectives={len(compiled.get('objectives') or [])} "
+        f"actions={[row.get('operation') for row in compiled.get('_v188_actions') or []]} "
+        "coverage=True"
+    )
+    return compiled
 
 
 # ============================================================================

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.45 - 2026-10-14
+
+- Reemplaza el encadenado FAST PATH → traducción hardcodeada → auditor cuantitativo por un compilador semántico IA del turno físico completo.
+- Cada petición queda representada como objetivo con evidencia literal y vinculada a una o más acciones canónicas antes de ejecutar tools.
+- Una falla de la revisión multiobjetivo ya no genera por sí sola un handoff humano; conserva el plan IA previamente validado.
+- Corrige la navegación de alertas: abrir Administración ya no marca todas las secciones como leídas y la insignia roja permanece en “Atención humana” hasta seleccionar esa pestaña.
+- Agrega regresiones para la consulta combinada de disponibilidad, atención, préstamo de pelota y política de múltiples canchas/duración.
+
 ## 0.2.44 - 2026-10-14
 
 - Separa semánticamente cantidad de canchas y duración dentro de una misma consulta.

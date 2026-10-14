@@ -2918,6 +2918,10 @@ class AdminPanel(tk.Toplevel):
             self._refresh_blacklist()
 
     def _on_notification_tab_clicked(self, _event=None) -> None:
+        # Abrir Administración no significa haber revisado todas sus alertas.
+        # Sólo la pestaña que el operador eligió explícitamente se considera
+        # leída; así el badge global siempre tiene un origen visible dentro del
+        # panel y las demás secciones conservan su indicador.
         selected = self.notebook.select()
         for tab, key in self._tab_notification_keys.items():
             if selected == str(tab):
