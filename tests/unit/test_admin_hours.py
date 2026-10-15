@@ -428,16 +428,6 @@ def test_admin_can_mark_only_the_clicked_notification_section(tmp_path, monkeypa
     assert counts["total"] == 1
 
 
-def test_opening_admin_does_not_mark_all_notification_sections_read():
-    """La insignia sobrevive hasta que se abre su pestaña de origen."""
-    import inspect
-
-    from cancheria.desktop.gui import CancheriaDesktop
-
-    source = inspect.getsource(CancheriaDesktop.open_admin_panel)
-    assert "mark_notifications_read" not in source
-
-
 def test_stats_counts_multislot_pending_booking_as_one_notification(monkeypatch):
     rows = [
         {

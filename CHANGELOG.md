@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.49 - 2026-10-15
+
+- Restaura íntegramente el comportamiento operativo de `v0.2.43`, que era la versión vigente el 14/10/2026 a las 15:30.
+- Revierte los cambios funcionales de `v0.2.44` a `v0.2.48` en el agente, la navegación de alertas y sus pruebas asociadas.
+- Publica el rollback como una versión superior para que el actualizador pueda instalarlo sobre `v0.2.48` sin perder configuración, sesión ni datos operativos.
+
 ## 0.2.48 - 2026-10-15
 
 - Introduce un único `TurnIntentPlan` canónico con intención principal, subintenciones, entidades, herramientas y contratos de salida verificables.

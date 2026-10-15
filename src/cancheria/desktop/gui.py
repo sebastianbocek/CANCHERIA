@@ -961,7 +961,17 @@ class CancheriaDesktop(tk.Tk):
     def open_admin_panel(self) -> None:
         """Open the visual counterpart of the WhatsApp admin commands."""
         service = self._get_admin_service()
+        try:
+            unread = service.mark_notifications_read()
+            self._update_admin_notification_badge(unread)
+        except Exception:
+            # El panel debe poder abrir aun si el archivo de lectura estuviera
+            # momentaneamente ocupado o dañado.
+            pass
         if self.admin_window is not None and self.admin_window.winfo_exists():
+            marker = getattr(self.admin_window, "mark_notifications_read", None)
+            if callable(marker):
+                marker()
             self.admin_window.deiconify()
             self.admin_window.lift()
             self.admin_window.focus_force()

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import json
 import sys
 from pathlib import Path
@@ -51,20 +50,6 @@ def _business_info_action() -> dict:
             "question_domains": ["attention_schedule", "service_policy"],
         },
         "missing_fields": [],
-    }
-
-
-def _v241_receipt(actions: list[dict], objectives: list[dict]) -> dict:
-    return {
-        "contract_version": "v241",
-        "intent": "multiobjective_test",
-        "coverage_complete": True,
-        "objectives": objectives,
-        "entities": {},
-        "required_tools": list(dict.fromkeys(
-            str(action.get("operation") or "") for action in actions
-        )),
-        "decision": {**actions[0], "actions": actions},
     }
 
 
@@ -121,39 +106,11 @@ def test_two_pass_orchestrator_keeps_all_requests_from_multiple_messages(
         "actions": [],
         "conversation_style": {"greeting_present": True, "greeting_evidence": "Hola"},
     }
-    compiled = {
-        "contract_version": "v241",
-        "intent": "consultar_disponibilidad",
-        "coverage_complete": True,
-        "objectives": [
-            {
-                "evidence": "tenés cancha de fútbol para hoy?",
-                "mode": "read",
-                "required_outputs": ["availability.lookup"],
-                "action_indexes": [0],
-            },
-            {
-                "evidence": "Cuáles son los horarios de atención?",
-                "mode": "read",
-                "required_outputs": ["business.opening_hours"],
-                "action_indexes": [1],
-            },
-            {
-                "evidence": "Hace falta llevar pelota o prestan ustedes?",
-                "mode": "read",
-                "required_outputs": ["service.loan_available"],
-                "action_indexes": [1],
-            },
-        ],
-        "entities": {"resource": "Futbol 5", "date": "hoy", "times": []},
-        "required_tools": ["query_availability", "business_info"],
-        "decision": {**availability, "actions": [availability, business_info]},
-    }
     payloads = []
 
     async def fake_openai(*_args, **kwargs):
         payloads.append(json.loads(kwargs["messages"][1]["content"]))
-        content = draft if len(payloads) == 1 else reviewed if len(payloads) == 2 else compiled
+        content = draft if len(payloads) == 1 else reviewed
         return SimpleNamespace(
             choices=[SimpleNamespace(
                 message=SimpleNamespace(content=json.dumps(content)),
@@ -190,10 +147,9 @@ def test_two_pass_orchestrator_keeps_all_requests_from_multiple_messages(
         )
     )
 
-    assert len(payloads) == 3
+    assert len(payloads) == 2
     assert payloads[0]["latest_user_messages"] == messages
     assert payloads[1]["latest_user_messages"] == messages
-    assert payloads[2]["latest_user_turn"] == "\n".join(messages)
     assert [row["operation"] for row in decision["_v188_actions"]] == [
         "query_availability",
         "business_info",
@@ -203,11 +159,10 @@ def test_two_pass_orchestrator_keeps_all_requests_from_multiple_messages(
     assert "service_policy" in info["question_domains"]
     assert "business.opening_hours" in info["requested_facts"]
     assert "service.loan_available" in info["requested_facts"]
-    assert decision["contract_version"] == "v241"
-    assert len(decision["subintents"]) == 3
+    assert decision["_v232_review_coverage_merged"] is True
 
 
-def test_live_entry_uses_one_canonical_turn_intent_plan(
+def test_live_canonical_entry_routes_fast_path_inventory_to_canonical_objectives(
     monkeypatch,
 ) -> None:
     from cancheria.legacy_bridge import load_legacy_module
@@ -215,69 +170,44 @@ def test_live_entry_uses_one_canonical_turn_intent_plan(
     legacy = load_legacy_module()
     calls = {}
     messages = [
-        (
-            "Hola, ¿tenés cancha de fútbol para hoy? ¿Cuáles son los horarios "
-            "de atención? ¿Hace falta llevar pelota o prestan ustedes? Gracias"
-        ),
-        "Ah, y me olvidé",
-        "¿Se puede reservar 2 canchas 4 horas?",
+        "Hola, ¿tenés cancha de fútbol para hoy?",
+        "¿Cuáles son los horarios de atención?",
+        "¿Hace falta llevar pelota o prestan ustedes? Gracias",
     ]
     physical_turn = "\n".join(messages)
 
-    plan = _availability_action()
-    plan["_v188_actions"] = [_availability_action(), _business_info_action()]
-    plan["contract_version"] = "v241"
-    plan["intent"] = "consultar_disponibilidad"
-    plan["subintents"] = [
-        {"objective_id": "objective_1", "required_outputs": ["availability.lookup"]},
-        {"objective_id": "objective_2", "required_outputs": ["business.opening_hours"]},
-        {"objective_id": "objective_3", "required_outputs": ["service.loan_available"]},
-        {"objective_id": "objective_4", "required_outputs": ["booking.allowed_duration"]},
-    ]
+    async def fake_detector(message):
+        calls["detected_message"] = message
+        return [
+            {"intencion": "pedir_horarios", "fragmento": messages[0]},
+            {"intencion": "consulta_informativa", "fragmento": messages[1]},
+            {"intencion": "consulta_informativa", "fragmento": messages[2]},
+        ]
 
-    async def fake_orchestrator(message, user_messages, state, image_path=""):
-        calls["orchestrator"] = {
-            "message": message,
-            "user_messages": list(user_messages),
-            "state": dict(state),
-        }
-        return plan
-
-    async def fake_executor(*args, **_kwargs):
-        calls["executor_decision"] = args[3]
+    async def fake_unified(**kwargs):
+        calls["unified"] = kwargs
         return {
             "handled": True,
-            "response": (
-                "disponibilidad\n\nhorarios de atención\n\npréstamo de pelota\n\n"
-                "2 canchas y duración máxima"
-            ),
+            "response": "disponibilidad\n\nhorarios de atención\n\npréstamo de pelota",
+            "multi_subintent_bridge": {
+                "version": "v235_canonical_objective_ledger",
+                "subintent_count": 3,
+            },
         }
 
-    async def detector_must_not_run(*_args, **_kwargs):
-        raise AssertionError("El FAST PATH no debe ser un segundo cerebro")
-
     async def legacy_must_not_run(*_args, **_kwargs):
-        raise AssertionError("El executor legacy no debe ejecutar un plan válido")
+        raise AssertionError("El FAST PATH legacy no debe ejecutar este lote")
 
-    monkeypatch.setattr(legacy, "detectar_multiples_intenciones", detector_must_not_run)
+    monkeypatch.setattr(legacy, "detectar_multiples_intenciones", fake_detector)
     monkeypatch.setattr(
         legacy,
         "_ejecutar_agente_real_v2_turno_v184_legacy",
         legacy_must_not_run,
     )
-    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate", fake_orchestrator)
-    monkeypatch.setattr(legacy, "_canonical_v184_execute_decision", fake_executor)
-    monkeypatch.setattr(legacy, "_canonical_v183_record_decision", lambda *_a, **_k: None)
-    monkeypatch.setattr(legacy, "_canonical_v183_save", lambda *_a, **_k: None)
     monkeypatch.setattr(
         legacy,
-        "_canonical_v184_hydrate",
-        lambda *_a, **_k: {
-            "active_flow_hint": None,
-            "booking": {},
-            "reservations": [],
-            "event_registration": {},
-        },
+        "_canonical_v235_execute_objective_ledger",
+        fake_unified,
     )
 
     result = asyncio.run(
@@ -290,14 +220,19 @@ def test_live_entry_uses_one_canonical_turn_intent_plan(
         )
     )
 
-    assert calls["orchestrator"]["message"] == physical_turn
-    assert calls["orchestrator"]["user_messages"] == messages
-    assert calls["executor_decision"]["contract_version"] == "v241"
+    assert calls["detected_message"] == physical_turn
+    assert calls["unified"]["physical_turn"] == physical_turn
+    assert calls["unified"]["subintents"] == [
+        {"intencion": "pedir_horarios", "fragmento": messages[0]},
+        {"intencion": "consulta_informativa", "fragmento": messages[1]},
+        {"intencion": "consulta_informativa", "fragmento": messages[2]},
+    ]
     assert result["handled"] is True
+    assert result["multi_subintent_bridge"]["version"] == "v235_canonical_objective_ledger"
+    assert result["multi_subintent_bridge"]["subintent_count"] == 3
     assert "disponibilidad" in result["response"]
     assert "horarios de atención" in result["response"]
     assert "préstamo de pelota" in result["response"]
-    assert "2 canchas y duración máxima" in result["response"]
 
 
 def test_unified_objective_list_canonicalizes_executes_and_audits_every_request(
@@ -459,7 +394,7 @@ def test_unified_objective_list_does_not_emit_incomplete_response(monkeypatch) -
     assert result is None
 
 
-def test_compiler_review_failure_does_not_emit_handoff(
+def test_live_entry_never_falls_back_to_legacy_executor_for_multi_intent(
     monkeypatch,
 ) -> None:
     from cancheria.legacy_bridge import load_legacy_module
@@ -467,37 +402,51 @@ def test_compiler_review_failure_does_not_emit_handoff(
     legacy = load_legacy_module()
     messages = ["consultá disponibilidad", "y decime si prestan pelota"]
 
-    draft = _business_info_action()
-    draft["_v188_actions"] = [
-        _availability_action(),
-        _business_info_action(),
-    ]
+    async def fake_detector(_message):
+        return [
+            {"intencion": "pedir_horarios", "fragmento": messages[0]},
+            {"intencion": "consulta_informativa", "fragmento": messages[1]},
+        ]
 
-    async def fake_base(*_args, **_kwargs):
-        return dict(draft)
+    async def incomplete_unified(**_kwargs):
+        return None
 
-    async def incomplete_compiler(*_args, **_kwargs):
+    async def legacy_must_not_run(*_args, **_kwargs):
+        raise AssertionError("FAST PATH no debe volver a ejecutar objetivos")
+
+    async def fake_safe_failure(**kwargs):
         return {
-            "coverage_complete": False,
-            "objectives": [],
-            "decision": {},
+            "handled": True,
+            "silent_handoff": True,
+            "source": kwargs["source"],
         }
 
-    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate_v238_base", fake_base)
-    monkeypatch.setattr(legacy, "_canonical_v238_compile_turn", incomplete_compiler)
+    monkeypatch.setattr(legacy, "detectar_multiples_intenciones", fake_detector)
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v235_execute_objective_ledger",
+        incomplete_unified,
+    )
+    monkeypatch.setattr(
+        legacy,
+        "_ejecutar_agente_real_v2_turno_v184_legacy",
+        legacy_must_not_run,
+    )
+    monkeypatch.setattr(legacy, "_canonical_v184_silent_failure", fake_safe_failure)
 
     result = asyncio.run(
-        legacy._canonical_v184_orchestrate(
+        legacy.ejecutar_agente_real_v2_turno(
             "\n".join(messages),
-            messages,
             {},
+            {},
+            "+5493513441882",
+            user_messages=messages,
         )
     )
 
-    assert result["operation"] == "business_info"
-    assert result.get("silent_handoff") is not True
-    assert result.get("_suppress_legacy_fallback") is not True
-    assert result["_v238_semantic_compiler_fallback"] is True
+    assert result["handled"] is True
+    assert result["silent_handoff"] is True
+    assert result["source"] == "canonical_v235_objective_planning_incomplete"
 
 
 def test_semantic_review_cannot_delete_a_fast_path_obligation(monkeypatch) -> None:
@@ -828,461 +777,3 @@ def test_objective_contract_recovers_availability_misclassified_as_business_info
     assert "Prestamos pelota" in result["response"]
     assert "4 horas no está habilitada" in result["response"]
     assert result["objective_coverage"]["complete"] is True
-
-
-def test_semantic_turn_compiler_preserves_all_objectives_and_quantity_roles() -> None:
-    """El compilador integral cubre el turno sin reglas Python por intención."""
-    from cancheria.legacy_bridge import load_legacy_module
-
-    legacy = load_legacy_module()
-    message = (
-        "Hola tenes cancha de futbol para hoy? y cuales horarios de atencion "
-        "tienen? hace falta llevar pelota o prestan ustedes?\n"
-        "ah y me olvidé\n"
-        "se puede reservar 2 canchas 4 horas?"
-    )
-    availability = {
-        "operation": "query_availability", "confidence": 0.98,
-        "intent_mode": "information",
-        "booking": {"day": "Miércoles 14/10", "resource_type": "Futbol 5"},
-    }
-    opening = _business_info_action()
-    opening["info"] = {
-        "requested_facts": ["business.opening_hours"],
-        "question_domains": ["attention_schedule"],
-    }
-    ball = _business_info_action()
-    ball["info"] = {
-        "requested_facts": ["service.loan_available"],
-        "question_domains": ["service_policy"],
-        "target_labels": ["pelota"],
-    }
-    capacity = _business_info_action()
-    capacity["info"] = {
-        "requested_facts": [
-            "court.simultaneous_capacity", "booking.allowed_duration",
-        ],
-        "question_domains": ["court_catalog", "duration_policy"],
-        "requested_court_count": 2,
-        "requested_durations": [4],
-    }
-    receipt = _v241_receipt(
-        [availability, opening, ball, capacity],
-        [
-            {"evidence": "tenes cancha de futbol para hoy?", "mode": "read", "required_outputs": ["availability.lookup"], "action_indexes": [0]},
-            {"evidence": "cuales horarios de atencion tienen?", "mode": "read", "required_outputs": ["business.opening_hours"], "action_indexes": [1]},
-            {"evidence": "hace falta llevar pelota o prestan ustedes?", "mode": "read", "required_outputs": ["service.loan_available"], "action_indexes": [2]},
-            {"evidence": "se puede reservar 2 canchas 4 horas?", "mode": "read", "required_outputs": ["court.simultaneous_capacity", "booking.allowed_duration"], "action_indexes": [3]},
-        ],
-    )
-    corrected = legacy._canonical_v238_verified_plan(message, receipt)
-
-    assert corrected is not None
-    assert [row["operation"] for row in corrected["_v188_actions"]] == [
-        "query_availability", "business_info", "business_info", "business_info",
-    ]
-    info = corrected["_v188_actions"][3]["info"]
-    assert info["requested_court_count"] == 2
-    assert info["requested_durations"] == [4]
-    assert "court.simultaneous_capacity" in info["requested_facts"]
-    assert "booking.allowed_duration" in info["requested_facts"]
-    assert corrected["_v238_semantic_compiler_verified"] is True
-    assert corrected["coverage_expected"] == 4
-
-
-def test_semantic_compiler_audits_full_turn_when_draft_collapses_to_one_action(
-    monkeypatch,
-) -> None:
-    """La cobertura no puede depender de que el primer borrador ya sea completo."""
-    from cancheria.legacy_bridge import load_legacy_module
-
-    legacy = load_legacy_module()
-    message = (
-        "Hola tenes cancha de futbol para hoy? y cuales horarios de atencion "
-        "tienen? hace falta llevar pelota o prestan ustedes?\n"
-        "ah y me olvidé\n"
-        "se puede reservar 2 canchas 4 horas?"
-    )
-    availability = {
-        "operation": "query_availability",
-        "confidence": 0.98,
-        "intent_mode": "information",
-        "booking": {"day": "Miércoles 14/10", "resource_type": "Futbol 5"},
-    }
-    opening = _business_info_action()
-    opening["info"] = {
-        "requested_facts": ["business.opening_hours"],
-        "question_domains": ["attention_schedule"],
-    }
-    ball = _business_info_action()
-    ball["info"] = {
-        "requested_facts": ["service.loan_available"],
-        "question_domains": ["service_policy"],
-        "target_labels": ["pelota"],
-    }
-    capacity = _business_info_action()
-    capacity["info"] = {
-        "requested_facts": [
-            "court.simultaneous_capacity",
-            "booking.allowed_duration",
-        ],
-        "question_domains": ["court_catalog", "duration_policy"],
-        "requested_court_count": 2,
-        "requested_durations": [4],
-    }
-    compiler_calls = []
-
-    async def collapsed_base(*_args, **_kwargs):
-        return dict(availability)
-
-    async def complete_compiler(physical_turn, draft, _state):
-        compiler_calls.append((physical_turn, draft))
-        return _v241_receipt(
-            [availability, opening, ball, capacity],
-            [
-                {"evidence": "tenes cancha de futbol para hoy?", "mode": "read", "required_outputs": ["availability.lookup"], "action_indexes": [0]},
-                {"evidence": "cuales horarios de atencion tienen?", "mode": "read", "required_outputs": ["business.opening_hours"], "action_indexes": [1]},
-                {"evidence": "hace falta llevar pelota o prestan ustedes?", "mode": "read", "required_outputs": ["service.loan_available"], "action_indexes": [2]},
-                {"evidence": "se puede reservar 2 canchas 4 horas?", "mode": "read", "required_outputs": ["court.simultaneous_capacity", "booking.allowed_duration"], "action_indexes": [3]},
-            ],
-        )
-
-    monkeypatch.setattr(
-        legacy,
-        "_canonical_v184_orchestrate_v238_base",
-        collapsed_base,
-    )
-    monkeypatch.setattr(legacy, "_canonical_v238_compile_turn", complete_compiler)
-
-    corrected = asyncio.run(
-        legacy._canonical_v184_orchestrate(message, [message], {})
-    )
-
-    assert len(compiler_calls) == 1
-    assert compiler_calls[0][0] == message
-    assert compiler_calls[0][1]["operation"] == "query_availability"
-    assert [row["operation"] for row in corrected["_v188_actions"]] == [
-        "query_availability",
-        "business_info",
-        "business_info",
-        "business_info",
-    ]
-    assert corrected["coverage_expected"] == 4
-    assert corrected["_v238_semantic_compiler_verified"] is True
-
-
-def test_semantic_compiler_rejects_four_objectives_mapped_to_one_action() -> None:
-    """Reproduce exactamente el falso coverage=True observado en v0.2.46."""
-    from cancheria.legacy_bridge import load_legacy_module
-
-    legacy = load_legacy_module()
-    message = (
-        "tenes cancha para hoy? horarios de atencion? prestan pelota? "
-        "se puede reservar 2 canchas 4 horas?"
-    )
-    availability = _availability_action()
-    receipt = _v241_receipt(
-        [availability],
-        [
-            {"evidence": "tenes cancha para hoy?", "mode": "read", "required_outputs": ["availability.lookup"], "action_indexes": [0]},
-            {"evidence": "horarios de atencion?", "mode": "read", "required_outputs": ["business.opening_hours"], "action_indexes": [0]},
-            {"evidence": "prestan pelota?", "mode": "read", "required_outputs": ["service.loan_available"], "action_indexes": [0]},
-            {"evidence": "se puede reservar 2 canchas 4 horas?", "mode": "read", "required_outputs": ["court.simultaneous_capacity", "booking.allowed_duration"], "action_indexes": [0]},
-        ],
-    )
-
-    assert legacy._canonical_v238_verified_plan(message, receipt) is None
-
-
-def test_turn_intent_plan_allows_shared_action_only_when_outputs_are_real() -> None:
-    from cancheria.legacy_bridge import load_legacy_module
-
-    legacy = load_legacy_module()
-    message = (
-        "tenes cancha para hoy? horarios de atencion? prestan pelota? "
-        "se puede reservar 2 canchas 4 horas?"
-    )
-    availability = _availability_action()
-    information = _business_info_action()
-    information["info"].update({
-        "requested_facts": [
-            "business.opening_hours",
-            "service.loan_available",
-            "court.simultaneous_capacity",
-            "booking.allowed_duration",
-        ],
-        "requested_court_count": 2,
-        "requested_durations": [4],
-    })
-    receipt = _v241_receipt(
-        [availability, information],
-        [
-            {"evidence": "tenes cancha para hoy?", "mode": "read", "required_outputs": ["availability.lookup"], "action_indexes": [0]},
-            {"evidence": "horarios de atencion?", "mode": "read", "required_outputs": ["business.opening_hours"], "action_indexes": [1]},
-            {"evidence": "prestan pelota?", "mode": "read", "required_outputs": ["service.loan_available"], "action_indexes": [1]},
-            {"evidence": "se puede reservar 2 canchas 4 horas?", "mode": "read", "required_outputs": ["court.simultaneous_capacity", "booking.allowed_duration"], "action_indexes": [1]},
-        ],
-    )
-
-    result = legacy._canonical_v238_verified_plan(message, receipt)
-
-    assert result is not None
-    assert result["contract_version"] == "v241"
-    assert len(result["subintents"]) == 4
-    assert [action["operation"] for action in result["_v188_actions"]] == [
-        "query_availability",
-        "business_info",
-    ]
-
-
-def test_turn_intent_plan_rejects_v0247_capability_mismatch() -> None:
-    """Reproduce el plan real: write + availability no producen facts generales."""
-    from cancheria.legacy_bridge import load_legacy_module
-
-    legacy = load_legacy_module()
-    message = (
-        "tenes cancha para hoy? horarios de atencion? prestan pelota? "
-        "se puede reservar 2 canchas 4 horas?"
-    )
-    write = _availability_action()
-    write["operation"] = "replace_pending_booking"
-    grouped = _availability_action()
-    grouped["info"] = {
-        "requested_facts": [
-            "business.opening_hours",
-            "service.loan_available",
-            "booking.allowed_duration",
-        ]
-    }
-    receipt = _v241_receipt(
-        [write, grouped],
-        [
-            {"evidence": "tenes cancha para hoy?", "mode": "read", "required_outputs": ["availability.lookup"], "action_indexes": [0]},
-            {"evidence": "horarios de atencion?", "mode": "read", "required_outputs": ["business.opening_hours"], "action_indexes": [1]},
-            {"evidence": "prestan pelota?", "mode": "read", "required_outputs": ["service.loan_available"], "action_indexes": [1]},
-            {"evidence": "se puede reservar 2 canchas 4 horas?", "mode": "read", "required_outputs": ["booking.allowed_duration"], "action_indexes": [0]},
-        ],
-    )
-
-    assert legacy._canonical_v241_action_outputs(grouped) == {"availability.lookup"}
-    assert legacy._canonical_v238_verified_plan(message, receipt) is None
-
-
-def test_semantic_compiler_repairs_objective_action_collapse_before_execution(
-    monkeypatch,
-) -> None:
-    """El primer plan incompleto se reintenta con diagnóstico estructural."""
-    from cancheria.legacy_bridge import load_legacy_module
-
-    legacy = load_legacy_module()
-    message = (
-        "tenes cancha para hoy? horarios de atencion? prestan pelota? "
-        "se puede reservar 2 canchas 4 horas?"
-    )
-    availability = _availability_action()
-    opening = _business_info_action()
-    opening["info"] = {"requested_facts": ["business.opening_hours"]}
-    ball = _business_info_action()
-    ball["info"] = {"requested_facts": ["service.loan_available"]}
-    capacity = _business_info_action()
-    capacity["info"] = {
-        "requested_facts": [
-            "court.simultaneous_capacity",
-            "booking.allowed_duration",
-        ],
-        "requested_court_count": 2,
-        "requested_durations": [4],
-    }
-    objectives = [
-        {"evidence": "tenes cancha para hoy?", "mode": "read", "required_outputs": ["availability.lookup"], "action_indexes": [0]},
-        {"evidence": "horarios de atencion?", "mode": "read", "required_outputs": ["business.opening_hours"], "action_indexes": [1]},
-        {"evidence": "prestan pelota?", "mode": "read", "required_outputs": ["service.loan_available"], "action_indexes": [2]},
-        {"evidence": "se puede reservar 2 canchas 4 horas?", "mode": "read", "required_outputs": ["court.simultaneous_capacity", "booking.allowed_duration"], "action_indexes": [3]},
-    ]
-    calls = []
-
-    async def collapsed_base(*_args, **_kwargs):
-        return dict(availability)
-
-    async def compiler(_turn, _draft, state):
-        calls.append(copy.deepcopy(state))
-        if len(calls) == 1:
-            collapsed_objectives = [
-                {**objective, "action_indexes": [0]}
-                for objective in objectives
-            ]
-            return _v241_receipt([availability], collapsed_objectives)
-        return _v241_receipt(
-            [availability, opening, ball, capacity],
-            objectives,
-        )
-
-    monkeypatch.setattr(
-        legacy,
-        "_canonical_v184_orchestrate_v238_base",
-        collapsed_base,
-    )
-    monkeypatch.setattr(legacy, "_canonical_v238_compile_turn", compiler)
-
-    result = asyncio.run(
-        legacy._canonical_v184_orchestrate(message, [message], {})
-    )
-
-    assert len(calls) == 2
-    assert "objectives=4, actions=1" in calls[1]["_v238_validation_feedback"]
-    assert [action["operation"] for action in result["_v188_actions"]] == [
-        "query_availability",
-        "business_info",
-        "business_info",
-        "business_info",
-    ]
-    assert result["coverage_expected"] == 4
-
-
-def test_semantic_compiler_exhausted_repairs_asks_canonically_without_handoff(
-    monkeypatch,
-) -> None:
-    """Un error interno debe pedir reformulación, no cambiar de cerebro ni alertar."""
-    from cancheria.legacy_bridge import load_legacy_module
-
-    legacy = load_legacy_module()
-    message = (
-        "tenes cancha para hoy? horarios de atencion? prestan pelota? "
-        "se puede reservar 2 canchas 4 horas?"
-    )
-    availability = _availability_action()
-    objectives = [
-        {"evidence": "tenes cancha para hoy?", "mode": "read", "required_outputs": ["availability.lookup"], "action_indexes": [0]},
-        {"evidence": "horarios de atencion?", "mode": "read", "required_outputs": ["business.opening_hours"], "action_indexes": [0]},
-        {"evidence": "prestan pelota?", "mode": "read", "required_outputs": ["service.loan_available"], "action_indexes": [0]},
-        {"evidence": "se puede reservar 2 canchas 4 horas?", "mode": "read", "required_outputs": ["court.simultaneous_capacity", "booking.allowed_duration"], "action_indexes": [0]},
-    ]
-    calls = []
-
-    async def collapsed_base(*_args, **_kwargs):
-        return dict(availability)
-
-    async def permanently_collapsed(_turn, _draft, state):
-        calls.append(copy.deepcopy(state))
-        return _v241_receipt([availability], objectives)
-
-    monkeypatch.setattr(
-        legacy,
-        "_canonical_v184_orchestrate_v238_base",
-        collapsed_base,
-    )
-    monkeypatch.setattr(
-        legacy,
-        "_canonical_v238_compile_turn",
-        permanently_collapsed,
-    )
-
-    result = asyncio.run(
-        legacy._canonical_v184_orchestrate(message, [message], {})
-    )
-
-    assert len(calls) == 3
-    assert result["operation"] == "ask_missing"
-    assert result["reason"] == "semantic_objective_action_coverage_unverified"
-    assert result.get("_suppress_legacy_fallback") is not True
-    assert result.get("silent_handoff") is not True
-    assert result["missing_fields"] == ["restate_request"]
-    assert result["_v241_safe_clarification"] is True
-
-
-def test_semantic_compiler_supports_more_than_five_independent_objectives() -> None:
-    from cancheria.legacy_bridge import load_legacy_module
-
-    legacy = load_legacy_module()
-    evidence = [f"consulta {index}" for index in range(1, 7)]
-    message = "; ".join(evidence)
-    actions = []
-    objectives = []
-    for index, fragment in enumerate(evidence):
-        action = _business_info_action()
-        action["info"] = {"requested_facts": [f"business.fact_{index + 1}"]}
-        actions.append(action)
-        objectives.append({
-            "evidence": fragment,
-            "mode": "read",
-            "required_outputs": [f"business.fact_{index + 1}"],
-            "action_indexes": [index],
-        })
-    receipt = _v241_receipt(actions, objectives)
-
-    result = legacy._canonical_v238_verified_plan(message, receipt)
-
-    assert result is not None
-    assert len(result["_v188_actions"]) == 6
-    assert len(legacy._canonical_v188_action_list(result)) == 6
-
-
-def test_semantic_compiler_failure_keeps_safe_ai_draft_without_handoff(
-    monkeypatch,
-) -> None:
-    from cancheria.legacy_bridge import load_legacy_module
-
-    legacy = load_legacy_module()
-    draft = _business_info_action()
-    draft["info"]["requested_durations"] = [2]
-
-    async def fake_base(*_args, **_kwargs):
-        return dict(draft)
-
-    async def broken_compiler(*_args, **_kwargs):
-        raise RuntimeError("temporary semantic review failure")
-
-    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate_v238_base", fake_base)
-    monkeypatch.setattr(legacy, "_canonical_v238_compile_turn", broken_compiler)
-
-    result = asyncio.run(
-        legacy._canonical_v184_orchestrate("¿prestan pelota?", ["¿prestan pelota?"], {})
-    )
-
-    assert result["operation"] == "business_info"
-    assert result.get("_suppress_legacy_fallback") is not True
-    assert result["_v238_semantic_compiler_fallback"] is True
-
-
-def test_parallel_court_and_duration_contract_preserves_both_dimensions() -> None:
-    from cancheria.legacy_bridge import load_legacy_module
-
-    legacy = load_legacy_module()
-    business = {
-        "canchas": [
-            {"nombre": "Cancha 1"},
-            {"nombre": "Cancha 2"},
-        ],
-        "precios": [
-            {"description": "Cancha 1", "amount": 20000},
-            {"description": "Cancha 2", "amount": 20000},
-        ],
-        "duraciones_permitidas_horas": [1, 1.5, 2],
-        "requiere_senia": False,
-    }
-
-    contract = legacy._agent_v2_build_policy_fact_contract(
-        "se puede reservar 2 canchas 4 horas?",
-        ["court_catalog", "duration_policy"],
-        business,
-        requested_facts=[
-            "court.simultaneous_capacity",
-            "booking.allowed_duration",
-        ],
-        requested_durations=[4],
-        requested_court_count=2,
-    )
-
-    assert contract["type"] == "composite_policy"
-    children = {child["type"]: child for child in contract["contracts"]}
-    assert children["parallel_courts_policy"]["requested_court_count"] == 2
-    assert children["parallel_courts_policy"]["can_reserve_count"] is True
-    assert children["duration_policy"]["requested_durations"] == [
-        {"hours": 4.0, "allowed": False}
-    ]
-    rendered = legacy.build_agent_v2_policy_fact_message(
-        {"data": {"policy_fact_contract": contract}}
-    )
-    assert "2 canchas" in rendered
-    assert "4 horas" in rendered
-    assert "4 horas no está habilitada" in rendered
