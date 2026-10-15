@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.48 - 2026-10-15
+
+- Introduce un único `TurnIntentPlan` canónico con intención principal, subintenciones, entidades, herramientas y contratos de salida verificables.
+- Permite que varias subintenciones compartan una acción solamente cuando el executor de esa acción produce realmente todas las salidas declaradas.
+- Rechaza el plan real defectuoso de `v0.2.47`, donde una escritura y una consulta de disponibilidad pretendían cubrir también horarios, préstamo de pelota y políticas comerciales.
+- Mantiene el CANÓNICO como único cerebro; un fallo interno de cobertura pide reformular el turno sin emitir handoff ni cambiar a un executor semántico paralelo.
+- Agrega regresiones del caso real, de acciones compartidas válidas y de incompatibilidad entre una subintención y la capacidad real de su herramienta.
+- Actualiza el identificador del log a `2026-10-15_unified_turn_intent_plan_v241`.
+
 ## 0.2.47 - 2026-10-14
 
 - Corrige el falso positivo de cobertura donde el compilador encontraba varios objetivos pero los vinculaba a una única acción de disponibilidad.

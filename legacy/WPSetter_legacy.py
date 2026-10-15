@@ -142323,6 +142323,11 @@ def _canonical_v184_missing_question(
         if options:
             return "¿A cuál torneo te referís?\n\n" + "\n".join(f"• {x}" for x in options)
         return "¿A qué torneo te referís?"
+    if field == "restate_request":
+        return (
+            "Perdón, quiero asegurarme de responderte todo. "
+            "¿Podés repetirme las consultas en un solo mensaje?"
+        )
     return "¿Qué dato querés definir para continuar?"
 
 
@@ -144327,9 +144332,9 @@ async def ejecutar_agente_real_v2_turno(
         and _memory_owner_key(telefono_key) != "unknown"
     )
     if can_use_canonical:
-        # V238: una sola compilación semántica del turno físico produce la
-        # lista completa de objetivos y actions. No hay router de etiquetas,
-        # traducción hardcodeada intent→operación ni planificación fragmentada.
+        # V241: un único plan canónico representa intención principal,
+        # subintenciones, entidades, tools y contratos de respuesta. Cualquier
+        # acelerador futuro deberá producir exactamente ese mismo contrato.
         state: Dict[str, Any] = {}
         decision: Dict[str, Any] = {}
         try:
@@ -148048,7 +148053,7 @@ async def _canonical_v184_orchestrate(
 
 
 # ============================================================================
-# V238 — COMPILADOR SEMÁNTICO MULTIOBJETIVO DE TURNO COMPLETO
+# V241 — TURN INTENT PLAN CANÓNICO DE TURNO COMPLETO
 # ============================================================================
 # V235/V236 dividían el turno con una taxonomía intermedia y luego intentaban
 # traducir cada etiqueta a una operación canónica. V237 añadía otra lectura
@@ -148056,11 +148061,9 @@ async def _canonical_v184_orchestrate(
 # un sibling ajeno (por ejemplo, préstamo de pelota), invalidar todo el lote y
 # generar un handoff interno para una consulta perfectamente contestable.
 #
-# V238 usa una sola frontera semántica: una IA relee el turno físico completo,
-# enumera sus objetivos con evidencia literal y entrega directamente la lista
-# de acciones del executor canónico. Python no asigna intenciones por palabras,
-# no traduce etiquetas FAST PATH y no decide qué significa cada número; sólo
-# valida estructura, evidencia, cobertura y límites de seguridad.
+# V241 usa una sola frontera semántica: una IA relee el turno físico completo y
+# produce intención, subintenciones, entidades, tools y contratos de salida. El
+# mismo contrato admite aceleradores futuros sin crear un segundo cerebro.
 # ============================================================================
 
 
@@ -148069,37 +148072,50 @@ async def _canonical_v238_compile_turn(
     draft: Dict[str, Any],
     state: Dict[str, Any],
 ) -> Dict[str, Any]:
-    system = r'''Sos el compilador semántico multiobjetivo de CANCHERIA.
+    system = r'''Sos el único orquestador canónico de intenciones de CANCHERIA.
 Leé TODO el turno físico del cliente como una unidad, aunque haya llegado en
-varias burbujas. El borrador es una hipótesis: corregilo si absorbió, omitió o
-mezcló peticiones.
+varias burbujas. El borrador y el estado previo son evidencia NO autoritativa:
+corregilos si absorbieron, omitieron o mezclaron peticiones, y nunca conviertas
+una pregunta en una escritura por contexto viejo.
 
 Tu tarea:
-1. Enumerar TODAS las preguntas y acciones independientes del cliente.
-2. Crear una action canónica completa por capacidad necesaria, conservando el
-   orden conversacional. No generes una action separada para saludos o relleno.
-3. Vincular fechas, horas, cantidades, duraciones, recursos y modificadores por
+1. Elegir una intención principal y enumerar TODAS las subintenciones reales.
+2. Para cada subintención declarar mode=read|write, evidence literal y los
+   required_outputs concretos que deben aparecer en la respuesta.
+3. Crear una action canónica completa por capacidad ejecutora necesaria,
+   conservando el orden conversacional. Una misma action puede cubrir varias
+   subintenciones sólo si produce TODOS sus required_outputs. No generes una
+   action separada para saludos o relleno.
+4. Vincular fechas, horas, cantidades, duraciones, recursos y modificadores por
    su relación gramatical y significado. Dos números cercanos pueden cumplir
    roles distintos; jamás intercambies sus unidades. Toda cantidad debe quedar
    en el campo de la entidad que modifica.
-4. Las consultas sobre disponibilidad real usan query_availability. Los
+5. Las consultas sobre disponibilidad real usan query_availability. Los
    horarios generales, servicios, equipamiento y políticas usan business_info.
    Una pregunta sobre qué está permitido no autoriza una escritura.
-5. handoff_human sólo es válido cuando el cliente pidió explícitamente hablar
+6. handoff_human sólo es válido cuando el cliente pidió explícitamente hablar
    con una persona. Una duda del modelo o un dato faltante no es un handoff.
-6. No inventes hechos comerciales: las actions sólo solicitan facts; las tools
+7. No inventes hechos comerciales: las actions sólo solicitan facts; las tools
    deterministas consultarán configuración, calendario y persistencia.
-7. Cada objetivo debe citar evidence LITERAL y contigua del turno. action_indexes
-   usa índices desde 0 y vincula ese objetivo con todas las actions que lo
-   resuelven. Cada action y cada objetivo deben quedar cubiertos.
-8. Los objectives son peticiones INDEPENDIENTES. Por eso debe existir una
-   asignación uno-a-uno entre objectives y actions: si enumerás N objectives,
-   devolvé por lo menos N actions y cada objective debe poder vincularse con una
-   action distinta. Nunca declares cobertura completa haciendo que varias
-   peticiones independientes apunten a la misma única action.
-9. Si validation_feedback está presente, el plan anterior fue rechazado por el
-   verificador estructural. Regenerá TODO el plan y corregí exactamente esa
-   violación; no reduzcas ni omitas objectives para hacer pasar la validación.
+8. Cada subintención debe citar evidence LITERAL y contigua del turno.
+   action_indexes usa índices desde 0. Cada action y cada subintención deben
+   quedar cubiertas por contratos de salida verificables.
+9. required_outputs sólo puede usar contratos que la action realmente produce:
+   - query_availability: availability.lookup
+   - business_info: cada valor exacto de info.requested_facts
+   - query_price: price.lookup y sus info.requested_facts
+   - query_reservation: reservation.lookup
+   - query_event: event.lookup
+   - ask_missing: conversation.clarification
+   - una escritura: operation.<nombre exacto de operation>
+   No declares un hecho informativo dentro de query_availability ni dentro de
+   una escritura: agregá una business_info separada.
+10. required_tools contiene las operations necesarias, sin duplicados. entities
+    consolida recurso, fecha, horarios candidatos, cantidades y duración, sin
+    convertirlos en autorización de escritura.
+11. Si validation_feedback está presente, el plan anterior fue rechazado por el
+    verificador. Regenerá TODO el plan y corregí exactamente esa violación; no
+    reduzcas ni omitas subintenciones para pasar la validación.
 
 OPERATIONS válidas:
 greeting, query_availability, create_booking, create_recurring_booking,
@@ -148113,12 +148129,16 @@ Conservá en decision el mismo schema canónico del borrador. Cada elemento de
 decision.actions debe incluir operation, confidence, intent_mode y los objetos
 booking, recurrence, reservation, event, info, context_resolution y
 missing_fields que correspondan. La primera action también debe ser la decisión
-top-level. Devolvé SOLO JSON:
+top-level. Devolvé SOLO JSON bajo este contrato único, también para casos simples:
 {
+  "contract_version": "v241",
+  "intent": "intención principal",
   "coverage_complete": true,
   "objectives": [
-    {"objective_id":"objective_1", "evidence":"cita literal", "action_indexes":[0]}
+    {"objective_id":"objective_1", "mode":"read", "evidence":"cita literal", "required_outputs":["availability.lookup"], "action_indexes":[0]}
   ],
+  "entities": {"resource":null,"date":null,"times":[],"court_count":null,"duration_hours":null},
+  "required_tools": ["query_availability"],
   "decision": {"operation":"...", "confidence":0.0, "actions":[]}
 }'''
     state_view = {
@@ -148168,30 +148188,43 @@ top-level. Devolvé SOLO JSON:
     )
 
 
-def _canonical_v238_has_injective_objective_coverage(
-    objective_action_indexes: List[List[int]],
-    action_count: int,
-) -> bool:
-    """Valida cobertura 1:1 sin interpretar semántica ni palabras del cliente."""
-    if not objective_action_indexes or action_count < len(objective_action_indexes):
-        return False
-    assigned_action_to_objective: Dict[int, int] = {}
+_CANONICAL_V241_READ_OPERATIONS = {
+    "greeting", "query_availability", "query_reservation", "query_event",
+    "business_info", "query_price", "ask_missing",
+}
 
-    def assign(objective_index: int, seen: set) -> bool:
-        for action_index in objective_action_indexes[objective_index]:
-            if action_index in seen:
-                continue
-            seen.add(action_index)
-            previous = assigned_action_to_objective.get(action_index)
-            if previous is None or assign(previous, seen):
-                assigned_action_to_objective[action_index] = objective_index
-                return True
-        return False
 
-    return all(
-        assign(objective_index, set())
-        for objective_index in range(len(objective_action_indexes))
-    )
+def _canonical_v241_action_outputs(action: Dict[str, Any]) -> set:
+    """Contratos que el executor real de una action puede materializar.
+
+    Esto valida capacidades canónicas, no palabras del usuario. Evita aceptar
+    planes donde query_availability promete también horarios generales o una
+    escritura promete contestar una política que su renderer nunca produce.
+    """
+    operation = str((action or {}).get("operation") or "").strip()
+    info = dict((action or {}).get("info") or {})
+    requested_facts = {
+        str(value or "").strip()
+        for value in (info.get("requested_facts") or [])
+        if str(value or "").strip()
+    }
+    if operation == "query_availability":
+        return {"availability.lookup"}
+    if operation == "business_info":
+        return requested_facts
+    if operation == "query_price":
+        return {"price.lookup", *requested_facts}
+    if operation == "query_reservation":
+        return {"reservation.lookup"}
+    if operation == "query_event":
+        return {"event.lookup"}
+    if operation == "ask_missing":
+        return {"conversation.clarification"}
+    if operation == "greeting":
+        return {"social.greeting"}
+    if operation in _CANONICAL_V188_WRITE_OPS:
+        return {f"operation.{operation}"}
+    return set()
 
 
 def _canonical_v238_validation_feedback(receipt: Dict[str, Any]) -> str:
@@ -148209,11 +148242,12 @@ def _canonical_v238_validation_feedback(receipt: Dict[str, Any]) -> str:
                     "action_indexes": objective.get("action_indexes"),
                 })
     return (
-        "PLAN RECHAZADO: la cobertura estructural objetivo→acción no es "
+        "PLAN RECHAZADO: la cobertura ejecutable subintención→salida no es "
         f"verificable. objectives={objective_count}, actions={action_count}, "
-        f"mappings={mappings}. Conservá todos los objetivos independientes y "
-        "regenerá al menos una acción canónica distinta y ejecutable para cada "
-        "uno; además, toda acción debe quedar vinculada."
+        f"mappings={mappings}. Conservá todas las subintenciones y declarales "
+        "mode, required_outputs y actions capaces de producir esas salidas. "
+        "Varias subintenciones pueden compartir una action sólo cuando su "
+        "contrato estructurado contiene todas las salidas requeridas."
     )
 
 
@@ -148221,7 +148255,14 @@ def _canonical_v238_verified_plan(
     physical_turn: str,
     receipt: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
-    if not isinstance(receipt, dict) or receipt.get("coverage_complete") is not True:
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("contract_version") != "v241"
+        or receipt.get("coverage_complete") is not True
+        or not str(receipt.get("intent") or "").strip()
+        or not isinstance(receipt.get("entities"), dict)
+        or not isinstance(receipt.get("required_tools"), list)
+    ):
         return None
     compiled = receipt.get("decision")
     if not isinstance(compiled, dict):
@@ -148266,19 +148307,29 @@ def _canonical_v238_verified_plan(
         return None
     covered_indexes = set()
     verified_objectives = []
-    objective_action_indexes: List[List[int]] = []
     for position, raw in enumerate(objectives, start=1):
         if not isinstance(raw, dict):
             return None
         evidence = str(raw.get("evidence") or "").strip()
+        mode = str(raw.get("mode") or "").strip().casefold()
+        required_outputs = raw.get("required_outputs")
         indexes = raw.get("action_indexes")
         if (
             not evidence
             or not _canonical_v200_literal_evidence(physical_turn, evidence)
+            or mode not in {"read", "write"}
+            or not isinstance(required_outputs, list)
+            or not required_outputs
             or not isinstance(indexes, list)
             or not indexes
         ):
             return None
+        normalized_outputs = []
+        for value in required_outputs:
+            output = str(value or "").strip()
+            if not output or output in normalized_outputs:
+                return None
+            normalized_outputs.append(output)
         normalized_indexes = []
         for value in indexes:
             if isinstance(value, bool):
@@ -148292,18 +148343,38 @@ def _canonical_v238_verified_plan(
             if index not in normalized_indexes:
                 normalized_indexes.append(index)
                 covered_indexes.add(index)
+        mapped_actions = [actions[index] for index in normalized_indexes]
+        mapped_outputs = set().union(*(
+            _canonical_v241_action_outputs(action)
+            for action in mapped_actions
+        ))
+        if not set(normalized_outputs).issubset(mapped_outputs):
+            return None
+        mapped_operations = {
+            str(action.get("operation") or "").strip()
+            for action in mapped_actions
+        }
+        if mode == "read" and mapped_operations.intersection(_CANONICAL_V188_WRITE_OPS):
+            return None
+        if mode == "write" and not mapped_operations.intersection(_CANONICAL_V188_WRITE_OPS):
+            return None
         verified_objectives.append({
             "objective_id": str(raw.get("objective_id") or f"objective_{position}"),
+            "mode": mode,
             "evidence": evidence,
+            "required_outputs": normalized_outputs,
             "action_indexes": normalized_indexes,
         })
-        objective_action_indexes.append(normalized_indexes)
     if covered_indexes != set(range(len(actions))):
         return None
-    if not _canonical_v238_has_injective_objective_coverage(
-        objective_action_indexes,
-        len(actions),
-    ):
+
+    required_tools = [
+        str(value or "").strip()
+        for value in receipt.get("required_tools") or []
+        if str(value or "").strip()
+    ]
+    action_operations = [str(action.get("operation") or "").strip() for action in actions]
+    if set(required_tools) != set(action_operations):
         return None
 
     actions = _canonical_v189_coalesce_actions(actions)
@@ -148316,6 +148387,11 @@ def _canonical_v238_verified_plan(
     result["actions"] = copy.deepcopy(actions)
     result["_v188_actions"] = copy.deepcopy(actions)
     result["objectives"] = verified_objectives
+    result["intent"] = str(receipt.get("intent") or "").strip()
+    result["subintents"] = copy.deepcopy(verified_objectives)
+    result["entities"] = copy.deepcopy(receipt.get("entities") or {})
+    result["required_tools"] = list(dict.fromkeys(required_tools))
+    result["contract_version"] = "v241"
     result["multi_objective"] = len(verified_objectives) > 1
     result["coverage_expected"] = len(verified_objectives)
     result["_v238_semantic_compiler_verified"] = True
@@ -148351,7 +148427,7 @@ async def _canonical_v184_orchestrate(
         try:
             receipt = await _canonical_v238_compile_turn(
                 physical_turn,
-                draft,
+                draft if attempt == 0 else {},
                 compile_state,
             )
             compiled = _canonical_v238_verified_plan(physical_turn, receipt)
@@ -148371,7 +148447,7 @@ async def _canonical_v184_orchestrate(
         feedback = _canonical_v238_validation_feedback(receipt)
         compile_state["_v238_validation_feedback"] = feedback
         print(
-            "   🔁 [CANONICAL V239 COVERAGE REPAIR] "
+            "   🔁 [CANONICAL V241 PLAN REPAIR] "
             f"intento={attempt + 1}/3 {feedback}"
         )
     if compiled is None:
@@ -148379,7 +148455,7 @@ async def _canonical_v184_orchestrate(
             # Una indisponibilidad del auditor conserva el borrador previamente
             # validado. No inventamos objetivos que la IA no llegó a enumerar.
             print(
-                "   ⚠️ [CANONICAL V238 SEMANTIC COMPILER] "
+                "   ⚠️ [CANONICAL V241 TURN INTENT PLAN] "
                 "auditor no disponible; conservo borrador IA: "
                 + (
                     f"{type(compiler_exception).__name__}: {compiler_exception}"
@@ -148389,25 +148465,35 @@ async def _canonical_v184_orchestrate(
             )
             draft["_v238_semantic_compiler_fallback"] = True
             return draft
-        # Si la IA sí enumeró objetivos pero no pudo producir cobertura
-        # ejecutable después de tres intentos, jamás enviamos sólo una parte.
-        failed = copy.deepcopy(draft)
-        failed["operation"] = "delegate_legacy"
-        failed["confidence"] = 0.0
-        failed["reason"] = "semantic_objective_action_coverage_unverified"
-        failed["_suppress_legacy_fallback"] = True
+        # Un error interno no autoriza un handoff ni un segundo cerebro. Si tres
+        # planes completos incumplen el contrato, el mismo executor canónico
+        # pide reformular el turno; nunca envía una respuesta parcial.
+        failed = {
+            "operation": "ask_missing",
+            "confidence": 1.0,
+            "intent_mode": "clarification",
+            "booking": {},
+            "recurrence": {},
+            "reservation": {},
+            "event": {},
+            "info": {},
+            "context_resolution": {},
+            "missing_fields": ["restate_request"],
+            "reason": "semantic_objective_action_coverage_unverified",
+            "_v241_safe_clarification": True,
+        }
         failed["_canonical_internal_error"] = json.dumps(
             receipt,
             ensure_ascii=False,
             default=str,
         )
         print(
-            "   🛑 [CANONICAL V239 COVERAGE] "
-            "tres planes inválidos → respuesta parcial bloqueada"
+            "   ↩️ [CANONICAL V241 PLAN FALLBACK] "
+            "tres planes inválidos → aclaración canónica, sin handoff"
         )
         return failed
     print(
-        "   🧠 [CANONICAL V238 SEMANTIC COMPILER] "
+        "   🧠 [CANONICAL V241 TURN INTENT PLAN] "
         f"objectives={len(compiled.get('objectives') or [])} "
         f"actions={[row.get('operation') for row in compiled.get('_v188_actions') or []]} "
         "coverage=True"
@@ -148801,7 +148887,7 @@ def run_agent_v2_invariant_evals() -> Dict[str, Any]:
 
 AGENT_V2_UNIFIED_AGENTIC_CORE = "v227-partial-cash-context-binding"
 AGENT_V2_UNIFIED_CONVERSATION_KERNEL = "v227-partial-cash-context-binding"
-AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-14_multiobjective_coverage_v239"
+AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-15_unified_turn_intent_plan_v241"
 
 # V195 marker is defined immediately above. V194 marker intentionally retired.
 
