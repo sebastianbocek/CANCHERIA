@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import sys
 from pathlib import Path
@@ -926,6 +927,135 @@ def test_semantic_compiler_audits_full_turn_when_draft_collapses_to_one_action(
     ]
     assert corrected["coverage_expected"] == 4
     assert corrected["_v238_semantic_compiler_verified"] is True
+
+
+def test_semantic_compiler_rejects_four_objectives_mapped_to_one_action() -> None:
+    """Reproduce exactamente el falso coverage=True observado en v0.2.46."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    message = (
+        "tenes cancha para hoy? horarios de atencion? prestan pelota? "
+        "se puede reservar 2 canchas 4 horas?"
+    )
+    availability = _availability_action()
+    receipt = {
+        "coverage_complete": True,
+        "objectives": [
+            {"evidence": "tenes cancha para hoy?", "action_indexes": [0]},
+            {"evidence": "horarios de atencion?", "action_indexes": [0]},
+            {"evidence": "prestan pelota?", "action_indexes": [0]},
+            {"evidence": "se puede reservar 2 canchas 4 horas?", "action_indexes": [0]},
+        ],
+        "decision": {**availability, "actions": [availability]},
+    }
+
+    assert legacy._canonical_v238_verified_plan(message, receipt) is None
+
+
+def test_semantic_compiler_repairs_objective_action_collapse_before_execution(
+    monkeypatch,
+) -> None:
+    """El primer plan incompleto se reintenta con diagnóstico estructural."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    message = (
+        "tenes cancha para hoy? horarios de atencion? prestan pelota? "
+        "se puede reservar 2 canchas 4 horas?"
+    )
+    availability = _availability_action()
+    opening = _business_info_action()
+    opening["info"] = {"requested_facts": ["business.opening_hours"]}
+    ball = _business_info_action()
+    ball["info"] = {"requested_facts": ["service.loan_available"]}
+    capacity = _business_info_action()
+    capacity["info"] = {
+        "requested_facts": [
+            "court.simultaneous_capacity",
+            "booking.allowed_duration",
+        ],
+        "requested_court_count": 2,
+        "requested_durations": [4],
+    }
+    objectives = [
+        {"evidence": "tenes cancha para hoy?", "action_indexes": [0]},
+        {"evidence": "horarios de atencion?", "action_indexes": [1]},
+        {"evidence": "prestan pelota?", "action_indexes": [2]},
+        {"evidence": "se puede reservar 2 canchas 4 horas?", "action_indexes": [3]},
+    ]
+    calls = []
+
+    async def collapsed_base(*_args, **_kwargs):
+        return dict(availability)
+
+    async def compiler(_turn, _draft, state):
+        calls.append(copy.deepcopy(state))
+        if len(calls) == 1:
+            collapsed_objectives = [
+                {**objective, "action_indexes": [0]}
+                for objective in objectives
+            ]
+            return {
+                "coverage_complete": True,
+                "objectives": collapsed_objectives,
+                "decision": {**availability, "actions": [availability]},
+            }
+        return {
+            "coverage_complete": True,
+            "objectives": objectives,
+            "decision": {
+                **availability,
+                "actions": [availability, opening, ball, capacity],
+            },
+        }
+
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v184_orchestrate_v238_base",
+        collapsed_base,
+    )
+    monkeypatch.setattr(legacy, "_canonical_v238_compile_turn", compiler)
+
+    result = asyncio.run(
+        legacy._canonical_v184_orchestrate(message, [message], {})
+    )
+
+    assert len(calls) == 2
+    assert "objectives=4, actions=1" in calls[1]["_v238_validation_feedback"]
+    assert [action["operation"] for action in result["_v188_actions"]] == [
+        "query_availability",
+        "business_info",
+        "business_info",
+        "business_info",
+    ]
+    assert result["coverage_expected"] == 4
+
+
+def test_semantic_compiler_supports_more_than_five_independent_objectives() -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    evidence = [f"consulta {index}" for index in range(1, 7)]
+    message = "; ".join(evidence)
+    actions = []
+    objectives = []
+    for index, fragment in enumerate(evidence):
+        action = _business_info_action()
+        action["info"] = {"requested_facts": [f"business.fact_{index + 1}"]}
+        actions.append(action)
+        objectives.append({"evidence": fragment, "action_indexes": [index]})
+    receipt = {
+        "coverage_complete": True,
+        "objectives": objectives,
+        "decision": {**actions[0], "actions": actions},
+    }
+
+    result = legacy._canonical_v238_verified_plan(message, receipt)
+
+    assert result is not None
+    assert len(result["_v188_actions"]) == 6
+    assert len(legacy._canonical_v188_action_list(result)) == 6
 
 
 def test_semantic_compiler_failure_keeps_safe_ai_draft_without_handoff(

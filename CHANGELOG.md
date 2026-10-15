@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.47 - 2026-10-14
+
+- Corrige el falso positivo de cobertura donde el compilador encontraba varios objetivos pero los vinculaba a una única acción de disponibilidad.
+- Exige una asignación uno-a-uno verificable entre objetivos independientes y acciones canónicas, sin clasificar texto mediante reglas de palabras.
+- Reintenta hasta tres veces la compilación semántica con diagnóstico estructural antes de permitir la ejecución; si la cobertura sigue siendo inválida, bloquea la respuesta parcial.
+- Amplía de cinco a doce el límite operativo de acciones multiobjetivo y agrega el estado financiero al contexto del compilador.
+- Agrega regresiones del fallo exacto de producción, su autorreparación y turnos con más de cinco objetivos independientes.
+- Actualiza el identificador del log a `2026-10-14_multiobjective_coverage_v239` para comprobar qué arquitectura está ejecutando la instalación.
+
 ## 0.2.46 - 2026-10-14
 
 - El compilador semántico multiobjetivo ahora audita todos los turnos físicos reales, aunque el primer borrador canónico haya colapsado erróneamente a una sola acción.

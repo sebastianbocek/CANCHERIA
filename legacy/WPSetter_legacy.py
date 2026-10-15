@@ -139422,6 +139422,7 @@ AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = (
 CANONICAL_V184_VERSION = "v184"
 CANONICAL_V184_READ_CONFIDENCE = 0.72
 CANONICAL_V184_WRITE_CONFIDENCE = 0.86
+CANONICAL_MULTI_INTENT_MAX_ACTIONS = 12
 CANONICAL_V184_OPERATIONS = {
     "greeting",
     "query_availability",
@@ -144647,7 +144648,7 @@ def _canonical_v188_action_list(decision: Dict[str, Any]) -> List[Dict[str, Any]
     if not isinstance(rows, list) or not rows:
         return [decision] if isinstance(decision, dict) else []
     out: List[Dict[str, Any]] = []
-    for raw in rows[:5]:
+    for raw in rows[:CANONICAL_MULTI_INTENT_MAX_ACTIONS]:
         if not isinstance(raw, dict):
             continue
         op = str(raw.get("operation") or "").strip()
@@ -148091,6 +148092,14 @@ Tu tarea:
 7. Cada objetivo debe citar evidence LITERAL y contigua del turno. action_indexes
    usa índices desde 0 y vincula ese objetivo con todas las actions que lo
    resuelven. Cada action y cada objetivo deben quedar cubiertos.
+8. Los objectives son peticiones INDEPENDIENTES. Por eso debe existir una
+   asignación uno-a-uno entre objectives y actions: si enumerás N objectives,
+   devolvé por lo menos N actions y cada objective debe poder vincularse con una
+   action distinta. Nunca declares cobertura completa haciendo que varias
+   peticiones independientes apunten a la misma única action.
+9. Si validation_feedback está presente, el plan anterior fue rechazado por el
+   verificador estructural. Regenerá TODO el plan y corregí exactamente esa
+   violación; no reduzcas ni omitas objectives para hacer pasar la validación.
 
 OPERATIONS válidas:
 greeting, query_availability, create_booking, create_recurring_booking,
@@ -148117,6 +148126,7 @@ top-level. Devolvé SOLO JSON:
         "pending": copy.deepcopy(state.get("pending")),
         "booking": copy.deepcopy(state.get("booking")),
         "availability": copy.deepcopy(state.get("availability")),
+        "payment": copy.deepcopy(state.get("payment")),
         "event_registration": copy.deepcopy(state.get("event_registration")),
         "reservations": [
             {
@@ -148139,6 +148149,9 @@ top-level. Devolvé SOLO JSON:
                         "latest_user_turn": str(physical_turn or "").strip(),
                         "canonical_state": state_view,
                         "draft_decision": copy.deepcopy(draft or {}),
+                        "validation_feedback": str(
+                            state.get("_v238_validation_feedback") or ""
+                        ).strip() or None,
                     },
                     ensure_ascii=False,
                     default=str,
@@ -148146,12 +148159,61 @@ top-level. Devolvé SOLO JSON:
             },
         ],
         temperature=0.0,
-        max_tokens=2200,
+        max_tokens=4000,
         response_format={"type": "json_object"},
     )
     register_cost(response)
     return _loads_llm_json_object(
         str(response.choices[0].message.content or "").strip()
+    )
+
+
+def _canonical_v238_has_injective_objective_coverage(
+    objective_action_indexes: List[List[int]],
+    action_count: int,
+) -> bool:
+    """Valida cobertura 1:1 sin interpretar semántica ni palabras del cliente."""
+    if not objective_action_indexes or action_count < len(objective_action_indexes):
+        return False
+    assigned_action_to_objective: Dict[int, int] = {}
+
+    def assign(objective_index: int, seen: set) -> bool:
+        for action_index in objective_action_indexes[objective_index]:
+            if action_index in seen:
+                continue
+            seen.add(action_index)
+            previous = assigned_action_to_objective.get(action_index)
+            if previous is None or assign(previous, seen):
+                assigned_action_to_objective[action_index] = objective_index
+                return True
+        return False
+
+    return all(
+        assign(objective_index, set())
+        for objective_index in range(len(objective_action_indexes))
+    )
+
+
+def _canonical_v238_validation_feedback(receipt: Dict[str, Any]) -> str:
+    objectives = receipt.get("objectives") if isinstance(receipt, dict) else None
+    decision = receipt.get("decision") if isinstance(receipt, dict) else None
+    actions = decision.get("actions") if isinstance(decision, dict) else None
+    objective_count = len(objectives) if isinstance(objectives, list) else 0
+    action_count = len(actions) if isinstance(actions, list) else 0
+    mappings = []
+    if isinstance(objectives, list):
+        for position, objective in enumerate(objectives, start=1):
+            if isinstance(objective, dict):
+                mappings.append({
+                    "objective": position,
+                    "action_indexes": objective.get("action_indexes"),
+                })
+    return (
+        "PLAN RECHAZADO: la cobertura estructural objetivo→acción no es "
+        f"verificable. objectives={objective_count}, actions={action_count}, "
+        f"mappings={mappings}. Conservá todos los objetivos independientes y "
+        "regenerá al menos una acción canónica distinta y ejecutable para cada "
+        "uno; además, toda acción debe quedar vinculada."
     )
 
 
@@ -148165,7 +148227,11 @@ def _canonical_v238_verified_plan(
     if not isinstance(compiled, dict):
         return None
     raw_actions = compiled.get("actions")
-    if not isinstance(raw_actions, list) or not raw_actions or len(raw_actions) > 5:
+    if (
+        not isinstance(raw_actions, list)
+        or not raw_actions
+        or len(raw_actions) > CANONICAL_MULTI_INTENT_MAX_ACTIONS
+    ):
         return None
 
     actions: List[Dict[str, Any]] = []
@@ -148200,6 +148266,7 @@ def _canonical_v238_verified_plan(
         return None
     covered_indexes = set()
     verified_objectives = []
+    objective_action_indexes: List[List[int]] = []
     for position, raw in enumerate(objectives, start=1):
         if not isinstance(raw, dict):
             return None
@@ -148230,7 +148297,13 @@ def _canonical_v238_verified_plan(
             "evidence": evidence,
             "action_indexes": normalized_indexes,
         })
+        objective_action_indexes.append(normalized_indexes)
     if covered_indexes != set(range(len(actions))):
+        return None
+    if not _canonical_v238_has_injective_objective_coverage(
+        objective_action_indexes,
+        len(actions),
+    ):
         return None
 
     actions = _canonical_v189_coalesce_actions(actions)
@@ -148269,21 +148342,70 @@ async def _canonical_v184_orchestrate(
         image_path=image_path,
     )
     physical_turn = _canonical_v200_current_turn_text(message, user_messages)
-    try:
-        receipt = await _canonical_v238_compile_turn(physical_turn, draft, state)
-        compiled = _canonical_v238_verified_plan(physical_turn, receipt)
-    except Exception as exc:
-        compiled = None
+    compiled = None
+    receipt: Dict[str, Any] = {}
+    compiler_exception: Optional[Exception] = None
+    repairable_coverage_failure = False
+    compile_state = copy.deepcopy(state or {})
+    for attempt in range(3):
+        try:
+            receipt = await _canonical_v238_compile_turn(
+                physical_turn,
+                draft,
+                compile_state,
+            )
+            compiled = _canonical_v238_verified_plan(physical_turn, receipt)
+        except Exception as exc:
+            compiler_exception = exc
+            break
+        if compiled is not None:
+            break
+        discovered_objectives = (
+            receipt.get("objectives") if isinstance(receipt, dict) else None
+        )
+        if not isinstance(discovered_objectives, list) or not discovered_objectives:
+            # Respuesta ajena al schema del compilador (o auditor degradado).
+            # No hay un ledger semántico que reparar de forma segura.
+            break
+        repairable_coverage_failure = True
+        feedback = _canonical_v238_validation_feedback(receipt)
+        compile_state["_v238_validation_feedback"] = feedback
         print(
-            "   ⚠️ [CANONICAL V238 SEMANTIC COMPILER] "
-            f"auditor no disponible; conservo borrador IA: {type(exc).__name__}: {exc}"
+            "   🔁 [CANONICAL V239 COVERAGE REPAIR] "
+            f"intento={attempt + 1}/3 {feedback}"
         )
     if compiled is None:
-        # Una falla del auditor no convierte una consulta sencilla en handoff.
-        # El borrador ya atravesó el Orchestrator y sus validadores; se conserva
-        # como degradación segura y observable.
-        draft["_v238_semantic_compiler_fallback"] = True
-        return draft
+        if compiler_exception is not None or not repairable_coverage_failure:
+            # Una indisponibilidad del auditor conserva el borrador previamente
+            # validado. No inventamos objetivos que la IA no llegó a enumerar.
+            print(
+                "   ⚠️ [CANONICAL V238 SEMANTIC COMPILER] "
+                "auditor no disponible; conservo borrador IA: "
+                + (
+                    f"{type(compiler_exception).__name__}: {compiler_exception}"
+                    if compiler_exception is not None
+                    else "respuesta sin ledger de objetivos"
+                )
+            )
+            draft["_v238_semantic_compiler_fallback"] = True
+            return draft
+        # Si la IA sí enumeró objetivos pero no pudo producir cobertura
+        # ejecutable después de tres intentos, jamás enviamos sólo una parte.
+        failed = copy.deepcopy(draft)
+        failed["operation"] = "delegate_legacy"
+        failed["confidence"] = 0.0
+        failed["reason"] = "semantic_objective_action_coverage_unverified"
+        failed["_suppress_legacy_fallback"] = True
+        failed["_canonical_internal_error"] = json.dumps(
+            receipt,
+            ensure_ascii=False,
+            default=str,
+        )
+        print(
+            "   🛑 [CANONICAL V239 COVERAGE] "
+            "tres planes inválidos → respuesta parcial bloqueada"
+        )
+        return failed
     print(
         "   🧠 [CANONICAL V238 SEMANTIC COMPILER] "
         f"objectives={len(compiled.get('objectives') or [])} "
@@ -148679,7 +148801,7 @@ def run_agent_v2_invariant_evals() -> Dict[str, Any]:
 
 AGENT_V2_UNIFIED_AGENTIC_CORE = "v227-partial-cash-context-binding"
 AGENT_V2_UNIFIED_CONVERSATION_KERNEL = "v227-partial-cash-context-binding"
-AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-09_pragmatic_today_semantic_review_v232"
+AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-14_multiobjective_coverage_v239"
 
 # V195 marker is defined immediately above. V194 marker intentionally retired.
 
