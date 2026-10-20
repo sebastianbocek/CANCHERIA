@@ -1048,6 +1048,117 @@ def test_temporal_adjudicator_repairs_stale_evidence_using_only_current_turn(
     assert receipt["evidence"] == "hola tenes cancha para hoy"
 
 
+def test_time_only_continuation_cannot_replace_remembered_day_with_today(
+    monkeypatch,
+) -> None:
+    """Memoria + orquestador alineados ganan frente a un 'hoy' implícito."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    real_datetime = datetime.datetime
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = real_datetime(2026, 10, 20, 15, 56)
+            if tz is None:
+                return value
+            if hasattr(tz, "localize"):
+                return tz.localize(value)
+            return value.replace(tzinfo=tz)
+
+    async def fake_openai(*_args, **_kwargs):
+        content = {
+            "mode": "current_turn_pragmatic_today",
+            "semantic_kind": "relative_days",
+            "relative_days": 0,
+            "resolved_date": None,
+            "evidence": "a las 12",
+            "confidence": 1.0,
+            "reason": "La hora aislada se interpretó erróneamente como hoy",
+        }
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=json.dumps(content)),
+                finish_reason="stop",
+            )],
+            usage=None,
+        )
+
+    monkeypatch.setattr(legacy.datetime, "datetime", FrozenDateTime)
+    monkeypatch.setattr(legacy, "call_openai_async", fake_openai)
+    monkeypatch.setattr(legacy, "register_cost", lambda *_args, **_kwargs: None)
+
+    state = legacy._canonical_v183_default_state("remembered-tomorrow")
+    state["booking"].update({
+        "day": "Miércoles 21/10",
+        "resource_type": "Futbol 5",
+    })
+    state["availability"] = {
+        "day": "Miércoles 21/10",
+        "resource_type": "Futbol 5",
+    }
+    decision = {
+        "operation": "create_booking",
+        "booking": {
+            "day": "Miércoles 21/10",
+            "time": "12:00",
+            "resource_type": "Futbol 5",
+        },
+    }
+
+    receipt = asyncio.run(
+        legacy._canonical_v200_adjudicate_current_turn_day(
+            "a las 12",
+            ["a las 12"],
+            state,
+            decision,
+        )
+    )
+
+    assert receipt["mode"] == "references_previous_day"
+    assert receipt["validated"] is True
+    assert receipt["resolved_day"] is None
+    patched = legacy._canonical_v213_apply_current_turn_day_receipt(
+        decision,
+        receipt,
+    )
+    assert patched["booking"]["day"] == "Miércoles 21/10"
+
+
+def test_expired_hold_recovery_preserves_verified_availability_context() -> None:
+    """Descartar un hold inexistente no borra la consulta válida por teléfono."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    state = legacy._canonical_v183_default_state("availability-context")
+    state["booking"].update({
+        "day": "Miércoles 21/10",
+        "resource_type": "Futbol 5",
+    })
+    state["availability"] = {
+        "day": "Miércoles 21/10",
+        "resource_type": "Futbol 5",
+        "scope_id": "scope-tomorrow",
+    }
+    state["pending"] = {
+        "field": "hora",
+        "operation": "query_availability",
+        "day": "Miércoles 21/10",
+        "resource_type": "Futbol 5",
+    }
+    state["last_decision"] = {"operation": "replace_pending_booking"}
+
+    safe, discarded = legacy._canonical_v204_state_without_vanished_hold(state)
+
+    assert safe["booking"]["day"] is None
+    assert safe["availability"]["day"] == "Miércoles 21/10"
+    assert safe["pending"]["operation"] == "query_availability"
+    assert discarded["pending"] is None
+    assert "availability" not in discarded
+    assert legacy._canonical_v200_prior_day(safe) == "Miércoles 21/10"
+
+
 def test_pragmatic_today_receipt_replaces_day_fallback_in_ask_missing() -> None:
     from cancheria.legacy_bridge import load_legacy_module
 

@@ -140731,12 +140731,27 @@ def _canonical_v204_state_without_vanished_hold(
     """
     original = copy.deepcopy(state if isinstance(state, dict) else {})
     safe = copy.deepcopy(original)
+    verified_availability = (
+        copy.deepcopy(original.get("availability"))
+        if isinstance(original.get("availability"), dict)
+        else None
+    )
+    original_pending = (
+        copy.deepcopy(original.get("pending"))
+        if isinstance(original.get("pending"), dict)
+        else None
+    )
+    conversational_pending = (
+        original_pending
+        if str((original_pending or {}).get("operation") or "").strip()
+        == "query_availability"
+        else None
+    )
     discarded = {
         "active_flow": original.get("active_flow"),
         "active_flow_hint": original.get("active_flow_hint"),
         "booking": original.get("booking"),
-        "availability": original.get("availability"),
-        "pending": original.get("pending"),
+        "pending": None if conversational_pending else original.get("pending"),
         "last_decision": original.get("last_decision"),
         "discard_reason": "no_active_pending_hold_exists",
     }
@@ -140745,8 +140760,11 @@ def _canonical_v204_state_without_vanished_hold(
     safe["booking"] = copy.deepcopy(
         _canonical_v183_default_state(str(original.get("owner") or "v204"))["booking"]
     )
-    safe["availability"] = None
-    safe["pending"] = None
+    # La disponibilidad verificada y su pregunta pendiente son memoria de
+    # conversación, no un hold transaccional. Eliminarlas aquí hacía que una
+    # respuesta elíptica como "a las 12" perdiera el día consultado justo antes.
+    safe["availability"] = verified_availability
+    safe["pending"] = conversational_pending
     safe["last_decision"] = None
     return safe, discarded
 
@@ -140816,10 +140834,11 @@ La IA sigue siendo la autoridad semántica; Python no está clasificando palabra
 
 REGLAS OBLIGATORIAS:
 1. replace_pending_booking está PROHIBIDO porque no existe un hold activo.
-2. canonical_state y operational_history contienen sólo estado vigente. El
-   objeto discarded_historical_context es evidencia narrativa para comprender
-   el diálogo, pero sus campos fueron invalidados y NO se pueden heredar como
-   día, hora, deporte, pending ni operación actual.
+2. canonical_state y operational_history contienen sólo estado vigente. La
+   disponibilidad verificada y una pregunta pendiente de esa consulta son
+   contexto conversacional válido y pueden continuarse. El objeto
+   discarded_historical_context contiene únicamente foco transaccional
+   invalidado y NO se puede heredar como hold, reserva ni operación actual.
 3. Si el turno actual es autosuficiente (por ejemplo contiene su propio día,
    hora/franja y deporte), tratá esos datos del turno actual como autoridad y
    elegí la operación que realmente pide ahora.
@@ -146408,6 +146427,7 @@ REGLAS DE CÁLCULO:
 6. No inventes un día sólo porque prior_canonical_day existe.
 7. current_turn_pragmatic_today es comprensión pragmática, no un default mecánico: usalo sólo cuando el pedido actual de cancha/reserva con hora concreta signifique naturalmente hoy. En ese modo devolvé semantic_kind="relative_days", relative_days=0 y evidence con un fragmento LITERAL del pedido que contiene la intención y la hora.
 8. Si el turno menciona o implica semánticamente otro día, una recurrencia, un rango de fechas o ambigüedad real, NO uses current_turn_pragmatic_today.
+9. Si prior_canonical_day y orchestrator_day_candidate coinciden y el turno actual sólo aporta una hora sin expresar un día nuevo, usá references_previous_day. Una inferencia implícita de hoy nunca puede reemplazar ese contexto alineado.
 
 Respondé SOLO JSON:
 {
@@ -146510,6 +146530,32 @@ Respondé SOLO JSON:
         if validated:
             resolved_day = _canonical_v200_materialize_explicit_day(audit)
             validated = bool(resolved_day)
+        if (
+            validated
+            and mode == "current_turn_pragmatic_today"
+            and prior_day
+            and orchestrator_day
+            and _canonical_v200_same_calendar_day(prior_day, orchestrator_day)
+            and not _canonical_v200_same_calendar_day(resolved_day, prior_day)
+        ):
+            print(
+                "   🧠 [CANONICAL V244 TEMPORAL CONTINUITY GUARD] "
+                f"hoy_implícito={resolved_day} bloqueado; "
+                f"memoria_y_orquestador={prior_day}"
+            )
+            mode = "references_previous_day"
+            audit = {
+                **audit,
+                "mode": mode,
+                "semantic_kind": None,
+                "relative_days": None,
+                "resolved_date": None,
+                "reason": (
+                    "La inferencia implícita de hoy no puede reemplazar el día "
+                    "coincidente de memoria y orquestador."
+                ),
+            }
+            resolved_day = None
     elif mode in {"references_previous_day", "no_day_context", "ambiguous"}:
         pass
     else:
@@ -148107,7 +148153,7 @@ def run_agent_v2_invariant_evals() -> Dict[str, Any]:
 
 AGENT_V2_UNIFIED_AGENTIC_CORE = "v227-partial-cash-context-binding"
 AGENT_V2_UNIFIED_CONVERSATION_KERNEL = "v227-partial-cash-context-binding"
-AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-20_temporal_evidence_live_log_v243"
+AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-20_conversation_day_continuity_v244"
 
 # V195 marker is defined immediately above. V194 marker intentionally retired.
 
