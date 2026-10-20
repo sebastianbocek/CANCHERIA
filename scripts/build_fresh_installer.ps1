@@ -215,9 +215,24 @@ $Installer = Join-Path $Root "release\InstaladorCancheria.exe"
 if (-not (Test-Path -LiteralPath $Installer -PathType Leaf)) {
     throw "Inno Setup terminó sin crear $Installer"
 }
-$Hash = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash
+$HashCommand = Get-Command Get-FileHash -ErrorAction SilentlyContinue
+if ($HashCommand) {
+    $Hash = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash
+} else {
+    $Stream = [System.IO.File]::OpenRead($Installer)
+    try {
+        $Hasher = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $Hash = ([System.BitConverter]::ToString($Hasher.ComputeHash($Stream))).Replace("-", "")
+        } finally {
+            $Hasher.Dispose()
+        }
+    } finally {
+        $Stream.Dispose()
+    }
+}
 & $BuildPython (Join-Path $Root "scripts\build_update_packages.py") `
-    --payload $PayloadRoot --platform windows --version "0.2.52"
+    --payload $PayloadRoot --platform windows --version "0.2.53"
 if ($LASTEXITCODE -ne 0) { throw "Falló la creación del paquete de actualización Windows" }
 Write-Output "INSTALLER=$Installer"
 Write-Output "SHA256=$Hash"

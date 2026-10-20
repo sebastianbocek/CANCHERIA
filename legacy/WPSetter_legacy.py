@@ -128486,6 +128486,18 @@ async def _agent_v2_v126r5_audit_subintent_coverage(
                         "disponible?' es un único objetivo reservar_cancha: consultar el slot "
                         "exacto es su preflight, no una obligación sibling independiente.\n\n"
 
+                        "MODIFICACIONES CONTEXTUALES:\n"
+                        "Cuando el cliente corrige, completa o modifica un hold, una reserva "
+                        "parcial o una reserva ya identificada, todos los cambios que describen "
+                        "el MISMO estado deseado forman UN objetivo transaccional. Cambiar día, "
+                        "hora, duración, tipo/cantidad de canchas o agregar/quitar recursos no "
+                        "crea un sibling por cada campo. Conservá juntos el pedido principal y "
+                        "sus modificadores para que el orquestador reconstruya el resultado "
+                        "completo y el runtime lo aplique atómicamente. Expresiones discursivas "
+                        "sin una pregunta o efecto propio (rectificaciones, conectores, cortesía "
+                        "o énfasis) NO son objetivos independientes y deben declararse en "
+                        "discarded_non_actionable, nunca como intención 'otra'.\n\n"
+
                         "No uses keyword matching. Razoná por significado. No elimines ninguna "
                         "obligación. No agregues nada que el usuario no haya dicho. Cada fragmento "
                         "debe ser una cita literal CONTIGUA del mensaje original; para un objetivo "
@@ -128498,8 +128510,12 @@ async def _agent_v2_v126r5_audit_subintent_coverage(
                         "necesita_contexto.\n\n"
 
                         "Respondé SOLO JSON: "
-                        "{\"intenciones\":[{\"intencion\":\"...\",\"fragmento\":\"...\"}],"
-                        "\"reason\":\"...\"}"
+                        "{\"coverage_complete\":true,"
+                        "\"intenciones\":[{\"intencion\":\"...\",\"fragmento\":\"...\"}],"
+                        "\"discarded_non_actionable\":[{\"fragmento\":\"...\",\"reason\":\"...\"}],"
+                        "\"reason\":\"...\"}. coverage_complete=true sólo si cada obligación "
+                        "accionable del mensaje está representada exactamente una vez y todo lo "
+                        "descartado carece realmente de una respuesta o efecto independiente."
                     ),
                 },
                 {
@@ -128551,11 +128567,31 @@ async def _agent_v2_v126r5_audit_subintent_coverage(
     if not audited:
         return rows
 
-    # El auditor es una segunda fuente de descubrimiento, no una autoridad que
-    # pueda borrar obligaciones. Conservamos primero todos los receipts del
-    # FAST PATH y añadimos las divisiones/correcciones nuevas del review. Una
-    # fila inicial sólo se considera representada cuando el review conserva su
-    # fragmento completo; citar apenas una subfrase no demuestra cobertura.
+    # Cuando el auditor certifica cobertura completa, su partición semántica es
+    # la autoridad: ve el turno físico íntegro y puede retirar conectores que el
+    # primer pase clasificó como `otra`, o reagrupar modificadores del mismo
+    # estado deseado. Sin ese receipt explícito conservamos el comportamiento
+    # lossless anterior como fail-safe.
+    coverage_complete = data.get("coverage_complete") is True
+    discarded_non_actionable = [
+        dict(row)
+        for row in (data.get("discarded_non_actionable") or [])
+        if isinstance(row, dict)
+        and _agent_v2_v126r5_fragment_belongs_to_message(
+            mensaje,
+            str(row.get("fragmento") or "").strip(),
+        )
+    ]
+    if coverage_complete:
+        print(
+            "   🧠 [AgentV2 V245 AUTHORITATIVE SIBLING PLAN] "
+            f"objectives={[(x['intencion'], x['fragmento'][:36]) for x in audited]} "
+            f"discarded={[(x.get('fragmento') or '')[:36] for x in discarded_non_actionable]}"
+        )
+        return audited
+
+    # Sin certificación completa, el auditor es una segunda fuente de
+    # descubrimiento y no puede borrar obligaciones del primer pase.
     merged: List[Dict[str, Any]] = [dict(row) for row in rows]
     represented = {
         (
@@ -141458,6 +141494,13 @@ horas omitidas a partir de toda la conversación y del instante actual. Una
 fecha válida anterior se conserva si el turno actual no la contradice. Si la
 conversación nunca fijó fecha, inferila solamente cuando el significado natural
 del pedido sea inequívoco; si existe ambigüedad real, dejala como faltante.
+2G. CICLO DE VIDA TRANSACCIONAL — DECIDILO POR EL ESTADO REAL, NO POR PALABRAS:
+    - Si active_pending_booking.active=true, cualquier corrección parcial del MISMO turno (día, hora, duración, deporte, cancha o addon) es replace_pending_booking. Reconstruí el estado deseado completo: reemplazá sólo lo que el usuario corrigió y heredá lo demás del hold activo.
+    - Si no hay hold pendiente pero CANONICAL_STATE.reservations contiene una reserva real seleccionable y el usuario quiere moverla, es reschedule_booking. Copiá su reservation_id real; en reservation.new_day/new_time incluí los valores nuevos y conservá desde la reserva identificada los valores que el usuario declaró que siguen iguales.
+    - Si sólo existe disponibilidad, un borrador o una pregunta pendiente sin reserva física, continuá el goal de disponibilidad/reserva; nunca lo presentes como reprogramación de una reserva inexistente.
+    - Agregar o quitar una cancha, cambiar el deporte, cambiar la duración y cambiar día/hora son modificaciones del mismo objetivo de reserva cuando apuntan al mismo turno. No conviertas cada modificador en objetivos write hermanos ni ejecutes dos mutaciones sobre el mismo objeto.
+    - Una rectificación o confirmación del tipo "no", "pero", "por favor", "esa hora está bien" o equivalente no constituye por sí sola otra intención. Es evidencia para reconstruir qué campos cambian y cuáles se conservan.
+2H. ACTUALIZACIONES PARCIALES: `inherit_fields` y `replace_fields` describen el patch semántico, no autorizan defaults. Cada dimensión modificada aparece una vez en replace_fields; cada dimensión explícitamente conservada aparece una vez en inherit_fields. No pongas una misma dimensión en ambas listas. La acción resultante representa el estado final completo y debe producir una sola escritura atómica.
 3. Un mensaje puede venir en varias burbujas; latest_user_messages forman UN turno físico.
 3A. MULTI-INTENT: detectá TODAS las preguntas/acciones independientes del turno. No respondas sólo la primera.
     - El campo top-level operation representa la PRIMERA/principal.
@@ -143911,12 +143954,78 @@ async def _canonical_v235_execute_objective_ledger(
         if objective_id not in objective_ids:
             objective_ids.append(objective_id)
 
+    def _effect_signature(action: Dict[str, Any]) -> str:
+        """Identidad del efecto estructurado, sin prosa ni receipts del modelo.
+
+        La IA ya decidió la operación y materializó el estado deseado. Esta
+        firma no interpreta texto: evita ejecutar dos veces el mismo write si
+        dos fragmentos del descubridor terminaron describiendo exactamente la
+        misma mutación canónica.
+        """
+        booking = dict(action.get("booking") or {})
+        reservation = dict(action.get("reservation") or {})
+        recurrence = dict(action.get("recurrence") or {})
+        event = dict(action.get("event") or {})
+        info = dict(action.get("info") or {})
+        context = dict(action.get("context_resolution") or {})
+        contract = {
+            "operation": str(action.get("operation") or "").strip(),
+            "booking": {
+                key: booking.get(key)
+                for key in (
+                    "day", "time", "daypart", "resource_type",
+                    "duration_hours", "with_quincho", "quincho",
+                    "quincho_start", "quincho_duration_hours",
+                )
+            },
+            "reservation": {
+                key: reservation.get(key)
+                for key in ("reservation_id", "new_day", "new_time")
+            },
+            "recurrence": recurrence,
+            "event": event,
+            "info": {
+                key: info.get(key)
+                for key in (
+                    "requested_facts", "target_resources", "target_labels",
+                    "question_domains", "requested_durations",
+                    "requested_court_count", "include_court", "include_quincho",
+                )
+            },
+            "context_resolution": {
+                "relation": context.get("relation"),
+                "effective_operation": context.get("effective_operation"),
+                "inherit_fields": sorted(context.get("inherit_fields") or []),
+                "replace_fields": sorted(context.get("replace_fields") or []),
+            },
+            "missing_fields": sorted(action.get("missing_fields") or []),
+            "handoff_reason": action.get("handoff_reason"),
+        }
+        return json.dumps(contract, ensure_ascii=False, sort_keys=True, default=str)
+
     for objective in objectives:
         for action in objective["actions"]:
             operation = str(action.get("operation") or "").strip()
             merged_unit = None
 
-            if operation == "business_info":
+            if operation in _CANONICAL_V188_WRITE_OPS:
+                incoming_effect = _effect_signature(action)
+                for candidate in execution_units:
+                    if (
+                        str(candidate["action"].get("operation") or "").strip()
+                        == operation
+                        and _effect_signature(candidate["action"]) == incoming_effect
+                    ):
+                        candidate["fragment"] = physical_turn
+                        merged_unit = candidate
+                        print(
+                            "   🧬 [CANONICAL V245 ATOMIC EFFECT MERGE] "
+                            f"operation={operation} objectives="
+                            f"{candidate.get('objective_ids') or []}"
+                        )
+                        break
+
+            if merged_unit is None and operation == "business_info":
                 incoming_markers = _semantic_markers(action)
                 for candidate in execution_units:
                     if str(candidate["action"].get("operation") or "") != operation:
@@ -143934,7 +144043,7 @@ async def _canonical_v235_execute_objective_ledger(
                         candidate["fragment"] = physical_turn
                         merged_unit = candidate
                         break
-            elif operation == "query_availability":
+            elif merged_unit is None and operation == "query_availability":
                 incoming_target = _canonical_v189_normalized_booking_target(action)
                 for candidate in execution_units:
                     if str(candidate["action"].get("operation") or "") != operation:
@@ -144243,18 +144352,15 @@ async def ejecutar_agente_real_v2_turno(
             if isinstance(unified, dict) and unified.get("handled"):
                 return unified
             print(
-                "   🛑 [CANONICAL V235 OBJECTIVE LEDGER] "
-                "planificación incompleta → derivación segura, sin cambiar de ejecutor"
+                "   ♻️ [CANONICAL V245 FULL-TURN RECOVERY] "
+                "ledger sin efectos incompleto → el orquestador IA replanifica "
+                "el turno físico completo"
             )
-            return await _canonical_v184_silent_failure(
-                source="canonical_v235_objective_planning_incomplete",
-                message=physical_turn,
-                telefono=telefono_key,
-                prospecto=prospecto or {},
-                page=page,
-                observations=[],
-                original_response="",
-            )
+            # El ledger planifica el lote completo antes del primer efecto y
+            # devuelve None únicamente mientras todavía es seguro reintentar.
+            # En vez de convertir una discrepancia del descubridor en handoff,
+            # entregamos el turno íntegro al cerebro canónico. La IA conserva
+            # así autoridad para reconstruir una única modificación contextual.
 
         state: Dict[str, Any] = {}
         decision: Dict[str, Any] = {}
@@ -148153,7 +148259,7 @@ def run_agent_v2_invariant_evals() -> Dict[str, Any]:
 
 AGENT_V2_UNIFIED_AGENTIC_CORE = "v227-partial-cash-context-binding"
 AGENT_V2_UNIFIED_CONVERSATION_KERNEL = "v227-partial-cash-context-binding"
-AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-20_conversation_day_continuity_v244"
+AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-20_contextual_booking_mutations_v245"
 
 # V195 marker is defined immediately above. V194 marker intentionally retired.
 

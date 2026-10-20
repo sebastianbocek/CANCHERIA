@@ -519,7 +519,7 @@ def test_unified_objective_list_does_not_emit_incomplete_response(monkeypatch) -
     assert result is None
 
 
-def test_live_entry_never_falls_back_to_legacy_executor_for_multi_intent(
+def test_live_entry_recovers_incomplete_ledger_with_full_turn_ai(
     monkeypatch,
 ) -> None:
     from cancheria.legacy_bridge import load_legacy_module
@@ -536,15 +536,23 @@ def test_live_entry_never_falls_back_to_legacy_executor_for_multi_intent(
     async def incomplete_unified(**_kwargs):
         return None
 
-    async def legacy_must_not_run(*_args, **_kwargs):
-        raise AssertionError("FAST PATH no debe volver a ejecutar objetivos")
+    decision = _availability_action()
 
-    async def fake_safe_failure(**kwargs):
+    async def fake_orchestrator(message, user_messages, _state, image_path=""):
+        assert message == "\n".join(messages)
+        assert user_messages == messages
+        return decision
+
+    async def fake_executor(*_args, **_kwargs):
         return {
             "handled": True,
-            "silent_handoff": True,
-            "source": kwargs["source"],
+            "response": "Respuesta completa reconstruida por la IA.",
+            "status": "complete",
+            "observations": [],
         }
+
+    async def legacy_must_not_run(*_args, **_kwargs):
+        raise AssertionError("La recuperación canónica no debe caer al legacy")
 
     monkeypatch.setattr(legacy, "detectar_multiples_intenciones", fake_detector)
     monkeypatch.setattr(
@@ -557,7 +565,12 @@ def test_live_entry_never_falls_back_to_legacy_executor_for_multi_intent(
         "_ejecutar_agente_real_v2_turno_v184_legacy",
         legacy_must_not_run,
     )
-    monkeypatch.setattr(legacy, "_canonical_v184_silent_failure", fake_safe_failure)
+    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate", fake_orchestrator)
+    monkeypatch.setattr(legacy, "_canonical_v184_accept_decision", lambda _row: True)
+    monkeypatch.setattr(legacy, "_canonical_v184_execute_decision", fake_executor)
+    monkeypatch.setattr(legacy, "_canonical_v184_hydrate", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(legacy, "_canonical_v183_record_decision", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(legacy, "_canonical_v183_save", lambda *_args, **_kwargs: None)
 
     result = asyncio.run(
         legacy.ejecutar_agente_real_v2_turno(
@@ -570,8 +583,8 @@ def test_live_entry_never_falls_back_to_legacy_executor_for_multi_intent(
     )
 
     assert result["handled"] is True
-    assert result["silent_handoff"] is True
-    assert result["source"] == "canonical_v235_objective_planning_incomplete"
+    assert result["response"] == "Respuesta completa reconstruida por la IA."
+    assert result.get("silent_handoff") is not True
 
 
 def test_semantic_review_cannot_delete_a_fast_path_obligation(monkeypatch) -> None:
@@ -911,3 +924,142 @@ def test_dynamic_objective_contract_preserves_all_grounded_requests(
     assert "Prestamos pelota" in result["response"]
     assert "4 horas no está habilitada" in result["response"]
     assert result["objective_coverage"]["complete"] is True
+
+
+def test_authoritative_review_discards_non_actionable_correction_fragment(
+    monkeypatch,
+) -> None:
+    """Una rectificación discursiva no se convierte en un segundo write."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    message = "no pero cambia el dia a hoy por favor la hora esta bien"
+    initial = [
+        {
+            "intencion": "reprogramar_turno",
+            "fragmento": "cambia el dia a hoy por favor",
+        },
+        {"intencion": "otra", "fragmento": "no pero"},
+    ]
+    review = {
+        "coverage_complete": True,
+        "intenciones": [
+            {
+                "intencion": "reprogramar_turno",
+                "fragmento": message,
+            }
+        ],
+        "discarded_non_actionable": [
+            {
+                "fragmento": "no pero",
+                "reason": "rectificación discursiva sin efecto independiente",
+            }
+        ],
+        "reason": "un único cambio contextual sobre el hold vigente",
+    }
+
+    async def fake_openai(*_args, **_kwargs):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=json.dumps(review)),
+                finish_reason="stop",
+            )],
+            usage=None,
+        )
+
+    monkeypatch.setattr(legacy, "call_openai_async", fake_openai)
+    monkeypatch.setattr(legacy, "register_cost", lambda *_args, **_kwargs: None)
+
+    ledger = asyncio.run(
+        legacy._agent_v2_v126r5_audit_subintent_coverage(message, initial)
+    )
+
+    assert ledger == [{
+        "intencion": "reprogramar_turno",
+        "fragmento": message,
+        "discovery_id": "semantic_review_1",
+        "discovery_source": "semantic_review",
+    }]
+
+
+def test_objective_ledger_merges_identical_contextual_writes(monkeypatch) -> None:
+    """Dos receipts del mismo estado deseado producen una sola mutación atómica."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    physical_turn = "no pero cambia el dia a hoy por favor la hora esta bien"
+    action = {
+        "operation": "replace_pending_booking",
+        "confidence": 0.98,
+        "intent_mode": "continuation",
+        "booking": {
+            "day": "Martes 20/10",
+            "time": "15:00",
+            "resource_type": "Tenis",
+            "duration_hours": 1.0,
+            "with_quincho": False,
+        },
+        "reservation": {"reservation_id": "2"},
+        "context_resolution": {
+            "relation": "continue_previous_booking",
+            "effective_operation": "replace_pending_booking",
+            "inherit_fields": ["time", "resource_type", "duration_hours"],
+            "replace_fields": ["day"],
+        },
+        "missing_fields": [],
+    }
+    executed = []
+
+    async def fake_orchestrator(*_args, **_kwargs):
+        return copy.deepcopy(action)
+
+    async def fake_executor(
+        _message,
+        _messages,
+        _state,
+        decision,
+        *_args,
+        **_kwargs,
+    ):
+        executed.append(copy.deepcopy(decision))
+        return {
+            "handled": True,
+            "response": "Moví el hold a hoy a las 15:00.",
+            "status": "complete",
+            "observations": [{"tool": "reemplazar_hold", "ok": True}],
+        }
+
+    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate", fake_orchestrator)
+    monkeypatch.setattr(legacy, "_canonical_v184_accept_decision", lambda _row: True)
+    monkeypatch.setattr(legacy, "_canonical_v184_execute_decision_v212_base", fake_executor)
+    monkeypatch.setattr(legacy, "_canonical_v183_record_decision", lambda *_a, **_k: None)
+    monkeypatch.setattr(legacy, "_canonical_v183_save", lambda *_a, **_k: None)
+    monkeypatch.setattr(legacy, "get_conversation_state", lambda _phone: {})
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v184_hydrate",
+        lambda _phone, state, _prospect: dict(state),
+    )
+
+    result = asyncio.run(
+        legacy._canonical_v235_execute_objective_ledger(
+            physical_turn=physical_turn,
+            subintents=[
+                {
+                    "intencion": "reprogramar_turno",
+                    "fragmento": "cambia el dia a hoy por favor",
+                },
+                {"intencion": "otra", "fragmento": "no pero"},
+            ],
+            state={},
+            prospecto={},
+            telefono="+5493513441882",
+        )
+    )
+
+    assert len(executed) == 1
+    assert executed[0]["operation"] == "replace_pending_booking"
+    assert result["objective_coverage"]["complete"] is True
+    assert result["multi_subintent_bridge"]["canonical_objective_count"] == 2
+    assert result["multi_subintent_bridge"]["canonical_action_count"] == 1
+    assert result.get("silent_handoff") is not True
