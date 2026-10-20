@@ -2918,6 +2918,9 @@ class AdminPanel(tk.Toplevel):
             self._refresh_blacklist()
 
     def _on_notification_tab_clicked(self, _event=None) -> None:
+        # Abrir Administración no significa haber revisado todas sus alertas.
+        # Sólo la pestaña elegida explícitamente se considera leída, de modo
+        # que el badge de Atención humana siga visible hasta abrir esa sección.
         selected = self.notebook.select()
         for tab, key in self._tab_notification_keys.items():
             if selected == str(tab):

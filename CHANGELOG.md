@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.50 - 2026-10-20
+
+- Unifica una o muchas intenciones bajo el mismo ledger dinámico: el FAST PATH descubre objetivos y el CANÓNICO interpreta y ejecuta cada uno con contexto compartido.
+- Aísla cada objetivo mediante evidencia literal, conservando subintenciones reales y descartando acciones hermanas no solicitadas antes de que puedan provocar un handoff.
+- Aplica el mismo contrato a disponibilidad, reservas, pagos, comprobantes, torneos, información y derivaciones explícitas, sin una bifurcación hardcodeada por tipo de intención.
+- Mantiene las alertas administrativas sin leer al abrir el panel y limpia únicamente la sección que el operador selecciona, por ejemplo `Atención humana`.
+- Agrega regresiones automatizadas para objetivos simples, turnos multiintención, aislamiento de acciones sin evidencia y persistencia del badge de origen.
+- Actualiza el marcador operativo a `2026-10-20_dynamic_objective_fast_path_v242`.
+
 ## 0.2.49 - 2026-10-15
 
 - Restaura íntegramente el comportamiento operativo de `v0.2.43`, que era la versión vigente el 14/10/2026 a las 15:30.

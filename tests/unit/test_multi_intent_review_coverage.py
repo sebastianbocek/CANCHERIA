@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import sys
 from pathlib import Path
@@ -233,6 +234,130 @@ def test_live_canonical_entry_routes_fast_path_inventory_to_canonical_objectives
     assert "disponibilidad" in result["response"]
     assert "horarios de atención" in result["response"]
     assert "préstamo de pelota" in result["response"]
+
+
+def test_single_objective_uses_dynamic_canonical_ledger_without_legacy_bypass(
+    monkeypatch,
+) -> None:
+    """Una o muchas intenciones usan el mismo ledger, sin ramas por intent."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    message = "hola tenes cancha para hoy"
+    calls = {"legacy": 0, "ledger": 0}
+
+    async def fake_detector(received):
+        assert received == message
+        return [{"intencion": "pedir_horarios", "fragmento": message}]
+
+    async def fake_ledger(**kwargs):
+        calls["ledger"] += 1
+        assert kwargs["subintents"] == [
+            {"intencion": "pedir_horarios", "fragmento": message}
+        ]
+        return {
+            "handled": True,
+            "status": "waiting_user",
+            "response": "Disponibilidad real para hoy",
+            "observations": [{"tool": "consultar_disponibilidad", "ok": True}],
+        }
+
+    async def legacy_must_not_run(*_args, **_kwargs):
+        calls["legacy"] += 1
+        raise AssertionError("No debe existir bypass legacy por tipo de intención")
+
+    monkeypatch.setattr(legacy, "detectar_multiples_intenciones", fake_detector)
+    monkeypatch.setattr(
+        legacy,
+        "_ejecutar_agente_real_v2_turno_v184_legacy",
+        legacy_must_not_run,
+    )
+    monkeypatch.setattr(legacy, "_canonical_v235_execute_objective_ledger", fake_ledger)
+    monkeypatch.setattr(legacy, "_canonical_v184_hydrate", lambda *_args, **_kwargs: {})
+
+    result = asyncio.run(
+        legacy.ejecutar_agente_real_v2_turno(
+            message,
+            {},
+            {"nombre": "Sebastian"},
+            "+5493513441882",
+            user_messages=[message],
+        )
+    )
+
+    assert calls == {"legacy": 0, "ledger": 1}
+    assert result["handled"] is True
+    assert result["response"] == "Disponibilidad real para hoy"
+    assert result.get("silent_handoff") is not True
+
+
+def test_objective_ledger_discards_unowned_sibling_action(monkeypatch) -> None:
+    """Una acción hermana inventada no puede apropiarse de un objetivo ajeno."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    message = "hola tenes cancha para hoy"
+    executed = []
+
+    async def fake_orchestrator(_message, _messages, state, image_path=""):
+        contract = state["_v236_objective_contract"]
+        assert contract["fragment"] == message
+        assert contract["discovery_intent"] == "cualquier_intencion_dinamica"
+        primary = _availability_action()
+        invented = _business_info_action()
+        invented["info"]["requested_facts"] = ["business.fact.invented"]
+        primary["_v188_actions"] = [copy.deepcopy(primary), invented]
+        primary["actions"] = copy.deepcopy(primary["_v188_actions"])
+        return primary
+
+    async def fake_executor(
+        fragment,
+        _messages,
+        _state,
+        decision,
+        _prospecto,
+        _telefono,
+        page=None,
+        image_path="",
+    ):
+        executed.append((fragment, decision["operation"]))
+        return {
+            "handled": True,
+            "response": "Disponibilidad verificada.",
+            "status": "complete",
+            "observations": [],
+        }
+
+    monkeypatch.setattr(legacy, "_canonical_v184_orchestrate", fake_orchestrator)
+    monkeypatch.setattr(legacy, "_canonical_v184_accept_decision", lambda _row: True)
+    monkeypatch.setattr(legacy, "_canonical_v184_execute_decision_v212_base", fake_executor)
+    monkeypatch.setattr(legacy, "_canonical_v183_record_decision", lambda *_a, **_k: None)
+    monkeypatch.setattr(legacy, "_canonical_v183_save", lambda *_a, **_k: None)
+    monkeypatch.setattr(legacy, "get_conversation_state", lambda _phone: {})
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v184_hydrate",
+        lambda _phone, state, _prospect: dict(state),
+    )
+
+    result = asyncio.run(
+        legacy._canonical_v235_execute_objective_ledger(
+            physical_turn=message,
+            subintents=[{
+                "intencion": "cualquier_intencion_dinamica",
+                "fragmento": message,
+            }],
+            state={},
+            prospecto={},
+            telefono="+5493513441882",
+        )
+    )
+
+    assert executed == [(message, "query_availability")]
+    assert result["handled"] is True
+    assert result["objective_coverage"]["complete"] is True
+    assert result["multi_subintent_bridge"]["canonical_action_count"] == 1
+    assert result.get("silent_handoff") is not True
 
 
 def test_unified_objective_list_canonicalizes_executes_and_audits_every_request(
@@ -650,7 +775,12 @@ def test_objective_ledger_keeps_availability_when_duration_is_invalid(
         )
     )
 
-    assert executed == ["query_availability", "business_info", "business_info"]
+    assert executed == [
+        "query_availability",
+        "business_info",
+        "business_info",
+        "business_info",
+    ]
     assert "Disponibilidad" in result["response"]
     assert "prestamos pelota" in result["response"]
     assert "3 horas no está habilitada" in result["response"]
@@ -659,7 +789,7 @@ def test_objective_ledger_keeps_availability_when_duration_is_invalid(
     assert len(result["objective_coverage"]["response_objective_ids"]) == 4
 
 
-def test_objective_contract_recovers_availability_misclassified_as_business_info(
+def test_dynamic_objective_contract_preserves_all_grounded_requests(
     monkeypatch,
 ) -> None:
     """Regresión exacta del incidente real de v0.2.42 (14/10 01:15)."""
@@ -692,13 +822,17 @@ def test_objective_contract_recovers_availability_misclassified_as_business_info
     async def fake_orchestrator(message, _user_messages, state, image_path=""):
         contract = dict(state.get("_v236_objective_contract") or {})
         planner_calls.append((message, contract))
-        if contract:
-            assert contract["discovery_intent"] == "pedir_horarios"
-            assert contract["required_operations"] == ["query_availability"]
-            return _availability_action()
         if message == combined:
-            # Reproduce el plan defectuoso observado en producción.
-            return info_action("business.opening_hours", "attention_schedule")
+            assert contract["discovery_intent"] == "pedir_horarios"
+            assert contract["fragment"] == combined
+            assert contract["single_objective"] is True
+            availability = _availability_action()
+            opening = info_action("business.opening_hours", "attention_schedule")
+            opening.setdefault("context_resolution", {})["evidence"] = (
+                "cuales horarios de atencion tienen?"
+            )
+            availability["_v188_actions"] = [availability.copy(), opening]
+            return availability
         if message == ball:
             return info_action("service.loan_available", "service_policy")
         return info_action(
@@ -764,8 +898,8 @@ def test_objective_contract_recovers_availability_misclassified_as_business_info
         )
     )
 
-    assert len(planner_calls) == 4
-    assert any(contract for _, contract in planner_calls)
+    assert len(planner_calls) == 3
+    assert all(contract for _, contract in planner_calls)
     assert executed == [
         "query_availability",
         "business_info",
