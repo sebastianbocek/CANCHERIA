@@ -2,7 +2,7 @@
 from pathlib import Path
 import re, sys
 ROOT=Path(__file__).resolve().parents[1]
-SKIP={".git",".venv","venv","runtime","__pycache__"}
+SKIP={".git",".venv",".build-venv","venv","runtime","__pycache__"}
 patterns={
  "openai_key": re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
  "email": re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),

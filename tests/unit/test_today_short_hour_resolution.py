@@ -971,6 +971,83 @@ def test_focused_ai_recovers_pragmatic_today_when_goal_review_omits_day(
     assert "Qué día" not in result["response"]
 
 
+def test_temporal_adjudicator_repairs_stale_evidence_using_only_current_turn(
+    monkeypatch,
+) -> None:
+    """Una frase histórica no puede invalidar el 'hoy' del turno físico actual."""
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    real_datetime = datetime.datetime
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = real_datetime(2026, 10, 20, 6, 41)
+            if tz is None:
+                return value
+            if hasattr(tz, "localize"):
+                return tz.localize(value)
+            return value.replace(tzinfo=tz)
+
+    payloads = []
+
+    async def fake_openai(*_args, **kwargs):
+        payload = json.loads(kwargs["messages"][-1]["content"])
+        payloads.append(payload)
+        evidence = (
+            "Hola tenes cancha de futbol para hoy?"
+            if len(payloads) == 1
+            else "hola tenes cancha para hoy"
+        )
+        content = {
+            "mode": "current_turn_explicit_day",
+            "semantic_kind": "relative_days",
+            "relative_days": 0,
+            "resolved_date": None,
+            "evidence": evidence,
+            "confidence": 0.99,
+            "reason": "El turno actual pide disponibilidad para hoy",
+        }
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=json.dumps(content)),
+                finish_reason="stop",
+            )],
+            usage=None,
+        )
+
+    monkeypatch.setattr(legacy.datetime, "datetime", FrozenDateTime)
+    monkeypatch.setattr(legacy, "call_openai_async", fake_openai)
+    monkeypatch.setattr(legacy, "register_cost", lambda *_args, **_kwargs: None)
+
+    state = legacy._canonical_v183_default_state("temporal-stale-evidence")
+    state["recent_messages"] = [
+        {"role": "user", "content": "Hola tenes cancha de futbol para hoy?"}
+    ]
+    decision = {
+        "operation": "query_availability",
+        "booking": {"day": "Martes 20/10", "time": None},
+    }
+    receipt = asyncio.run(
+        legacy._canonical_v200_adjudicate_current_turn_day(
+            "hola tenes cancha para hoy",
+            ["hola tenes cancha para hoy"],
+            state,
+            decision,
+        )
+    )
+
+    assert len(payloads) == 2
+    assert "recent_messages" not in payloads[0]
+    assert payloads[1]["temporal_repair"]["required_source"] == (
+        "current_turn_messages"
+    )
+    assert receipt["validated"] is True
+    assert receipt["resolved_day"] == "Martes 20/10"
+    assert receipt["evidence"] == "hola tenes cancha para hoy"
+
+
 def test_pragmatic_today_receipt_replaces_day_fallback_in_ask_missing() -> None:
     from cancheria.legacy_bridge import load_legacy_module
 

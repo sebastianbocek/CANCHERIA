@@ -146384,7 +146384,6 @@ async def _canonical_v200_adjudicate_current_turn_day(
         },
         "operation": str((decision or {}).get("operation") or "query_availability"),
         "goal_reconstruction": dict((decision or {}).get("goal_reconstruction") or {}),
-        "recent_messages": list((state or {}).get("recent_messages") or [])[-10:],
     }
 
     system = r'''Sos un ADJUDICADOR TEMPORAL focused de CANCHERIA.
@@ -146403,7 +146402,7 @@ Clasificá en exactamente uno de estos modos:
 REGLAS DE CÁLCULO:
 1. Para hoy/mañana/pasado mañana (o equivalentes inequívocos), NO calcules la fecha final. Usá semantic_kind="relative_days" y relative_days=0/1/2 respectivamente. Python hará la aritmética.
 2. Para otras fechas/días que puedas resolver inequívocamente, usá semantic_kind="absolute_date" y resolved_date="YYYY-MM-DD".
-3. evidence debe ser un fragmento LITERAL del turno actual que justifica current_turn_explicit_day. No copies texto del estado histórico.
+3. evidence debe ser un fragmento LITERAL de current_turn_messages. No copies, parafrasees ni reconstruyas texto del estado histórico. No existe ninguna otra fuente de evidencia válida.
 4. Si el turno actual dice explícitamente "hoy" y el estado dice domingo, mode DEBE ser current_turn_explicit_day: el domingo histórico no tiene autoridad.
 5. Si el turno actual dice "pasado mañana", relative_days DEBE ser 2.
 6. No inventes un día sólo porque prior_canonical_day existe.
@@ -146421,19 +146420,31 @@ Respondé SOLO JSON:
   "reason": "breve"
 }'''
 
-    try:
+    async def request_temporal_audit(
+        request_payload: Dict[str, Any],
+        repair_instruction: str = "",
+    ) -> Dict[str, Any]:
+        messages = [{"role": "system", "content": system}]
+        if repair_instruction:
+            messages.append({"role": "system", "content": repair_instruction})
+        messages.append(
+            {
+                "role": "user",
+                "content": json.dumps(request_payload, ensure_ascii=False),
+            }
+        )
         resp = await call_openai_async(
             model=OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
+            messages=messages,
             temperature=0.0,
             max_tokens=260,
             response_format={"type": "json_object"},
         )
         register_cost(resp)
-        audit = _loads_llm_json_object(resp.choices[0].message.content)
+        return _loads_llm_json_object(resp.choices[0].message.content)
+
+    try:
+        audit = await request_temporal_audit(payload)
     except Exception as exc:
         print(
             "   ⚠️ [CANONICAL V200 DAY AUTHORITY] adjudicador temporal falló: "
@@ -146446,6 +146457,37 @@ Respondé SOLO JSON:
             "prior_day": prior_day,
             "orchestrator_day": orchestrator_day,
         }
+
+    initial_mode = str(audit.get("mode") or "").strip().casefold()
+    initial_evidence = str(audit.get("evidence") or "").strip()
+    if (
+        initial_mode in {"current_turn_explicit_day", "current_turn_pragmatic_today"}
+        and not _canonical_v200_literal_evidence(current_turn, initial_evidence)
+    ):
+        repair_payload = {
+            **payload,
+            "temporal_repair": {
+                "invalid_evidence": initial_evidence or None,
+                "required_source": "current_turn_messages",
+            },
+        }
+        try:
+            audit = await request_temporal_audit(
+                repair_payload,
+                "La evidencia anterior fue rechazada porque no aparece literalmente "
+                "en current_turn_messages. Releé exclusivamente esos mensajes y "
+                "devolvé una nueva adjudicación. Si allí hay una referencia de día, "
+                "citá su fragmento literal; no uses recuerdos ni ejemplos previos.",
+            )
+            print(
+                "   🔁 [CANONICAL V243 TEMPORAL EVIDENCE REPAIR] "
+                f"evidencia_invalida={initial_evidence!r} relectura_ia=ok"
+            )
+        except Exception as exc:
+            print(
+                "   ⚠️ [CANONICAL V243 TEMPORAL EVIDENCE REPAIR] "
+                f"relectura falló: {type(exc).__name__}: {exc}"
+            )
 
     mode = str(audit.get("mode") or "").strip().casefold()
     confidence = float(audit.get("confidence") or 0.0)
@@ -148065,7 +148107,7 @@ def run_agent_v2_invariant_evals() -> Dict[str, Any]:
 
 AGENT_V2_UNIFIED_AGENTIC_CORE = "v227-partial-cash-context-binding"
 AGENT_V2_UNIFIED_CONVERSATION_KERNEL = "v227-partial-cash-context-binding"
-AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-20_dynamic_objective_fast_path_v242"
+AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-20_temporal_evidence_live_log_v243"
 
 # V195 marker is defined immediately above. V194 marker intentionally retired.
 

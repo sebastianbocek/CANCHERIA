@@ -114,3 +114,23 @@ def test_worker_syncs_desktop_pause_and_whatsapp_admin_state():
     assert "sync_ai_control_state()" in text
     assert 'write_ai_paused(True, source="whatsapp_admin")' in text
     assert 'write_ai_paused(False, source="whatsapp_admin")' in text
+
+
+def test_desktop_worker_uses_unbuffered_realtime_log_transport(tmp_path, monkeypatch):
+    from cancheria.desktop import gui
+
+    desktop = gui.CancheriaDesktop.__new__(gui.CancheriaDesktop)
+    desktop.root_dir = tmp_path
+    desktop.profile_dir = tmp_path / "wa_profile"
+
+    monkeypatch.setattr(gui.sys, "frozen", False, raising=False)
+    command = gui.CancheriaDesktop._worker_command(desktop)
+
+    assert command[1] == "-u"
+    source = (ROOT / "src" / "cancheria" / "desktop" / "gui.py").read_text(
+        encoding="utf-8"
+    )
+    launcher = (ROOT / "cancheria_desktop.py").read_text(encoding="utf-8")
+    assert 'env["PYTHONUNBUFFERED"] = "1"' in source
+    assert "reconfigure(line_buffering=True, write_through=True)" in launcher
+    assert "while processed < 200" in source

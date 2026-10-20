@@ -688,7 +688,7 @@ class CancheriaDesktop(tk.Tk):
         if getattr(sys, "frozen", False):
             return [sys.executable, "--worker", "--profile", profile]
         launcher = self.root_dir / "cancheria_desktop.py"
-        return [sys.executable, str(launcher), "--worker", "--profile", profile]
+        return [sys.executable, "-u", str(launcher), "--worker", "--profile", profile]
 
     def start_agent(self) -> None:
         if self.process and self.process.poll() is None:
@@ -704,6 +704,7 @@ class CancheriaDesktop(tk.Tk):
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
+        env["PYTHONUNBUFFERED"] = "1"
         env["CANCHERIA_DESKTOP"] = "1"
 
         kwargs: dict = {
@@ -758,22 +759,22 @@ class CancheriaDesktop(tk.Tk):
         if stream is None:
             return
         try:
-            for line in iter(stream.readline, ""):
+            for line in stream:
                 if line:
                     self.log_queue.put(line.rstrip("\r\n"))
-                if process.poll() is not None:
-                    break
         except Exception as exc:
             self.log_queue.put(f"[GUI] Error leyendo salida: {exc}")
 
     def _drain_log_queue(self) -> None:
+        processed = 0
         try:
-            while True:
+            while processed < 200:
                 self._append_log(self.log_queue.get_nowait())
+                processed += 1
         except queue.Empty:
             pass
         if not self._closing:
-            self.after(120, self._drain_log_queue)
+            self.after(15 if processed == 200 else 120, self._drain_log_queue)
 
     def _poll_process(self) -> None:
         if self.process and self.process.poll() is not None:

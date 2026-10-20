@@ -107,6 +107,14 @@ def run_script(script: Path, argv: list[str]) -> int:
         sys.argv = old_argv
 
 
+def configure_realtime_output() -> None:
+    """Make worker logs visible to the desktop as soon as each line is emitted."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(line_buffering=True, write_through=True)
+
+
 def main() -> int:
     root = root_dir()
     configure_paths(root)
@@ -161,6 +169,7 @@ def main() -> int:
         return 0 if not failures else 1
 
     if args and args[0] == "--worker":
+        configure_realtime_output()
         return run_script(root / "WPSetter.py", args[1:])
 
     if args and args[0] == "--update-finished":
