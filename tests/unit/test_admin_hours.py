@@ -178,6 +178,56 @@ def test_bookings_with_history_keeps_current_first_and_history_newest_first(monk
     assert rows[1]["_history"] is True
 
 
+def test_cancelled_booking_is_hidden_from_priority_view_and_visible_in_history(monkeypatch):
+    service = build_service(monkeypatch, [
+        {
+            "reservation_id": "CANCELLED",
+            "fecha": "Jueves 22/10/2026",
+            "hora": "15:00",
+            "cancha": "Cancha 1",
+            "estado": "cancelado",
+        },
+        {
+            "reservation_id": "ACTIVE",
+            "fecha": "Miércoles 21/10/2026",
+            "hora": "21:00",
+            "cancha": "Cancha 1",
+            "estado": "pendiente",
+        },
+    ])
+
+    assert [row["reservation_id"] for row in service.bookings()] == ["ACTIVE"]
+    history = service.bookings_with_history()
+    assert [row["reservation_id"] for row in history] == ["ACTIVE", "CANCELLED"]
+    assert history[1]["_history"] is True
+
+
+def test_booking_sort_key_orders_real_dates_and_hours(monkeypatch):
+    service = build_service(monkeypatch, [])
+    wednesday_late = {
+        "reservation_id": "5",
+        "fecha": "Miércoles 21/10/2026",
+        "hora": "21:00",
+    }
+    thursday_early = {
+        "reservation_id": "4",
+        "fecha": "Jueves 22/10/2026",
+        "hora": "15:00",
+    }
+
+    by_date = sorted(
+        [thursday_early, wednesday_late],
+        key=lambda row: service.booking_sort_key(row, "fecha"),
+    )
+    by_hour = sorted(
+        [wednesday_late, thursday_early],
+        key=lambda row: service.booking_sort_key(row, "hora"),
+    )
+
+    assert [row["reservation_id"] for row in by_date] == ["5", "4"]
+    assert [row["reservation_id"] for row in by_hour] == ["4", "5"]
+
+
 def test_past_booking_details_returns_read_only_full_time_range(monkeypatch):
     service = build_service(monkeypatch, [])
     service.calendar.finished = [
@@ -485,6 +535,8 @@ def test_admin_panel_exposes_hours_tab_and_click_editing():
     assert "def _past_booking_details_dialog" in source
     assert "Detalle del turno pasado" in source
     assert "Consulta de solo lectura" in source
+    assert "def _toggle_booking_sort" in source
+    assert 'indicator = "  ▲" if self._booking_sort_ascending else "  ▼"' in source
 
 
 def test_admin_operation_date_reuses_visual_calendar_picker():

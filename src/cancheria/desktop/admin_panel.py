@@ -968,11 +968,21 @@ class AdminPanel(tk.Toplevel):
 
         columns = ("id", "fecha", "hora", "cancha", "nombre", "telefono", "estado", "senia", "saldo")
         self.booking_tree = ttk.Treeview(self.bookings_tab, columns=columns, show="headings", selectmode="browse", style="Admin.Treeview")
-        headings = {"id": "#  ID", "fecha": "▣  Fecha", "hora": "◷  Hora", "cancha": "⚽  Cancha", "nombre": "♙  Cliente", "telefono": "☎  Teléfono", "estado": "◇  Estado", "senia": "▤  Pago", "saldo": "$  Saldo"}
-        widths = {"id": 55, "fecha": 105, "hora": 65, "cancha": 105, "nombre": 155, "telefono": 125, "estado": 90, "senia": 115, "saldo": 90}
+        self._booking_headings = {"id": "#  ID", "fecha": "▣  Fecha", "hora": "◷  Hora", "cancha": "⚽  Cancha", "nombre": "♙  Cliente", "telefono": "☎  Teléfono", "estado": "◇  Estado", "senia": "▤  Pago", "saldo": "$  Saldo"}
+        self._booking_sort_column = "fecha"
+        self._booking_sort_ascending = True
+        widths = {"id": 55, "fecha": 120, "hora": 80, "cancha": 105, "nombre": 155, "telefono": 125, "estado": 90, "senia": 115, "saldo": 90}
         for key in columns:
-            self.booking_tree.heading(key, text=headings[key])
+            if key in {"fecha", "hora"}:
+                self.booking_tree.heading(
+                    key,
+                    text=self._booking_headings[key],
+                    command=lambda column=key: self._toggle_booking_sort(column),
+                )
+            else:
+                self.booking_tree.heading(key, text=self._booking_headings[key])
             self.booking_tree.column(key, width=widths[key], anchor="center" if key not in {"nombre", "telefono"} else "w")
+        self._update_booking_sort_headings()
         scrollbar = ttk.Scrollbar(self.bookings_tab, orient="vertical", command=self.booking_tree.yview, style="Admin.Vertical.TScrollbar")
         self.booking_tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y", pady=(0, 10))
@@ -3495,6 +3505,23 @@ class AdminPanel(tk.Toplevel):
         )
         history_method = getattr(self.service, "bookings_with_history", None)
         rows = history_method() if show_past and callable(history_method) else self.service.bookings()
+        sort_key = getattr(self.service, "booking_sort_key", None)
+        if callable(sort_key):
+            rows = sorted(
+                rows,
+                key=lambda row: sort_key(row, self._booking_sort_column),
+                reverse=not self._booking_sort_ascending,
+            )
+        else:
+            rows = sorted(
+                rows,
+                key=lambda row: (
+                    str(row.get(self._booking_sort_column) or ""),
+                    str(row.get("fecha") or ""),
+                    str(row.get("hora") or ""),
+                ),
+                reverse=not self._booking_sort_ascending,
+            )
         for index, row in enumerate(rows):
             payment_status = getattr(self.service, "booking_payment_status", None)
             payment_label = (
@@ -3507,6 +3534,29 @@ class AdminPanel(tk.Toplevel):
                 row.get("nombre", ""), row.get("telefono", ""), row.get("estado", ""), payment_label,
                 row.get("monto_pendiente", ""),
             ))
+
+    def _toggle_booking_sort(self, column: str) -> None:
+        if column not in {"fecha", "hora"}:
+            return
+        if self._booking_sort_column == column:
+            self._booking_sort_ascending = not self._booking_sort_ascending
+        else:
+            self._booking_sort_column = column
+            self._booking_sort_ascending = True
+        self._update_booking_sort_headings()
+        self._refresh_bookings()
+
+    def _update_booking_sort_headings(self) -> None:
+        if not hasattr(self, "booking_tree"):
+            return
+        for column in ("fecha", "hora"):
+            indicator = ""
+            if self._booking_sort_column == column:
+                indicator = "  ▲" if self._booking_sort_ascending else "  ▼"
+            self.booking_tree.heading(
+                column,
+                text=f"{self._booking_headings[column]}{indicator}",
+            )
 
     def _refresh_fixed_turns(self) -> None:
         if not hasattr(self, "fixed_turn_tree"):

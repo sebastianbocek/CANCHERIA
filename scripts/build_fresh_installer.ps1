@@ -232,7 +232,7 @@ if ($HashCommand) {
     }
 }
 & $BuildPython (Join-Path $Root "scripts\build_update_packages.py") `
-    --payload $PayloadRoot --platform windows --version "0.2.54"
+    --payload $PayloadRoot --platform windows --version "0.2.55"
 if ($LASTEXITCODE -ne 0) { throw "Falló la creación del paquete de actualización Windows" }
 Write-Output "INSTALLER=$Installer"
 Write-Output "SHA256=$Hash"

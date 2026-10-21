@@ -107,24 +107,62 @@ class DesktopAdminService:
                 pass
         rows = self.calendar.asegurar_ids_reservas()
         return sorted(
-            (dict(row) for row in rows),
-            key=lambda row: (str(row.get("fecha") or ""), str(row.get("hora") or "")),
+            (
+                dict(row) for row in rows
+                if not self._is_cancelled_booking(row)
+            ),
+            key=lambda row: self.booking_sort_key(row, "fecha"),
         )
+
+    @staticmethod
+    def _is_cancelled_booking(row: dict[str, Any]) -> bool:
+        status = str((row or {}).get("estado") or "").strip().casefold()
+        configured = str(getattr(cfg, "BOOKING_STATUS_CANCELLED", "cancelado") or "").strip().casefold()
+        return status in {configured, "cancelado", "cancelada", "cancelled"}
+
+    def _cancelled_current_bookings(self) -> list[dict[str, Any]]:
+        """Expose cancelled operational rows as read-only history immediately."""
+        try:
+            rows = self.calendar.asegurar_ids_reservas()
+        except OSError:
+            return []
+        cancelled = []
+        for source in rows:
+            if not self._is_cancelled_booking(source):
+                continue
+            row = dict(source)
+            row["_history"] = True
+            cancelled.append(row)
+        return cancelled
 
     def past_bookings(self) -> list[dict[str, Any]]:
         """Return archived booking rows without mutating the operational calendar."""
         reader = getattr(self.calendar, "_leer_terminadas", None)
-        if not callable(reader):
-            return []
-        lock = self.calendar.atomic() if hasattr(self.calendar, "atomic") else nullcontext()
-        try:
-            with lock:
-                rows = [dict(row) for row in reader()]
-        except OSError:
-            return []
+        rows = []
+        if callable(reader):
+            lock = self.calendar.atomic() if hasattr(self.calendar, "atomic") else nullcontext()
+            try:
+                with lock:
+                    rows = [dict(row) for row in reader()]
+            except OSError:
+                rows = []
         for row in rows:
             row["_history"] = True
-        return sorted(rows, key=self._booking_history_sort_key, reverse=True)
+        combined = [*rows, *self._cancelled_current_bookings()]
+        deduplicated: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        for row in combined:
+            key = (
+                str(row.get("reservation_id") or "").strip(),
+                str(row.get("fecha") or "").strip(),
+                str(row.get("hora") or "").strip(),
+                str(row.get("cancha") or "").strip().casefold(),
+            )
+            deduplicated[key] = row
+        return sorted(
+            deduplicated.values(),
+            key=lambda row: self.booking_sort_key(row, "fecha"),
+            reverse=True,
+        )
 
     def bookings_with_history(self) -> list[dict[str, Any]]:
         """Keep current/future bookings first, followed by newest archived rows."""
@@ -152,6 +190,14 @@ class DesktopAdminService:
         except ValueError:
             time = dt.time.min
         return dt.datetime.combine(parsed, time)
+
+    def booking_sort_key(self, row: dict[str, Any], column: str) -> tuple[Any, ...]:
+        """Return chronological keys for the sortable booking-table columns."""
+        booking_dt = self._booking_history_sort_key(row)
+        reservation_id = str(row.get("reservation_id") or "")
+        if str(column or "").strip().casefold() == "hora":
+            return (booking_dt.time(), booking_dt.date(), reservation_id)
+        return (booking_dt.date(), booking_dt.time(), reservation_id)
 
     def stats(self) -> dict[str, int]:
         rows = self.bookings()
