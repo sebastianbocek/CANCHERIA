@@ -48,6 +48,144 @@ def test_late_today_short_hour_uses_only_future_12h_equivalent() -> None:
     assert future_day["hora"] == "11:00"
 
 
+def test_clock_evidence_accepts_natural_12_hour_dayparts() -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+
+    assert legacy._canonical_v187_clock_evidence_supports_hour(
+        "a las 9 de la noche", "21:00"
+    )
+    assert legacy._canonical_v187_clock_evidence_supports_hour(
+        "a las 3 de la tarde", "15:00"
+    )
+    assert legacy._canonical_v187_clock_evidence_supports_hour(
+        "9 de la mañana", "09:00"
+    )
+    assert not legacy._canonical_v187_clock_evidence_supports_hour(
+        "a las 9", "21:00"
+    )
+
+
+def test_valid_current_turn_hour_replaces_instead_of_inheriting_old_time() -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    decision = {
+        "operation": "replace_pending_booking",
+        "booking": {
+            "day": "Miércoles 21/10",
+            "time": "21:00",
+            "time_specificity": "exact",
+            "time_source": "current_turn",
+            "time_evidence": "9 de la noche",
+        },
+        "context_resolution": {
+            "relation": "continue_previous_booking",
+            "effective_operation": "replace_pending_booking",
+            "inherit_fields": ["duration_hours", "resource_type", "time"],
+            "replace_fields": ["day"],
+        },
+    }
+
+    grounded = legacy._canonical_v246_ground_current_turn_exact_time(
+        decision,
+        exact_authorized=True,
+        time_source="current_turn",
+    )
+
+    assert "time" in grounded["context_resolution"]["replace_fields"]
+    assert "time" not in grounded["context_resolution"]["inherit_fields"]
+    state = legacy._canonical_v183_default_state("replace-natural-clock")
+    state["booking"].update({
+        "day": "Jueves 22/10",
+        "time": "15:00",
+        "resource_type": "Futbol 5",
+        "duration_hours": 1.0,
+    })
+    state["availability"] = {
+        "day": "Jueves 22/10",
+        "time": "15:00",
+        "resource_type": "Futbol 5",
+        "duration_hours": 1.0,
+    }
+    applied = legacy._canonical_v201_apply_semantic_continuation(grounded, state)
+    assert applied["booking"]["time"] == "21:00"
+
+
+def test_pending_hold_change_to_past_time_explains_reason_and_preserves_hold(
+    monkeypatch,
+) -> None:
+    from cancheria.legacy_bridge import load_legacy_module
+
+    legacy = load_legacy_module()
+    real_datetime = datetime.datetime
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = real_datetime(2026, 10, 21, 17, 54)
+            if tz is None:
+                return value
+            if hasattr(tz, "localize"):
+                return tz.localize(value)
+            return value.replace(tzinfo=tz)
+
+    old_hold = {
+        "reservation_id": "R-HOLD-1",
+        "fecha": "Jueves 22/10",
+        "hora": "15:00",
+        "cancha": "Cancha 1",
+        "duracion_horas": "1",
+        "estado": legacy.BOOKING_STATUS_PENDING,
+        "senia_estado": "pendiente",
+    }
+    decision = {
+        "operation": "replace_pending_booking",
+        "booking": {
+            "day": "Miércoles 21/10",
+            "time": "15:00",
+            "resource_type": "Futbol 5",
+            "duration_hours": 1.0,
+        },
+        "context_resolution": {
+            "replace_fields": ["day"],
+        },
+    }
+
+    monkeypatch.setattr(legacy.datetime, "datetime", FrozenDateTime)
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_v203_actual_pending_hold",
+        lambda *_args, **_kwargs: dict(old_hold),
+    )
+    monkeypatch.setattr(
+        legacy,
+        "_canonical_configured_court_types",
+        lambda *_args, **_kwargs: ["Futbol 5"],
+    )
+    monkeypatch.setattr(
+        legacy,
+        "cancha_libre_para_bloque_excluyendo_reserva",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("no debe consultar ocupación para una hora pasada")
+        ),
+    )
+
+    result = asyncio.run(legacy._canonical_v203_execute_replace_pending_booking(
+        "no pero cambia el dia a hoy por favor la hora esta bien",
+        ["no pero cambia el dia a hoy por favor la hora esta bien"],
+        {},
+        decision,
+        {"nombre": "Yo"},
+        "+5493513441882",
+    ))
+
+    assert "ya pasaron" in result["response"]
+    assert "mantengo tu hold actual" in result["response"]
+    assert result["observations"][0]["status"] == "past_time"
+
+
 def test_canonical_fast_path_resolves_late_today_before_tool_execution() -> None:
     from cancheria.legacy_bridge import load_legacy_module
 

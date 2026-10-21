@@ -96978,6 +96978,30 @@ def reservar_turno_en_calendario(
         }
 
     minutos_para_turno = minutos_hasta_turno(dia_resuelto, hora_final)
+    if minutos_para_turno is not None and minutos_para_turno < 0:
+        alt_dia, alt_hora = proximo_slot_reservable_con_anticipacion(
+            dia_resuelto,
+            hora_final,
+            cancha=cancha,
+            duracion_horas=duracion_horas,
+        )
+        alternativa = (
+            f" El próximo horario disponible que encontré es {alt_dia} a las "
+            f"{formatear_hora_para_mensaje(alt_hora)}. ¿Te sirve?"
+            if alt_dia and alt_hora
+            else " ¿Querés que te muestre los próximos horarios disponibles?"
+        )
+        return {
+            "ok": False,
+            "dia": dia_resuelto,
+            "hora": hora_final,
+            "cancha": cancha,
+            "respuesta": (
+                f"Las {formatear_hora_para_mensaje(hora_final)} de hoy ya pasaron."
+                f"{alternativa}"
+            ),
+            "motivo": "horario_pasado",
+        }
     if MIN_BOOKING_NOTICE_MINUTES > 0 and minutos_para_turno is not None and minutos_para_turno < MIN_BOOKING_NOTICE_MINUTES:
         alt_dia, alt_hora = proximo_slot_reservable_con_anticipacion(
             dia_resuelto,
@@ -139783,6 +139807,53 @@ def _canonical_v187_clock_evidence_supports_hour(
     if any(token in exact_tokens for token in tokens):
         return True
 
+    # El Orchestrator normaliza expresiones de 12 horas a reloj de 24 horas
+    # ("9 de la noche" -> 21:00). La verificación anterior exigía que el
+    # número literal ya fuera 21, descartaba una interpretación válida y luego
+    # resucitaba la hora del hold anterior. Seguimos validando provenance: el
+    # número y el modificador AM/PM deben estar en la evidencia literal.
+    words_for_daypart: List[str] = []
+    word_buf_for_daypart: List[str] = []
+    for ch in raw:
+        if ch.isalnum() or ch == ":":
+            word_buf_for_daypart.append(ch)
+        elif word_buf_for_daypart:
+            words_for_daypart.append("".join(word_buf_for_daypart))
+            word_buf_for_daypart = []
+    if word_buf_for_daypart:
+        words_for_daypart.append("".join(word_buf_for_daypart))
+
+    has_pm = "pm" in words_for_daypart
+    has_am = "am" in words_for_daypart
+    has_afternoon = "tarde" in words_for_daypart
+    has_night = "noche" in words_for_daypart
+    has_morning = "manana" in words_for_daypart
+    has_early_morning = "madrugada" in words_for_daypart
+
+    for token in tokens:
+        try:
+            if ":" in token:
+                raw_hh_text, raw_mm_text = token.split(":", 1)
+                raw_hh, raw_mm = int(raw_hh_text), int(raw_mm_text)
+            else:
+                raw_hh, raw_mm = int(token), 0
+        except Exception:
+            continue
+        if not 1 <= raw_hh <= 12 or raw_mm != mm:
+            continue
+
+        candidates: set[int] = set()
+        if has_pm or has_afternoon:
+            candidates.add(12 if raw_hh == 12 else raw_hh + 12)
+        if has_night:
+            candidates.add(0 if raw_hh == 12 else raw_hh + 12)
+        if has_am or has_early_morning:
+            candidates.add(0 if raw_hh == 12 else raw_hh)
+        if has_morning:
+            candidates.add(raw_hh)
+        if hh in candidates:
+            return True
+
     # Para horas en punto aceptamos abreviaturas naturales sólo cuando el
     # número aparece con forma horaria ("a las 22", "para la 23", "22 hs")
     # o cuando el turno es únicamente el número. Así no confundimos "el 23"
@@ -139816,6 +139887,38 @@ def _canonical_v187_clock_evidence_supports_hour(
                 return True
         return False
     return False
+
+
+def _canonical_v246_ground_current_turn_exact_time(
+    decision: Dict[str, Any],
+    *,
+    exact_authorized: bool,
+    time_source: str,
+) -> Dict[str, Any]:
+    """Alinea el patch contextual con una hora exacta ya validada."""
+    if not isinstance(decision, dict):
+        return decision
+    if not exact_authorized or str(time_source or "").strip().casefold() != "current_turn":
+        return decision
+    resolution = dict(decision.get("context_resolution") or {})
+    relation = str(resolution.get("relation") or "").strip().casefold()
+    if relation not in {"continue_previous_availability", "continue_previous_booking"}:
+        return decision
+    replace_fields = {
+        str(value or "").strip()
+        for value in (resolution.get("replace_fields") or [])
+        if str(value or "").strip()
+    }
+    inherit_fields = [
+        str(value or "").strip()
+        for value in (resolution.get("inherit_fields") or [])
+        if str(value or "").strip() and str(value or "").strip() != "time"
+    ]
+    replace_fields.add("time")
+    resolution["replace_fields"] = sorted(replace_fields)
+    resolution["inherit_fields"] = inherit_fields
+    decision["context_resolution"] = resolution
+    return decision
 
 
 def _canonical_v187_raw_semantic_receipt(decision: Dict[str, Any]) -> Dict[str, Any]:
@@ -142101,6 +142204,12 @@ ya resolvió. Respondé el JSON final completo con el mismo schema.'''
     booking_decision["time_evidence"] = time_evidence or None
     booking_decision["references_previous_time"] = references_previous_time
     decision["booking"] = booking_decision
+
+    decision = _canonical_v246_ground_current_turn_exact_time(
+        decision,
+        exact_authorized=exact_authorized,
+        time_source=time_source,
+    )
 
     # V201: el MISMO Orchestrator decide si un turno elíptico continúa la
     # disponibilidad previa y qué campos heredar/reemplazar. Python sólo aplica
@@ -147287,6 +147396,46 @@ async def _canonical_v203_execute_replace_pending_booking(
         )
     normalized_day = _agent_v2_v103_normalized_day(parsed.isoformat())
 
+    minutes_to_target = minutos_hasta_turno(normalized_day, hour)
+    if minutes_to_target is not None and minutes_to_target < 0:
+        old_date = _parse_fecha_row(
+            str(old.get("fecha") or old.get("dia") or "")
+        ) or parsed
+        old_day = _agent_v2_v103_normalized_day(old_date.isoformat())
+        old_hour = normalizar_hora_detectada(old.get("hora"))
+        target_label = (
+            "hoy"
+            if _parse_fecha_row(normalized_day)
+            == datetime.datetime.now(TIMEZONE).date()
+            else normalized_day
+        )
+        response = (
+            f"Las {formatear_hora_para_mensaje(hour)} de {target_label} ya pasaron. "
+            f"Por seguridad mantengo tu hold actual del {old_day} a las "
+            f"{formatear_hora_para_mensaje(old_hour)}. "
+            "¿Querés que te muestre los próximos horarios disponibles?"
+        )
+        return _canonical_v184_result(
+            response=response,
+            observations=[_agent_v2_observation(
+                "consultar_disponibilidad",
+                False,
+                "past_time",
+                {
+                    "dia": normalized_day,
+                    "hora": hour,
+                    "resource_type": target_type,
+                    "previous_reservation_id": old_id,
+                    "hold_preserved": True,
+                },
+            )],
+            world={"message": message},
+            perception={"source": "canonical_v246_pending_hold_past_time"},
+            goals={"primary_goal": "reemplazar_hold_pendiente", "goals": []},
+            decision=decision,
+            status="waiting_user",
+        )
+
     candidates = _court_names_compatible_with_resource_types([target_type])
     free = [
         court for court in candidates
@@ -148259,7 +148408,7 @@ def run_agent_v2_invariant_evals() -> Dict[str, Any]:
 
 AGENT_V2_UNIFIED_AGENTIC_CORE = "v227-partial-cash-context-binding"
 AGENT_V2_UNIFIED_CONVERSATION_KERNEL = "v227-partial-cash-context-binding"
-AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-20_contextual_booking_mutations_v245"
+AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-21_natural_clock_hold_mutations_v246"
 
 # V195 marker is defined immediately above. V194 marker intentionally retired.
 
