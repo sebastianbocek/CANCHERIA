@@ -5423,10 +5423,17 @@ def detectar_senia_pagada_admin(texto: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def _expired_cash_hold_rows_by_id(
+def _expired_hold_rows_by_id(
     rows: List[Dict[str, Any]],
     reservation_id: str,
 ) -> List[Dict[str, Any]]:
+    """Return every expired row for a logical booking, regardless of payment method.
+
+    An administrator confirming a payment is an explicit authorization to recover
+    the booking.  Availability is validated atomically later, so filtering here by
+    ``efectivo`` incorrectly made transfer/receipt holds impossible to confirm from
+    the desktop panel.
+    """
     reservation_id = _normalizar_reservation_id_admin(reservation_id)
     if not reservation_id:
         return []
@@ -5434,10 +5441,6 @@ def _expired_cash_hold_rows_by_id(
         row for row in (rows or [])
         if _normalizar_reservation_id_admin(row.get("reservation_id")) == reservation_id
         and str(row.get("estado") or "").strip().lower() == "hold_expirado"
-        and (
-            str(row.get("senia_estado") or "").strip().lower() == "pendiente_efectivo"
-            or str(row.get("payment_method") or "").strip().lower() == "efectivo"
-        )
     ]
 
 
@@ -5499,13 +5502,13 @@ def _reserva_esta_pagada_total(reserva: Dict[str, Any]) -> bool:
     return total is not None and pagado >= total
 
 
-def _restore_expired_cash_hold_for_admin(
+def _restore_expired_hold_for_admin(
     reservation_id: str,
     expired_rows: List[Dict[str, Any]],
     monto: str = "",
     pago_total: bool = False,
 ) -> Dict[str, Any]:
-    """Confirma un hold presencial vencido sólo si todo su bloque sigue libre."""
+    """Confirma un hold vencido sólo si todo su bloque sigue libre."""
     reservation_id = _normalizar_reservation_id_admin(reservation_id)
     group = sorted(
         [dict(row) for row in (expired_rows or [])],
@@ -5554,7 +5557,7 @@ def _restore_expired_cash_hold_for_admin(
     restored = []
     with calendario.atomic():
         current_rows = calendario._leer_todos()
-        current_expired = _expired_cash_hold_rows_by_id(
+        current_expired = _expired_hold_rows_by_id(
             current_rows,
             reservation_id,
         )
@@ -5570,6 +5573,7 @@ def _restore_expired_cash_hold_for_admin(
             return {"ok": False, "reason": "expired_hold_not_found", "row": primary}
 
         occupied = []
+        payment_method = str(primary.get("payment_method") or "").strip() or "efectivo"
         for current in current_rows:
             if str(current.get("estado") or "").strip().lower() not in active_statuses:
                 continue
@@ -5607,7 +5611,7 @@ def _restore_expired_cash_hold_for_admin(
                 continue
             current["estado"] = BOOKING_STATUS_RESERVED
             current["senia_estado"] = "pagada"
-            current["payment_method"] = "efectivo"
+            current["payment_method"] = payment_method
             if monto:
                 current["senia_monto"] = monto
             if pago_total:
@@ -5615,9 +5619,9 @@ def _restore_expired_cash_hold_for_admin(
             current["notas"] = (
                 str(current.get("notas") or "").strip()
                 + (
-                    " | hold vencido confirmado con pago total en efectivo por admin"
+                    " | hold vencido confirmado manualmente con pago total por admin"
                     if pago_total
-                    else " | hold vencido confirmado en efectivo por admin"
+                    else " | hold vencido confirmado manualmente por admin"
                 )
             ).strip(" |")
             restored.append(dict(current))
@@ -5634,7 +5638,7 @@ def _restore_expired_cash_hold_for_admin(
         marcar_hold_expirado_pago_tardio(
             telefono,
             _pending_hold_key(primary),
-            "confirmed_cash_by_admin",
+            "confirmed_manually_by_admin",
         )
     return {"ok": True, "rows": restored, "restored_after_expiry": True}
 
@@ -5694,7 +5698,7 @@ def marcar_senia_pagada_admin(comando: Dict[str, Any]) -> Dict[str, Any]:
     promotion = None
     monto = ""
     if not candidatas:
-        expired_group = _expired_cash_hold_rows_by_id(rows, requested_id)
+        expired_group = _expired_hold_rows_by_id(rows, requested_id)
         if requested_id and expired_group:
             reservation_id = requested_id
             reserva = sorted(
@@ -5707,7 +5711,7 @@ def marcar_senia_pagada_admin(comando: Dict[str, Any]) -> Dict[str, Any]:
                 if pago_total
                 else _monto_humano(_senia_guardada_o_configurada(reserva, monto_total))
             )
-            promotion = _restore_expired_cash_hold_for_admin(
+            promotion = _restore_expired_hold_for_admin(
                 reservation_id,
                 expired_group,
                 monto=monto,
@@ -5815,6 +5819,14 @@ def marcar_senia_pagada_admin(comando: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     reserva_confirmada = dict((promotion.get("rows") or [reserva])[0])
+    confirmed_method = str(
+        reserva_confirmada.get("payment_method") or "efectivo"
+    ).strip()
+    method_phrase = (
+        "en efectivo"
+        if confirmed_method.casefold() == "efectivo"
+        else f"por {confirmed_method}"
+    )
     memoria_key, memoria = _memoria_cliente_por_reserva(reserva_confirmada)
     memoria["senias_pagadas_ok"] = int(memoria.get("senias_pagadas_ok") or 0) + 1
     memoria["estado_actual"] = "senia_pagada"
@@ -5851,7 +5863,7 @@ def marcar_senia_pagada_admin(comando: Dict[str, Any]) -> Dict[str, Any]:
         "restored_after_expiry": restored_after_expiry,
         "pago_total": pago_total,
         "respuesta": (
-            f"✅ *Reserva ID {reservation_id} confirmada en efectivo"
+            f"✅ *Reserva ID {reservation_id} confirmada {method_phrase}"
             f"{' - pago total' if pago_total else ''}*\n\n"
             f"👤 *Cliente:* "
             f"{reserva_confirmada.get('nombre') or reserva_confirmada.get('telefono')}\n"
