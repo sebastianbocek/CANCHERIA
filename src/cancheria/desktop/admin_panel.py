@@ -3288,7 +3288,7 @@ class AdminPanel(tk.Toplevel):
         self._action_button(bar, "Abrir configuración", self.open_configurator_callback, self.BLUE).pack(side="left", padx=(0, 8))
         self._action_button(
             bar,
-            "🗑  Borrar comprobantes JSON",
+            "🗑  Borrar comprobantes de pago",
             self._delete_used_payment_receipts,
             self.PAST_GRAY,
         ).pack(side="left")
@@ -3338,17 +3338,17 @@ class AdminPanel(tk.Toplevel):
             "comprobantes anteriores vuelvan a ser evaluados por el agente. No se puede deshacer."
         )
         if not messagebox.askyesno(
-            "Borrar comprobantes JSON",
+            "Borrar comprobantes de pago",
             warning,
             parent=self,
         ):
             return
         try:
             result = self.service.delete_used_payment_receipts()
-            messagebox.showinfo("Comprobantes JSON", result, parent=self)
+            messagebox.showinfo("Comprobantes de pago", result, parent=self)
         except Exception as exc:
             messagebox.showerror(
-                "Comprobantes JSON",
+                "Comprobantes de pago",
                 str(exc),
                 parent=self,
             )

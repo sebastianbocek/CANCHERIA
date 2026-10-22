@@ -46,6 +46,8 @@ def test_admin_panel_visual_contract_keeps_all_features_and_callbacks():
     assert 'BG = "#F5F7FB"' in source
     assert 'BORDER = "#E2E8F0"' in source
     assert 'style="Admin.Treeview"' in source
+    assert '"🗑  Borrar comprobantes de pago"' in source
+    assert "Borrar comprobantes JSON" not in source
     assert "class AdminTabView" in source
     assert 'root / "assets" / "cancheria.ico"' in source
     assert "self.iconbitmap(str(icon_path))" in source
