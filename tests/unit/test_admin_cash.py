@@ -83,9 +83,11 @@ class FakeChartCanvas:
         self.texts = []
         self.rectangles = []
         self.bindings = []
+        self.deleted = []
         self._next_id = 1
 
-    def delete(self, _target):
+    def delete(self, target):
+        self.deleted.append(target)
         return None
 
     def winfo_width(self):
@@ -109,8 +111,8 @@ class FakeChartCanvas:
     def create_line(self, *args, **kwargs):
         return None
 
-    def tag_bind(self, item_id, event, callback):
-        self.bindings.append((item_id, event, callback))
+    def bind(self, event, callback):
+        self.bindings.append((event, callback))
 
     def bbox(self, _item_id):
         return (100, 5, 220, 20)
@@ -142,7 +144,7 @@ def test_cash_court_chart_does_not_hide_configured_courts():
     assert set(values).issubset(rendered_labels)
 
 
-def test_cash_daily_chart_binds_amount_tooltip_to_every_bar():
+def test_cash_daily_chart_reuses_one_tooltip_while_mouse_stays_on_same_bar():
     panel = object.__new__(AdminPanel)
     panel.BLUE = "#1673FF"
     panel.MUTED = "#64748B"
@@ -159,18 +161,24 @@ def test_cash_daily_chart_binds_amount_tooltip_to_every_bar():
         if "cash-daily-bar" in kwargs.get("tags", ())
     ]
     assert len(bar_rectangles) == 2
-    events = [event for _item, event, _callback in canvas.bindings]
-    assert events.count("<Enter>") == 2
-    assert events.count("<Leave>") == 2
-    enter_callbacks = [
-        callback for _item, event, callback in canvas.bindings if event == "<Enter>"
-    ]
-    enter_callbacks[-1](SimpleNamespace(x=250, y=30))
+    callbacks = {event: callback for event, callback in canvas.bindings}
+    assert set(callbacks) == {"<Motion>", "<Leave>"}
+    callbacks["<Motion>"](SimpleNamespace(x=290, y=30))
     tooltip_labels = [
         kwargs.get("text") for _args, kwargs in canvas.texts
         if "cash-daily-tooltip" in kwargs.get("tags", ())
     ]
     assert "21/10/2026  ·  $20.000" in tooltip_labels
+    tooltip_text_count = len(tooltip_labels)
+
+    callbacks["<Motion>"](SimpleNamespace(x=290, y=31))
+
+    assert len([
+        kwargs for _args, kwargs in canvas.texts
+        if "cash-daily-tooltip" in kwargs.get("tags", ())
+    ]) == tooltip_text_count
+    callbacks["<Leave>"](SimpleNamespace())
+    assert canvas._cash_daily_tooltip_key is None
 
 
 def test_close_cash_is_auditable_and_keeps_movements(tmp_path, monkeypatch):

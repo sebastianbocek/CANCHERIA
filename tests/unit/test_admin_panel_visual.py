@@ -68,6 +68,7 @@ def test_admin_panel_visual_contract_keeps_all_features_and_callbacks():
     assert '("courts", "▥  Por cancha", 2)' in source
     assert '(self.BLUE,), percent=False, limit=None' in source
     assert 'tags=("cash-daily-bar",)' in source
+    assert '"<Motion>"' in source
     assert "_show_cash_daily_tooltip" in source
     assert "full_labels=True" in source
     assert "text=label if full_labels else label[:16]" in source

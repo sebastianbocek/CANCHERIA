@@ -1857,6 +1857,16 @@ class AdminPanel(tk.Toplevel):
 
     def _draw_cash_daily_chart(self, canvas: tk.Canvas, values: dict[str, int]) -> None:
         canvas.delete("all")
+        canvas._cash_daily_bars = []
+        canvas._cash_daily_tooltip_key = None
+        canvas.bind(
+            "<Motion>",
+            lambda event: self._handle_cash_daily_motion(canvas, event.x, event.y),
+        )
+        canvas.bind(
+            "<Leave>",
+            lambda _event: self._hide_cash_daily_tooltip(canvas),
+        )
         width, height = max(80, canvas.winfo_width()), max(55, canvas.winfo_height())
         items = sorted(values.items())[-7:]
         if not items:
@@ -1880,7 +1890,7 @@ class AdminPanel(tk.Toplevel):
             x1 = plot_left + index * (bar_width + gap)
             x2 = x1 + bar_width
             bar_height = max(3, (plot_bottom - plot_top) * value / top)
-            bar_id = canvas.create_rectangle(
+            canvas.create_rectangle(
                 x1,
                 plot_bottom - bar_height,
                 x2,
@@ -1889,19 +1899,34 @@ class AdminPanel(tk.Toplevel):
                 outline="",
                 tags=("cash-daily-bar",),
             )
-            canvas.tag_bind(
-                bar_id,
-                "<Enter>",
-                lambda event, target_day=day, amount=value: self._show_cash_daily_tooltip(
-                    canvas, event.x, event.y, target_day, amount
-                ),
-            )
-            canvas.tag_bind(
-                bar_id,
-                "<Leave>",
-                lambda _event: self._hide_cash_daily_tooltip(canvas),
+            canvas._cash_daily_bars.append(
+                (x1, plot_bottom - bar_height, x2, plot_bottom, day, value)
             )
             canvas.create_text((x1 + x2) / 2, height - 9, text=day[8:10], fill=self.MUTED, font=("Segoe UI", 8))
+
+    def _handle_cash_daily_motion(
+        self,
+        canvas: tk.Canvas,
+        mouse_x: float,
+        mouse_y: float,
+    ) -> None:
+        hovered = next(
+            (
+                (day, amount)
+                for x1, y1, x2, y2, day, amount
+                in getattr(canvas, "_cash_daily_bars", ())
+                if x1 <= mouse_x <= x2 and y1 <= mouse_y <= y2
+            ),
+            None,
+        )
+        if hovered is None:
+            self._hide_cash_daily_tooltip(canvas)
+            return
+        day, amount = hovered
+        tooltip_key = (str(day), int(amount))
+        if getattr(canvas, "_cash_daily_tooltip_key", None) == tooltip_key:
+            return
+        self._show_cash_daily_tooltip(canvas, mouse_x, mouse_y, day, amount)
 
     def _show_cash_daily_tooltip(
         self,
@@ -1911,7 +1936,7 @@ class AdminPanel(tk.Toplevel):
         day: str,
         amount: int,
     ) -> None:
-        self._hide_cash_daily_tooltip(canvas)
+        canvas.delete("cash-daily-tooltip")
         try:
             label_day = dt.date.fromisoformat(day).strftime("%d/%m/%Y")
         except ValueError:
@@ -1940,10 +1965,14 @@ class AdminPanel(tk.Toplevel):
             )
             canvas.tag_lower(background_id, text_id)
         canvas.tag_raise(text_id)
+        canvas._cash_daily_tooltip_key = (str(day), int(amount))
 
     @staticmethod
     def _hide_cash_daily_tooltip(canvas: tk.Canvas) -> None:
+        if getattr(canvas, "_cash_daily_tooltip_key", None) is None:
+            return
         canvas.delete("cash-daily-tooltip")
+        canvas._cash_daily_tooltip_key = None
 
     def _draw_cash_rank_chart(
         self,
