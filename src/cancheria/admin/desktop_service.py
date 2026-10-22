@@ -811,6 +811,21 @@ class DesktopAdminService:
         """Use the exact help catalog exposed by the WhatsApp admin command."""
         return str(legacy_callable("build_mensaje_ayuda_admin")("todos") or "")
 
+    def delete_used_payment_receipts(self) -> str:
+        """Reset the shared JSON registry of payment receipts already used."""
+        result = legacy_callable("borrar_used_payment_receipts_admin")()
+        if not isinstance(result, dict) or not result.get("ok"):
+            message = (
+                result.get("respuesta")
+                if isinstance(result, dict)
+                else "No se pudo borrar el registro de comprobantes."
+            )
+            raise RuntimeError(str(message or "No se pudo borrar el registro de comprobantes."))
+        return str(
+            result.get("respuesta")
+            or "El registro JSON de comprobantes usados fue eliminado."
+        )
+
     def blacklist_entries(self) -> list[dict[str, str]]:
         """Return the same normalized blacklist used by the WhatsApp agent."""
         load_blacklist = legacy_callable("cargar_blacklist")

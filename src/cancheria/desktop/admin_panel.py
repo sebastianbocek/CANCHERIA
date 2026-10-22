@@ -3285,7 +3285,13 @@ class AdminPanel(tk.Toplevel):
     def _build_commands(self) -> None:
         bar = tk.Frame(self.commands_tab, bg="white")
         bar.pack(fill="x", padx=14, pady=12)
-        self._action_button(bar, "Abrir configuración", self.open_configurator_callback, self.BLUE).pack(side="left")
+        self._action_button(bar, "Abrir configuración", self.open_configurator_callback, self.BLUE).pack(side="left", padx=(0, 8))
+        self._action_button(
+            bar,
+            "🗑  Borrar comprobantes JSON",
+            self._delete_used_payment_receipts,
+            self.PAST_GRAY,
+        ).pack(side="left")
         tk.Label(bar, text="Referencia de las mismas funciones disponibles por WhatsApp", bg="white", fg=self.MUTED).pack(side="left", padx=14)
         body = tk.Frame(self.commands_tab, bg="white")
         body.pack(fill="both", expand=True, padx=14, pady=(0, 14))
@@ -3324,6 +3330,28 @@ class AdminPanel(tk.Toplevel):
         text.configure(state="disabled")
         scrollbar.pack(side="right", fill="y")
         text.pack(side="left", fill="both", expand=True)
+
+    def _delete_used_payment_receipts(self) -> None:
+        warning = (
+            "¿Querés borrar el registro JSON de comprobantes de pago usados?\n\n"
+            "Esta acción no elimina reservas ni movimientos de Caja, pero permite que "
+            "comprobantes anteriores vuelvan a ser evaluados por el agente. No se puede deshacer."
+        )
+        if not messagebox.askyesno(
+            "Borrar comprobantes JSON",
+            warning,
+            parent=self,
+        ):
+            return
+        try:
+            result = self.service.delete_used_payment_receipts()
+            messagebox.showinfo("Comprobantes JSON", result, parent=self)
+        except Exception as exc:
+            messagebox.showerror(
+                "Comprobantes JSON",
+                str(exc),
+                parent=self,
+            )
 
     def refresh_all(self) -> None:
         try:

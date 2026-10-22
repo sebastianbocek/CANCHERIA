@@ -37,6 +37,7 @@ def test_admin_panel_visual_contract_keeps_all_features_and_callbacks():
         "self._new_tournament_dialog",
         "self._new_fixed_turn_dialog",
         "self._blacklist_action",
+        "self._delete_used_payment_receipts",
     ):
         assert callback in source
 
