@@ -949,6 +949,7 @@ class AdminPanel(tk.Toplevel):
         self._action_button(actions, "▣  Confirmar total", lambda: self._booking_action("total"), self.GREEN).pack(side="left", padx=(0, 8))
         self._action_button(actions, "↗  Liberar pendiente", lambda: self._booking_action("release"), self.ORANGE).pack(side="left", padx=(0, 8))
         self._action_button(actions, "✕  Cancelar", lambda: self._booking_action("cancel"), self.RED).pack(side="left", padx=(0, 8))
+        self._action_button(actions, "🗑  Borrar", lambda: self._booking_action("delete"), self.PAST_GRAY).pack(side="left", padx=(0, 8))
         self.show_past_bookings_var = tk.BooleanVar(value=False)
         tk.Checkbutton(
             actions,
@@ -3763,19 +3764,26 @@ class AdminPanel(tk.Toplevel):
         except Exception as exc:
             messagebox.showerror("Blacklist", str(exc), parent=self)
 
-    def _selected_booking_id(self) -> str:
+    def _selected_booking_id(self, *, allow_history: bool = False) -> str:
         selection = self.booking_tree.selection()
         if not selection:
             raise ValueError("Seleccioná una reserva de la tabla.")
-        if str(selection[0]).startswith("past:"):
+        if str(selection[0]).startswith("past:") and not allow_history:
             raise ValueError("Las reservas pasadas son de solo lectura.")
         return str(self.booking_tree.item(selection[0], "values")[0])
 
     def _booking_action(self, action: str) -> None:
         try:
-            reservation_id = self._selected_booking_id()
-            labels = {"deposit": "confirmar la seña", "total": "confirmar el pago total", "release": "liberar el pendiente", "cancel": "cancelar la reserva"}
-            if not messagebox.askyesno("Administración", f"¿Querés {labels[action]} de la reserva ID {reservation_id}?", parent=self):
+            reservation_id = self._selected_booking_id(allow_history=action == "delete")
+            labels = {"deposit": "confirmar la seña", "total": "confirmar el pago total", "release": "liberar el pendiente", "cancel": "cancelar la reserva", "delete": "borrar definitivamente la reserva"}
+            warning = (
+                f"¿Querés {labels[action]} ID {reservation_id}?\n\n"
+                "Esta acción elimina la reserva de la lista y no se puede deshacer. "
+                "Los movimientos de Caja se conservarán."
+                if action == "delete"
+                else f"¿Querés {labels[action]} de la reserva ID {reservation_id}?"
+            )
+            if not messagebox.askyesno("Borrar reserva" if action == "delete" else "Administración", warning, parent=self):
                 return
             if action == "deposit":
                 result = self.service.confirm_payment(reservation_id)
@@ -3783,6 +3791,8 @@ class AdminPanel(tk.Toplevel):
                 result = self.service.confirm_payment(reservation_id, total=True)
             elif action == "release":
                 result = self.service.release_booking(reservation_id)
+            elif action == "delete":
+                result = self.service.delete_booking(reservation_id)
             else:
                 result = self.service.cancel_booking(reservation_id)
             messagebox.showinfo("Administración", result, parent=self)

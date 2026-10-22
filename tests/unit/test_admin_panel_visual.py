@@ -32,6 +32,7 @@ def test_admin_panel_visual_contract_keeps_all_features_and_callbacks():
         'self._booking_action("total")',
         'self._booking_action("release")',
         'self._booking_action("cancel")',
+        'self._booking_action("delete")',
         "self._resolve_case",
         "self._new_tournament_dialog",
         "self._new_fixed_turn_dialog",

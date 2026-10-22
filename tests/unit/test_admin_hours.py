@@ -29,6 +29,9 @@ class FakeCalendar:
     def _escribir_todos(self, rows, ordenar=True):
         self.rows = copy.deepcopy(rows)
 
+    def _escribir_terminadas(self, rows):
+        self.finished = copy.deepcopy(rows)
+
 
 def build_service(monkeypatch, rows, *, end_hour=16):
     monkeypatch.setattr(
@@ -200,6 +203,43 @@ def test_cancelled_booking_is_hidden_from_priority_view_and_visible_in_history(m
     history = service.bookings_with_history()
     assert [row["reservation_id"] for row in history] == ["ACTIVE", "CANCELLED"]
     assert history[1]["_history"] is True
+
+
+def test_delete_booking_removes_every_slot_for_id_and_preserves_other_rows(monkeypatch):
+    service = build_service(monkeypatch, [
+        {"reservation_id": "7", "fecha": "22/10/2026", "hora": "20:00", "cancha": "Cancha 1"},
+        {"reservation_id": "7", "fecha": "22/10/2026", "hora": "21:00", "cancha": "Cancha 1"},
+        {"reservation_id": "8", "fecha": "22/10/2026", "hora": "22:00", "cancha": "Cancha 1"},
+    ])
+
+    message = service.delete_booking("7")
+
+    assert [row["reservation_id"] for row in service.calendar.rows] == ["8"]
+    assert "2 filas eliminadas" in message
+    assert "Caja se conservaron" in message
+
+
+def test_delete_booking_can_remove_a_past_reservation(monkeypatch):
+    service = build_service(monkeypatch, [])
+    service.calendar.finished = [
+        {"reservation_id": "OLD", "fecha": "09/10/2026", "hora": "20:00", "estado": "finalizada"},
+        {"reservation_id": "KEEP", "fecha": "10/10/2026", "hora": "20:00", "estado": "finalizada"},
+    ]
+
+    service.delete_booking("OLD")
+
+    assert [row["reservation_id"] for row in service.calendar.finished] == ["KEEP"]
+
+
+def test_delete_booking_rejects_unknown_id_without_writing(monkeypatch):
+    service = build_service(monkeypatch, [
+        {"reservation_id": "8", "fecha": "22/10/2026", "hora": "22:00", "cancha": "Cancha 1"},
+    ])
+
+    with pytest.raises(ValueError, match="No encontré la reserva ID 99"):
+        service.delete_booking("99")
+
+    assert [row["reservation_id"] for row in service.calendar.rows] == ["8"]
 
 
 def test_booking_sort_key_orders_real_dates_and_hours(monkeypatch):

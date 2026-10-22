@@ -1264,6 +1264,47 @@ class DesktopAdminService:
             raise RuntimeError(self._result_message(result, "No se pudo liberar la reserva."))
         return self._result_message(result, "Reserva liberada.")
 
+    def delete_booking(self, reservation_id: str) -> str:
+        """Permanently remove one logical booking from current and past CSV data.
+
+        A logical booking can span multiple rows (one per occupied slot), so the
+        reservation ID is the deletion boundary. Financial-ledger movements are
+        intentionally not removed: accounting history must remain auditable.
+        """
+        target = str(reservation_id or "").strip()
+        if not target:
+            raise ValueError("La reserva seleccionada no tiene un ID válido.")
+
+        def keep(row: dict[str, Any]) -> bool:
+            return str(row.get("reservation_id") or "").strip() != target
+
+        with self.calendar.atomic():
+            current_rows = list(self.calendar._leer_todos())
+            finished_reader = getattr(self.calendar, "_leer_terminadas", None)
+            finished_rows = list(finished_reader() or []) if callable(finished_reader) else []
+            remaining_current = [row for row in current_rows if keep(row)]
+            remaining_finished = [row for row in finished_rows if keep(row)]
+            removed_current = len(current_rows) - len(remaining_current)
+            removed_finished = len(finished_rows) - len(remaining_finished)
+            removed = removed_current + removed_finished
+            if not removed:
+                raise ValueError(
+                    f"No encontré la reserva ID {target}. Actualizá la lista e intentá nuevamente."
+                )
+            finished_writer = getattr(self.calendar, "_escribir_terminadas", None)
+            if removed_finished and not callable(finished_writer):
+                raise RuntimeError("No se puede actualizar el historial de reservas.")
+            if removed_current:
+                self.calendar._escribir_todos(remaining_current, ordenar=True)
+            if removed_finished:
+                finished_writer(remaining_finished)
+
+        slot_label = "fila eliminada" if removed == 1 else "filas eliminadas"
+        return (
+            f"Reserva ID {target} borrada definitivamente ({removed} {slot_label}). "
+            "Los movimientos registrados en Caja se conservaron."
+        )
+
     def add_booking(
         self,
         *,
