@@ -4,6 +4,7 @@ from pathlib import Path
 import tkinter as tk
 
 import pytest
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,7 +29,10 @@ def test_desktop_visual_contract_is_local_and_keeps_callbacks() -> None:
 
     assert "class ModernButton(tk.Canvas)" in text
     assert 'self.profile_dir.name' in text
-    assert 'assets" / "cancheria-logo-cropped.png"' in text
+    assert '"cancheria-logo-cropped.png", "cancheria-logo.png"' in text
+    assert 'label="Cambiar logo"' in text
+    assert 'label="Restablecer logo original"' in text
+    assert 'self.logo_label.bind("<Button-3>"' in text
     assert 'ttk.Scrollbar(console' in text
     assert 'self.log.tag_configure("success"' in text
     assert 'self.log.tag_configure("warning"' in text
@@ -54,6 +58,23 @@ def test_desktop_logo_resource_exists() -> None:
     assert logo.stat().st_size > 10_000
 
 
+def test_custom_logo_is_normalized_to_persistent_png(tmp_path) -> None:
+    from cancheria.desktop.gui import prepare_custom_logo
+
+    source = tmp_path / "logo-cliente.jpg"
+    destination = tmp_path / "runtime" / "custom_logo.png"
+    Image.new("RGB", (640, 320), "#1673FF").save(source, format="JPEG")
+
+    saved = prepare_custom_logo(source, destination)
+
+    assert saved == destination
+    assert destination.is_file()
+    with Image.open(destination) as normalized:
+        assert normalized.format == "PNG"
+        assert normalized.mode == "RGBA"
+        assert normalized.size == (640, 320)
+
+
 def test_desktop_widgets_resize_and_keep_real_actions() -> None:
     from cancheria.desktop.gui import CancheriaDesktop
 
@@ -76,6 +97,9 @@ def test_desktop_widgets_resize_and_keep_real_actions() -> None:
         assert app.btn_admin._command.__name__ == "open_admin_panel"
         assert app.btn_manual._command.__name__ == "open_manual"
         assert app.btn_settings._command.__name__ == "open_settings"
+        assert app.logo_menu.entrycget(0, "label") == "Cambiar logo"
+        assert app.logo_menu.entrycget(1, "label") == "Restablecer logo original"
+        assert app.logo_label.bind("<Button-3>")
 
         for widget in (
             app.btn_on,

@@ -12,7 +12,9 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
+
+from PIL import Image, ImageOps, ImageTk, UnidentifiedImageError
 
 from cancheria import __version__
 from cancheria.desktop.ai_control import ensure_ai_control, read_ai_control, write_ai_paused
@@ -26,6 +28,41 @@ from cancheria.desktop.update_service import (
     launch_update_helper,
     prepare_update,
 )
+from cancheria.paths import runtime_file
+
+
+CUSTOM_LOGO_FILENAME = "custom_logo.png"
+LOGO_MAX_SIZE = (390, 220)
+MAX_CUSTOM_LOGO_PIXELS = 40_000_000
+
+
+def prepare_custom_logo(source: Path, destination: Path) -> Path:
+    """Validate and persist a user logo as a normalized, static PNG."""
+    source = Path(source)
+    destination = Path(destination)
+    try:
+        with Image.open(source) as probe:
+            width, height = probe.size
+            if width <= 0 or height <= 0 or width * height > MAX_CUSTOM_LOGO_PIXELS:
+                raise ValueError("La imagen es demasiado grande o no tiene dimensiones válidas.")
+            probe.verify()
+
+        with Image.open(source) as opened:
+            if getattr(opened, "is_animated", False):
+                opened.seek(0)
+            normalized = ImageOps.exif_transpose(opened).convert("RGBA")
+            normalized.load()
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(f".{destination.name}.tmp")
+        try:
+            normalized.save(temporary, format="PNG", optimize=True)
+            os.replace(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+    except (OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+        raise ValueError("El archivo seleccionado no es una imagen válida o no se puede leer.") from exc
+    return destination
 
 
 def _rounded_rectangle(
@@ -337,6 +374,106 @@ class CancheriaDesktop(tk.Tk):
         self.after(800, self._poll_admin_notifications)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    @property
+    def custom_logo_path(self) -> Path:
+        return runtime_file(CUSTOM_LOGO_FILENAME)
+
+    def _original_logo_path(self) -> Path | None:
+        for filename in ("cancheria-logo-cropped.png", "cancheria-logo.png"):
+            candidate = self.root_dir / "assets" / filename
+            if candidate.is_file():
+                return candidate
+        return None
+
+    def _render_logo_image(self, path: Path) -> ImageTk.PhotoImage:
+        with Image.open(path) as opened:
+            image = ImageOps.exif_transpose(opened).convert("RGBA")
+            image.thumbnail(LOGO_MAX_SIZE, Image.Resampling.LANCZOS)
+            return ImageTk.PhotoImage(image)
+
+    def _refresh_header_logo(self) -> None:
+        candidates = []
+        if self.custom_logo_path.is_file():
+            candidates.append(self.custom_logo_path)
+        original = self._original_logo_path()
+        if original is not None:
+            candidates.append(original)
+
+        self._logo = None
+        for candidate in candidates:
+            try:
+                self._logo = self._render_logo_image(candidate)
+                break
+            except (OSError, UnidentifiedImageError, tk.TclError):
+                continue
+
+        self.logo_label.place_forget()
+        if self._logo is not None:
+            self.logo_label.configure(image=self._logo, text="")
+            self.logo_label.place(relx=.5, y=12, anchor="n")
+        else:
+            self.logo_label.configure(image="", text="CANCHERIA")
+            self.logo_label.place(relx=.5, rely=.47, anchor="center")
+
+    def _show_logo_menu(self, event: tk.Event) -> str:
+        state = "normal" if self.custom_logo_path.is_file() else "disabled"
+        self.logo_menu.entryconfigure("Restablecer logo original", state=state)
+        try:
+            self.logo_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.logo_menu.grab_release()
+        return "break"
+
+    def _change_logo(self) -> None:
+        selected = filedialog.askopenfilename(
+            parent=self,
+            title="Seleccionar logo del complejo",
+            filetypes=(
+                ("Imágenes", "*.png *.jpg *.jpeg *.gif *.bmp *.webp"),
+                ("Todos los archivos", "*.*"),
+            ),
+        )
+        if not selected:
+            return
+        try:
+            prepare_custom_logo(Path(selected), self.custom_logo_path)
+            self._refresh_header_logo()
+        except ValueError as exc:
+            messagebox.showerror("Logo no válido", str(exc), parent=self)
+            return
+        except OSError as exc:
+            messagebox.showerror(
+                "No se pudo guardar el logo",
+                f"CANCHERIA no pudo guardar la imagen seleccionada.\n\n{exc}",
+                parent=self,
+            )
+            return
+        messagebox.showinfo(
+            "Logo actualizado",
+            "El logo personalizado quedó guardado y se conservará al reiniciar o actualizar CANCHERIA.",
+            parent=self,
+        )
+
+    def _reset_original_logo(self) -> None:
+        if not self.custom_logo_path.exists():
+            self._refresh_header_logo()
+            return
+        if not messagebox.askyesno(
+            "Restablecer logo original",
+            "¿Querés volver a usar el logo original de CANCHERIA?",
+            parent=self,
+        ):
+            return
+        try:
+            self.custom_logo_path.unlink(missing_ok=True)
+            self._refresh_header_logo()
+        except OSError as exc:
+            messagebox.showerror(
+                "No se pudo restablecer el logo",
+                f"CANCHERIA no pudo eliminar el logo personalizado.\n\n{exc}",
+                parent=self,
+            )
+
     def _build_ui(self) -> None:
         header = tk.Canvas(
             self,
@@ -348,32 +485,24 @@ class CancheriaDesktop(tk.Tk):
         header.pack(fill="x", padx=20, pady=(16, 10))
         header.bind("<Configure>", self._draw_header_background)
 
-        logo_path = self.root_dir / "assets" / "cancheria-logo-cropped.png"
-        if not logo_path.exists():
-            logo_path = self.root_dir / "assets" / "cancheria-logo.png"
         self._logo = None
-        if logo_path.exists():
-            try:
-                img = tk.PhotoImage(file=str(logo_path))
-                factor = max(1, int(max(img.width() / 390, img.height() / 250)))
-                if factor > 1:
-                    img = img.subsample(factor, factor)
-                self._logo = img
-                self.logo_label = tk.Label(header, image=img, bg=self.PANEL, bd=0)
-                self.logo_label.place(relx=.5, y=12, anchor="n")
-            except Exception:
-                pass
-
-        if self._logo is None:
-            self.logo_label = tk.Label(
-                header,
-                text="CANCHERIA",
-                font=("Segoe UI", 30, "bold"),
-                fg=self.NAVY,
-                bg=self.PANEL,
-                bd=0,
-            )
-            self.logo_label.place(relx=.5, rely=.47, anchor="center")
+        self.logo_label = tk.Label(
+            header,
+            font=("Segoe UI", 30, "bold"),
+            fg=self.NAVY,
+            bg=self.PANEL,
+            bd=0,
+            cursor="hand2",
+        )
+        self.logo_menu = tk.Menu(self, tearoff=False)
+        self.logo_menu.add_command(label="Cambiar logo", command=self._change_logo)
+        self.logo_menu.add_command(
+            label="Restablecer logo original",
+            command=self._reset_original_logo,
+        )
+        self.logo_label.bind("<Button-3>", self._show_logo_menu)
+        self.logo_label.bind("<Shift-F10>", self._show_logo_menu)
+        self._refresh_header_logo()
 
         self.header_subtitle = tk.Label(
             header,
