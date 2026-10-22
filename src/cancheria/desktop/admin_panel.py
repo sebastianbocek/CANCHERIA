@@ -1851,7 +1851,7 @@ class AdminPanel(tk.Toplevel):
         )
         self._draw_cash_rank_chart(
             self.cash_chart_canvases["courts"], snapshot.get("court_income") or {},
-            (self.BLUE,), percent=False, limit=3 if self._compact_height else 6,
+            (self.BLUE,), percent=False, limit=None,
             full_labels=True,
         )
 
@@ -1880,8 +1880,70 @@ class AdminPanel(tk.Toplevel):
             x1 = plot_left + index * (bar_width + gap)
             x2 = x1 + bar_width
             bar_height = max(3, (plot_bottom - plot_top) * value / top)
-            canvas.create_rectangle(x1, plot_bottom - bar_height, x2, plot_bottom, fill=self.BLUE, outline="")
+            bar_id = canvas.create_rectangle(
+                x1,
+                plot_bottom - bar_height,
+                x2,
+                plot_bottom,
+                fill=self.BLUE,
+                outline="",
+                tags=("cash-daily-bar",),
+            )
+            canvas.tag_bind(
+                bar_id,
+                "<Enter>",
+                lambda event, target_day=day, amount=value: self._show_cash_daily_tooltip(
+                    canvas, event.x, event.y, target_day, amount
+                ),
+            )
+            canvas.tag_bind(
+                bar_id,
+                "<Leave>",
+                lambda _event: self._hide_cash_daily_tooltip(canvas),
+            )
             canvas.create_text((x1 + x2) / 2, height - 9, text=day[8:10], fill=self.MUTED, font=("Segoe UI", 8))
+
+    def _show_cash_daily_tooltip(
+        self,
+        canvas: tk.Canvas,
+        mouse_x: float,
+        mouse_y: float,
+        day: str,
+        amount: int,
+    ) -> None:
+        self._hide_cash_daily_tooltip(canvas)
+        try:
+            label_day = dt.date.fromisoformat(day).strftime("%d/%m/%Y")
+        except ValueError:
+            label_day = str(day)
+        label = f"{label_day}  ·  {self._money(amount)}"
+        tooltip_x = min(max(70, mouse_x), max(70, canvas.winfo_width() - 70))
+        tooltip_y = max(13, mouse_y - 18)
+        text_id = canvas.create_text(
+            tooltip_x,
+            tooltip_y,
+            text=label,
+            fill="white",
+            font=("Segoe UI", 8, "bold"),
+            tags=("cash-daily-tooltip",),
+        )
+        bounds = canvas.bbox(text_id)
+        if bounds:
+            background_id = canvas.create_rectangle(
+                bounds[0] - 7,
+                bounds[1] - 4,
+                bounds[2] + 7,
+                bounds[3] + 4,
+                fill=self.NAVY,
+                outline="",
+                tags=("cash-daily-tooltip",),
+            )
+            canvas.tag_lower(background_id, text_id)
+        canvas.tag_raise(text_id)
+
+    @staticmethod
+    def _hide_cash_daily_tooltip(canvas: tk.Canvas) -> None:
+        canvas.delete("cash-daily-tooltip")
 
     def _draw_cash_rank_chart(
         self,
@@ -1890,12 +1952,14 @@ class AdminPanel(tk.Toplevel):
         colors: tuple[str, ...],
         *,
         percent: bool,
-        limit: int = 3,
+        limit: int | None = 3,
         full_labels: bool = False,
     ) -> None:
         canvas.delete("all")
         width, height = max(120, canvas.winfo_width()), max(28, canvas.winfo_height())
-        items = sorted(values.items(), key=lambda item: item[1], reverse=True)[:limit]
+        items = sorted(values.items(), key=lambda item: item[1], reverse=True)
+        if limit is not None:
+            items = items[:max(0, int(limit))]
         if not items:
             canvas.create_text(
                 width / 2, height / 2, text="Sin datos en el período",
