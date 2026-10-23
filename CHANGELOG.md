@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.64 - 2026-10-23
+
+- Corrige el panel lateral de **Escuelita** para que sus secciones no se compriman ni queden cortadas.
+- Agrega desplazamiento vertical al lateral y scroll independiente en las tablas, incluida **Clases de hoy**.
+
 ## 0.2.63 - 2026-10-23
 
 - Agrega **Escuelita** después de Torneos con alumnos y responsables, profesores, grupos, cupos, horarios recurrentes, inscripciones, asistencia, preinscripciones y cuotas.

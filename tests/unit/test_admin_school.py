@@ -168,6 +168,9 @@ def test_school_ui_and_canonical_whatsapp_contract_are_present():
     assert panel.index('text="Torneos"') < panel.index('text="Escuelita"') < panel.index('text="Turnos Fijos"')
     for label in ("+  Nuevo alumno", "+  Nuevo grupo", "Registrar pago", "Tomar asistencia"):
         assert label in panel
+    assert "self.school_side_canvas" in panel
+    assert "self.school_side_scroll" in panel
+    assert "tree.configure(yscrollcommand=scroll.set)" in panel
     for operation in (
         "query_school", "pre_enroll_school", "query_school_balance", "report_school_absence"
     ):

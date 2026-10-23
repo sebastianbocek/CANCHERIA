@@ -3327,9 +3327,40 @@ class AdminPanel(tk.Toplevel):
         panes = tk.PanedWindow(self.school_tab, orient="horizontal", bg=self.BORDER, bd=0, sashwidth=7)
         panes.pack(fill="both", expand=True, padx=14, pady=(0, 14))
         left = tk.Frame(panes, bg="white", highlightbackground=self.BORDER, highlightthickness=1)
-        right = tk.Frame(panes, bg=self.SURFACE)
+        right_shell = tk.Frame(panes, bg=self.SURFACE)
         panes.add(left, minsize=650, stretch="always")
-        panes.add(right, minsize=340, stretch="always")
+        panes.add(right_shell, minsize=340, stretch="always")
+        self.school_side_canvas = tk.Canvas(
+            right_shell,
+            bg=self.SURFACE,
+            bd=0,
+            highlightthickness=0,
+        )
+        self.school_side_scroll = ttk.Scrollbar(
+            right_shell,
+            orient="vertical",
+            command=self.school_side_canvas.yview,
+            style="Admin.Vertical.TScrollbar",
+        )
+        self.school_side_canvas.configure(yscrollcommand=self.school_side_scroll.set)
+        self.school_side_scroll.pack(side="right", fill="y")
+        self.school_side_canvas.pack(side="left", fill="both", expand=True)
+        right = tk.Frame(self.school_side_canvas, bg=self.SURFACE)
+        self._school_side_window = self.school_side_canvas.create_window(
+            (0, 0), window=right, anchor="nw"
+        )
+        right.bind(
+            "<Configure>",
+            lambda _event: self.school_side_canvas.configure(
+                scrollregion=self.school_side_canvas.bbox("all")
+            ),
+        )
+        self.school_side_canvas.bind(
+            "<Configure>",
+            lambda event: self.school_side_canvas.itemconfigure(
+                self._school_side_window, width=event.width
+            ),
+        )
         tk.Label(left, text="Alumnos e inscripciones", bg="white", fg=self.NAVY,
                  font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(10, 6))
         columns = ("student", "guardian", "phone", "group", "category", "teacher", "fee")
@@ -3364,15 +3395,25 @@ class AdminPanel(tk.Toplevel):
 
     def _school_side_panel(self, parent, title, columns, labels, widths, height):
         panel = tk.Frame(parent, bg="white", highlightbackground=self.BORDER, highlightthickness=1)
-        panel.pack(fill="both", expand=True, pady=(0, 7))
+        panel.pack(fill="x", pady=(0, 7))
         tk.Label(panel, text=title, bg="white", fg=self.NAVY,
                  font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(7, 3))
-        tree = ttk.Treeview(panel, columns=columns, show="headings", height=height,
+        body = tk.Frame(panel, bg="white")
+        body.pack(fill="both", expand=True, padx=7, pady=(0, 7))
+        tree = ttk.Treeview(body, columns=columns, show="headings", height=height,
                             selectmode="browse", style="Admin.Treeview")
         for key, label, width in zip(columns, labels, widths):
             tree.heading(key, text=label)
             tree.column(key, width=width, anchor="w")
-        tree.pack(fill="both", expand=True, padx=7, pady=(0, 7))
+        scroll = ttk.Scrollbar(
+            body,
+            orient="vertical",
+            command=tree.yview,
+            style="Admin.Vertical.TScrollbar",
+        )
+        tree.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        tree.pack(side="left", fill="both", expand=True)
         return tree
 
     def _build_fixed_turns(self) -> None:
