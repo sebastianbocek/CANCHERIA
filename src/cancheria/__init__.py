@@ -1,3 +1,3 @@
 """CANCHERIA — open-source conversational reservation engine."""
 
-__version__ = "0.2.64"
+__version__ = "0.2.65"

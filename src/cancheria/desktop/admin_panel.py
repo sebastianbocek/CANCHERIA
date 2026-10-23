@@ -3392,6 +3392,28 @@ class AdminPanel(tk.Toplevel):
             right, "Preinscripciones por aprobar", ("child", "phone", "group"),
             ("Alumno", "Teléfono", "Grupo"), (125, 105, 105), 4
         )
+        self._bind_school_side_mousewheel(right_shell)
+
+    def _scroll_school_side(self, event):
+        if getattr(event, "num", None) == 4:
+            units = -3
+        elif getattr(event, "num", None) == 5:
+            units = 3
+        else:
+            delta = getattr(event, "delta", 0)
+            if not delta:
+                return None
+            units = -3 if delta > 0 else 3
+        self.school_side_canvas.yview_scroll(units, "units")
+        return "break"
+
+    def _bind_school_side_mousewheel(self, widget) -> None:
+        """Scroll the complete school sidebar from any widget under the pointer."""
+        widget.bind("<MouseWheel>", self._scroll_school_side, add="+")
+        widget.bind("<Button-4>", self._scroll_school_side, add="+")
+        widget.bind("<Button-5>", self._scroll_school_side, add="+")
+        for child in widget.winfo_children():
+            self._bind_school_side_mousewheel(child)
 
     def _school_side_panel(self, parent, title, columns, labels, widths, height):
         panel = tk.Frame(parent, bg="white", highlightbackground=self.BORDER, highlightthickness=1)

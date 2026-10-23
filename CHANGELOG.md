@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.65 - 2026-10-23
+
+- Permite desplazar el lateral de **Escuelita** con la rueda del mouse desde cualquier punto del contenido.
+- Agrega compatibilidad de rueda para Windows y Linux sobre títulos, tablas y espacios vacíos del panel.
+
 ## 0.2.64 - 2026-10-23
 
 - Corrige el panel lateral de **Escuelita** para que sus secciones no se compriman ni queden cortadas.

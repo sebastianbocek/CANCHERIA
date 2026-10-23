@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -171,6 +172,9 @@ def test_school_ui_and_canonical_whatsapp_contract_are_present():
     assert "self.school_side_canvas" in panel
     assert "self.school_side_scroll" in panel
     assert "tree.configure(yscrollcommand=scroll.set)" in panel
+    assert 'widget.bind("<MouseWheel>", self._scroll_school_side, add="+")' in panel
+    assert 'widget.bind("<Button-4>", self._scroll_school_side, add="+")' in panel
+    assert 'widget.bind("<Button-5>", self._scroll_school_side, add="+")' in panel
     for operation in (
         "query_school", "pre_enroll_school", "query_school_balance", "report_school_absence"
     ):
@@ -184,6 +188,22 @@ def test_school_ui_and_canonical_whatsapp_contract_are_present():
     assert "_canonical_v184_silent_failure" in agent
     build_script = (root / "build_windows.bat").read_text(encoding="utf-8")
     assert "--hidden-import cancheria.domain.school.service" in build_script
+
+
+def test_school_sidebar_mousewheel_scrolls_from_content_area():
+    from cancheria.desktop.admin_panel import AdminPanel
+
+    calls = []
+    panel = object.__new__(AdminPanel)
+    panel.school_side_canvas = SimpleNamespace(
+        yview_scroll=lambda units, mode: calls.append((units, mode))
+    )
+
+    assert panel._scroll_school_side(SimpleNamespace(delta=-120, num=None)) == "break"
+    assert panel._scroll_school_side(SimpleNamespace(delta=120, num=None)) == "break"
+    assert panel._scroll_school_side(SimpleNamespace(delta=0, num=4)) == "break"
+    assert panel._scroll_school_side(SimpleNamespace(delta=0, num=5)) == "break"
+    assert calls == [(3, "units"), (-3, "units"), (-3, "units"), (3, "units")]
 
 
 @pytest.mark.asyncio
