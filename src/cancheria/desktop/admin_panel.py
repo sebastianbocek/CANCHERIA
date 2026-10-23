@@ -411,6 +411,7 @@ class AdminTabView(tk.Frame):
         "Operación": "⚙",
         "Atención humana": "●",
         "Torneos": "♛",
+        "Escuelita": "⚽",
         "Turnos Fijos": "▦",
         "Blacklist": "⊘",
         "Comandos y configuración": "☷",
@@ -804,6 +805,7 @@ class AdminPanel(tk.Toplevel):
         self.operation_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.cases_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.tournaments_tab = tk.Frame(self.notebook, bg=self.SURFACE)
+        self.school_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.fixed_turns_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.blacklist_tab = tk.Frame(self.notebook, bg=self.SURFACE)
         self.commands_tab = tk.Frame(self.notebook, bg=self.SURFACE)
@@ -814,6 +816,7 @@ class AdminPanel(tk.Toplevel):
         self.notebook.add(self.operation_tab, text="Operación")
         self.notebook.add(self.cases_tab, text="Atención humana")
         self.notebook.add(self.tournaments_tab, text="Torneos")
+        self.notebook.add(self.school_tab, text="Escuelita")
         self.notebook.add(self.fixed_turns_tab, text="Turnos Fijos")
         self.notebook.add(self.blacklist_tab, text="Blacklist")
         self.notebook.add(self.commands_tab, text="Comandos y configuración")
@@ -825,6 +828,7 @@ class AdminPanel(tk.Toplevel):
             self.operation_tab: "Operación",
             self.cases_tab: "Atención humana",
             self.tournaments_tab: "Torneos",
+            self.school_tab: "Escuelita",
             self.fixed_turns_tab: "Turnos Fijos",
             self.blacklist_tab: "Blacklist",
             self.commands_tab: "Comandos y configuración",
@@ -837,6 +841,7 @@ class AdminPanel(tk.Toplevel):
             self.operation_tab: "operation",
             self.cases_tab: "cases",
             self.tournaments_tab: "tournaments",
+            self.school_tab: "school",
             self.fixed_turns_tab: "fixed_turns",
             self.blacklist_tab: "blacklist",
             self.commands_tab: "commands",
@@ -849,6 +854,7 @@ class AdminPanel(tk.Toplevel):
         self._build_operation()
         self._build_cases()
         self._build_tournaments()
+        self._build_school()
         self._build_fixed_turns()
         self._build_blacklist()
         self._build_commands()
@@ -3016,6 +3022,8 @@ class AdminPanel(tk.Toplevel):
             self._refresh_bar()
         elif self.notebook.select() == str(self.tournaments_tab):
             self._refresh_tournaments()
+        elif self.notebook.select() == str(self.school_tab):
+            self._refresh_school()
         elif self.notebook.select() == str(self.fixed_turns_tab):
             self._refresh_fixed_turns()
         elif self.notebook.select() == str(self.blacklist_tab):
@@ -3257,6 +3265,116 @@ class AdminPanel(tk.Toplevel):
         except tk.TclError:
             pass
 
+    def _build_school(self) -> None:
+        self._school_snapshot: dict = {}
+        self._school_student_rows: dict[str, dict] = {}
+        self._school_fee_rows: dict[str, dict] = {}
+        stats = tk.Frame(self.school_tab, bg=self.SURFACE)
+        stats.pack(fill="x", padx=14, pady=(14, 8))
+        self.school_stat_vars = {
+            key: tk.StringVar(value="0")
+            for key in ("active_students", "active_groups", "classes_today", "pending_fees")
+        }
+        for column, (key, label, color) in enumerate((
+            ("active_students", "Alumnos activos", self.BLUE),
+            ("active_groups", "Grupos activos", "#7C3AED"),
+            ("classes_today", "Clases de hoy", self.GREEN),
+            ("pending_fees", "Cuotas pendientes", self.ORANGE),
+        )):
+            card = tk.Frame(stats, bg="white", highlightbackground=self.BORDER, highlightthickness=1)
+            card.grid(row=0, column=column, sticky="nsew", padx=4)
+            stats.grid_columnconfigure(column, weight=1)
+            tk.Label(card, textvariable=self.school_stat_vars[key], bg="white", fg=color,
+                     font=("Segoe UI", 20, "bold")).pack(anchor="w", padx=14, pady=(8, 0))
+            tk.Label(card, text=label, bg="white", fg=self.MUTED,
+                     font=("Segoe UI", 9)).pack(anchor="w", padx=14, pady=(0, 8))
+
+        actions = tk.Frame(self.school_tab, bg=self.SURFACE)
+        actions.pack(fill="x", padx=14, pady=(0, 8))
+        self._action_button(actions, "+  Nuevo alumno", self._new_school_student_dialog, self.BLUE).pack(side="left", padx=3)
+        self._action_button(actions, "+  Nuevo grupo", self._new_school_group_dialog, "#7C3AED").pack(side="left", padx=3)
+        self._action_button(actions, "Registrar pago", self._school_payment_dialog, self.GREEN).pack(side="left", padx=3)
+        self._action_button(actions, "Tomar asistencia", self._school_attendance_dialog, self.ORANGE).pack(side="left", padx=3)
+        tk.Button(actions, text="Inscribir alumno", command=self._school_enroll_dialog,
+                  bg="white", fg=self.NAVY, activebackground="#EFF6FF", relief="solid", bd=1,
+                  font=("Segoe UI", 9, "bold"), padx=10, pady=8, cursor="hand2").pack(side="left", padx=3)
+        tk.Button(actions, text="Aprobar preinscripción", command=self._school_approve_pre_enrollment,
+                  bg="white", fg=self.NAVY, activebackground="#EFF6FF", relief="solid", bd=1,
+                  font=("Segoe UI", 9, "bold"), padx=10, pady=8, cursor="hand2").pack(side="left", padx=3)
+
+        filters = tk.Frame(self.school_tab, bg="white", highlightbackground=self.BORDER, highlightthickness=1)
+        filters.pack(fill="x", padx=14, pady=(0, 8))
+        self.school_category_filter = tk.StringVar(value="Todas")
+        self.school_teacher_filter = tk.StringVar(value="Todos")
+        self.school_status_filter = tk.StringVar(value="Activos")
+        self.school_fee_filter = tk.StringVar(value="Todas")
+        for index, (label, variable, values) in enumerate((
+            ("Categoría", self.school_category_filter, ("Todas",)),
+            ("Profesor", self.school_teacher_filter, ("Todos",)),
+            ("Estado", self.school_status_filter, ("Activos", "Todos")),
+            ("Cuota", self.school_fee_filter, ("Todas", "Al día", "Pendiente")),
+        )):
+            tk.Label(filters, text=label, bg="white", fg=self.NAVY,
+                     font=("Segoe UI", 9, "bold")).grid(row=0, column=index * 2, padx=(12, 4), pady=9)
+            combo = ttk.Combobox(filters, textvariable=variable, values=values, width=17, state="readonly")
+            combo.grid(row=0, column=index * 2 + 1, padx=(0, 8), pady=9)
+            combo.bind("<<ComboboxSelected>>", lambda _event: self._render_school_students())
+            if index == 0:
+                self.school_category_combo = combo
+            elif index == 1:
+                self.school_teacher_combo = combo
+
+        panes = tk.PanedWindow(self.school_tab, orient="horizontal", bg=self.BORDER, bd=0, sashwidth=7)
+        panes.pack(fill="both", expand=True, padx=14, pady=(0, 14))
+        left = tk.Frame(panes, bg="white", highlightbackground=self.BORDER, highlightthickness=1)
+        right = tk.Frame(panes, bg=self.SURFACE)
+        panes.add(left, minsize=650, stretch="always")
+        panes.add(right, minsize=340, stretch="always")
+        tk.Label(left, text="Alumnos e inscripciones", bg="white", fg=self.NAVY,
+                 font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(10, 6))
+        columns = ("student", "guardian", "phone", "group", "category", "teacher", "fee")
+        self.school_student_tree = ttk.Treeview(
+            left, columns=columns, show="headings", selectmode="browse", style="Admin.Treeview"
+        )
+        for key, label, width in zip(columns,
+            ("Alumno", "Responsable", "Teléfono", "Grupo", "Categoría", "Profesor", "Cuota"),
+            (150, 145, 120, 135, 95, 120, 90)):
+            self.school_student_tree.heading(key, text=label)
+            self.school_student_tree.column(key, width=width, anchor="w" if key != "fee" else "center")
+        scroll = ttk.Scrollbar(left, orient="vertical", command=self.school_student_tree.yview,
+                               style="Admin.Vertical.TScrollbar")
+        self.school_student_tree.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y", pady=(0, 8))
+        self.school_student_tree.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=(0, 8))
+        self.school_group_tree = self._school_side_panel(
+            right, "Grupos y cupos", ("group", "schedule", "available"),
+            ("Grupo", "Horario", "Cupos"), (120, 145, 55), 3
+        )
+        self.school_today_tree = self._school_side_panel(
+            right, "Clases de hoy", ("time", "group", "court"), ("Hora", "Grupo", "Cancha"), (58, 150, 95), 3
+        )
+        self.school_fee_tree = self._school_side_panel(
+            right, "Cuotas vencidas / pendientes", ("student", "period", "balance"),
+            ("Alumno", "Período", "Saldo"), (145, 72, 90), 4
+        )
+        self.school_pre_tree = self._school_side_panel(
+            right, "Preinscripciones por aprobar", ("child", "phone", "group"),
+            ("Alumno", "Teléfono", "Grupo"), (125, 105, 105), 4
+        )
+
+    def _school_side_panel(self, parent, title, columns, labels, widths, height):
+        panel = tk.Frame(parent, bg="white", highlightbackground=self.BORDER, highlightthickness=1)
+        panel.pack(fill="both", expand=True, pady=(0, 7))
+        tk.Label(panel, text=title, bg="white", fg=self.NAVY,
+                 font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(7, 3))
+        tree = ttk.Treeview(panel, columns=columns, show="headings", height=height,
+                            selectmode="browse", style="Admin.Treeview")
+        for key, label, width in zip(columns, labels, widths):
+            tree.heading(key, text=label)
+            tree.column(key, width=width, anchor="w")
+        tree.pack(fill="both", expand=True, padx=7, pady=(0, 7))
+        return tree
+
     def _build_fixed_turns(self) -> None:
         header = tk.Frame(self.fixed_turns_tab, bg="white")
         header.pack(fill="x", padx=16, pady=(16, 8))
@@ -3456,6 +3574,7 @@ class AdminPanel(tk.Toplevel):
             self._refresh_bookings()
             self._refresh_cases()
             self._refresh_tournaments()
+            self._refresh_school()
             self._refresh_fixed_turns()
             self._refresh_blacklist()
             self._refresh_hours()
@@ -3487,7 +3606,7 @@ class AdminPanel(tk.Toplevel):
         normalized = {
             key: max(0, int(counts.get(key, 0) or 0))
             for key in (
-                "bookings", "hours", "operation", "cases", "tournaments", "fixed_turns",
+                "bookings", "hours", "operation", "cases", "tournaments", "school", "fixed_turns",
                 "cash", "bar", "blacklist", "commands"
             )
         }
@@ -4363,6 +4482,279 @@ class AdminPanel(tk.Toplevel):
             amount = 0
         prefix = "-$" if amount < 0 else "$"
         return prefix + f"{abs(amount):,}".replace(",", ".")
+
+    def _refresh_school(self) -> None:
+        if not hasattr(self, "school_student_tree"):
+            return
+        method = getattr(self.service, "school_snapshot", None)
+        if not callable(method):
+            return
+        self._school_snapshot = method()
+        for key, variable in self.school_stat_vars.items():
+            variable.set(str(self._school_snapshot.get(key, 0)))
+        groups = self._school_snapshot.get("groups", [])
+        categories = sorted({str(row.get("category") or "Sin categoría") for row in groups})
+        teachers = sorted({str(row.get("teacher_name") or "Sin profesor") for row in groups})
+        self.school_category_combo.configure(values=("Todas", *categories))
+        self.school_teacher_combo.configure(values=("Todos", *teachers))
+        self._render_school_students()
+        for tree in (self.school_group_tree, self.school_today_tree, self.school_fee_tree, self.school_pre_tree):
+            tree.delete(*tree.get_children())
+        for row in groups:
+            self.school_group_tree.insert("", "end", iid=str(row.get("group_id")), values=(
+                row.get("name", ""), row.get("schedule_text", ""),
+                f"{row.get('available', 0)}/{row.get('capacity', 0)}",
+            ))
+        for row in self._school_snapshot.get("today_classes", []):
+            self.school_today_tree.insert("", "end", iid=str(row.get("schedule_id")), values=(
+                row.get("start_time", ""), row.get("group_name", ""), row.get("court", "")
+            ))
+        self._school_fee_rows = {}
+        for row in self._school_snapshot.get("fees", []):
+            if int(row.get("balance") or 0) <= 0:
+                continue
+            fee_id = str(row.get("fee_id") or "")
+            self._school_fee_rows[fee_id] = row
+            self.school_fee_tree.insert("", "end", iid=fee_id, values=(
+                row.get("student_name", ""), row.get("period", ""), self._money(row.get("balance"))
+            ))
+        for row in self._school_snapshot.get("pre_enrollments", []):
+            pre_id = str(row.get("pre_enrollment_id") or "")
+            self.school_pre_tree.insert("", "end", iid=pre_id, values=(
+                row.get("child_name", ""), row.get("guardian_phone", ""),
+                row.get("group_name") or "A definir",
+            ))
+
+    def _render_school_students(self) -> None:
+        if not hasattr(self, "school_student_tree"):
+            return
+        self.school_student_tree.delete(*self.school_student_tree.get_children())
+        groups = {str(row.get("group_id")): row for row in self._school_snapshot.get("groups", [])}
+        fee_by_enrollment = {
+            str(row.get("enrollment_id")): row for row in self._school_snapshot.get("fees", [])
+        }
+        self._school_student_rows = {}
+        for index, row in enumerate(self._school_snapshot.get("students", [])):
+            group = groups.get(str(row.get("group_id") or ""), {})
+            fee = fee_by_enrollment.get(str(row.get("enrollment_id") or ""), {})
+            balance = int(fee.get("balance") or 0)
+            category = str(group.get("category") or "Sin categoría")
+            teacher = str(group.get("teacher_name") or "Sin profesor")
+            if self.school_category_filter.get() != "Todas" and category != self.school_category_filter.get():
+                continue
+            if self.school_teacher_filter.get() != "Todos" and teacher != self.school_teacher_filter.get():
+                continue
+            if self.school_status_filter.get() == "Activos" and str(row.get("status")) != "active":
+                continue
+            if self.school_fee_filter.get() == "Al día" and balance:
+                continue
+            if self.school_fee_filter.get() == "Pendiente" and not balance:
+                continue
+            item_id = f"{row.get('student_id')}:{row.get('enrollment_id') or index}"
+            self._school_student_rows[item_id] = row
+            self.school_student_tree.insert("", "end", iid=item_id, values=(
+                row.get("name", ""), row.get("guardian_name", ""), row.get("guardian_phone", ""),
+                row.get("group_name") or "Sin inscripción", category, teacher,
+                self._money(balance) if balance else "Al día",
+            ))
+
+    def _selected_school_student(self) -> dict:
+        selection = self.school_student_tree.selection()
+        if not selection:
+            raise ValueError("Seleccioná un alumno de la tabla.")
+        return dict(self._school_student_rows.get(selection[0]) or {})
+
+    def _school_modal(self, title: str, fields: list[tuple], submit, *, size="470x520") -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.configure(bg="white")
+        dialog.geometry(size)
+        dialog.transient(self)
+        values: dict[str, tk.Variable] = {}
+        form = tk.Frame(dialog, bg="white")
+        form.pack(fill="both", expand=True, padx=20, pady=16)
+        tk.Label(form, text=title, bg="white", fg=self.NAVY,
+                 font=("Segoe UI", 15, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        for row_index, spec in enumerate(fields, start=1):
+            key, label, kind, initial, options = spec
+            tk.Label(form, text=label, bg="white", fg=self.NAVY).grid(
+                row=row_index, column=0, sticky="w", padx=(0, 10), pady=5
+            )
+            variable = tk.StringVar(value=str(initial or ""))
+            values[key] = variable
+            if kind == "combo":
+                widget = ttk.Combobox(form, textvariable=variable, values=options, state="readonly", width=29)
+            else:
+                widget = tk.Entry(form, textvariable=variable, width=32)
+            widget.grid(row=row_index, column=1, sticky="ew", pady=5)
+        form.grid_columnconfigure(1, weight=1)
+
+        def save():
+            try:
+                submit({key: variable.get().strip() for key, variable in values.items()})
+                dialog.destroy()
+                self._refresh_school()
+                self._refresh_hours()
+                self._refresh_cash()
+            except Exception as exc:
+                messagebox.showerror(title, str(exc), parent=dialog)
+        self._action_button(form, "Guardar", save, self.BLUE).grid(
+            row=len(fields) + 1, column=0, columnspan=2, sticky="e", pady=(14, 0)
+        )
+
+    def _new_school_student_dialog(self) -> None:
+        groups = self.service.school_groups()
+        labels = ["Sin inscripción", *[str(row["name"]) for row in groups]]
+        by_name = {str(row["name"]): str(row["group_id"]) for row in groups}
+        fields = [
+            ("name", "Alumno", "entry", "", ()),
+            ("birth_date", "Nacimiento (AAAA-MM-DD)", "entry", "", ()),
+            ("guardian_name", "Responsable", "entry", "", ()),
+            ("guardian_phone", "Teléfono responsable", "entry", "", ()),
+            ("emergency_phone", "Teléfono de emergencia", "entry", "", ()),
+            ("medical_notes", "Observaciones médicas", "entry", "", ()),
+            ("group", "Grupo inicial", "combo", "Sin inscripción", labels),
+        ]
+        def submit(data):
+            group_name = data.pop("group")
+            student = self.service.create_school_student(**data)
+            if group_name != "Sin inscripción":
+                self.service.enroll_school_student(student["student_id"], by_name[group_name])
+        self._school_modal("Nuevo alumno", fields, submit)
+
+    def _new_school_group_dialog(self) -> None:
+        teachers = self.service.school_teachers()
+        teacher_labels = ["Sin profesor", *[str(row["name"]) for row in teachers]]
+        teacher_by_name = {str(row["name"]): str(row["teacher_id"]) for row in teachers}
+        courts = self.service.courts()
+        fields = [
+            ("name", "Nombre del grupo", "entry", "", ()),
+            ("sport", "Deporte", "entry", "Fútbol", ()),
+            ("category", "Categoría", "entry", "", ()),
+            ("age_min", "Edad mínima", "entry", "", ()),
+            ("age_max", "Edad máxima", "entry", "", ()),
+            ("court", "Cancha", "combo", courts[0] if courts else "", courts),
+            ("teacher", "Profesor existente", "combo", "Sin profesor", teacher_labels),
+            ("new_teacher", "Nuevo profesor (opcional)", "entry", "", ()),
+            ("capacity", "Cupo", "entry", "12", ()),
+            ("monthly_fee", "Cuota mensual", "entry", "", ()),
+            ("weekday", "Día", "combo", "Lunes", ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")),
+            ("start_time", "Hora (HH:MM)", "entry", "18:00", ()),
+            ("duration", "Duración (minutos)", "entry", "60", ()),
+        ]
+        day_index = {name: index for index, name in enumerate(("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"))}
+        def submit(data):
+            teacher_name, new_teacher = data.pop("teacher"), data.pop("new_teacher")
+            teacher_id = teacher_by_name.get(teacher_name, "")
+            if new_teacher:
+                teacher_id = self.service.create_school_teacher(name=new_teacher)["teacher_id"]
+            schedule = [{"weekday": day_index[data.pop("weekday")],
+                         "start_time": data.pop("start_time"),
+                         "duration_minutes": int(data.pop("duration"))}]
+            data["age_min"] = int(data["age_min"]) if data["age_min"] else None
+            data["age_max"] = int(data["age_max"]) if data["age_max"] else None
+            data["capacity"] = int(data["capacity"])
+            self.service.create_school_group(**data, schedules=schedule, teacher_id=teacher_id)
+        self._school_modal("Nuevo grupo", fields, submit, size="510x700")
+
+    def _school_enroll_dialog(self) -> None:
+        try:
+            student = self._selected_school_student()
+            groups = [row for row in self.service.school_groups() if int(row.get("available") or 0) > 0]
+            if not groups:
+                raise ValueError("No hay grupos activos con cupo disponible.")
+            labels = [str(row["name"]) for row in groups]
+            by_name = {str(row["name"]): str(row["group_id"]) for row in groups}
+            self._school_modal("Inscribir alumno", [
+                ("student", "Alumno", "entry", student.get("name"), ()),
+                ("group", "Grupo", "combo", labels[0], labels),
+                ("start_date", "Fecha de inicio", "entry", dt_today(), ()),
+            ], lambda data: self.service.enroll_school_student(
+                student["student_id"], by_name[data["group"]], start_date=data["start_date"]
+            ), size="440x280")
+        except Exception as exc:
+            messagebox.showerror("Inscribir alumno", str(exc), parent=self)
+
+    def _school_payment_dialog(self) -> None:
+        fees = list(self._school_fee_rows.values())
+        if not fees:
+            messagebox.showinfo("Cuotas", "No hay cuotas con saldo pendiente.", parent=self)
+            return
+        selected = self.school_fee_tree.selection()
+        initial = self._school_fee_rows.get(selected[0]) if selected else fees[0]
+        labels = [f"{row['student_name']} · {row['period']} · {self._money(row['balance'])}" for row in fees]
+        by_label = {label: row for label, row in zip(labels, fees)}
+        initial_label = f"{initial['student_name']} · {initial['period']} · {self._money(initial['balance'])}"
+        fields = [
+            ("fee", "Cuota", "combo", initial_label, labels),
+            ("amount", "Importe", "entry", initial["balance"], ()),
+            ("method", "Método", "combo", "Efectivo", ("Efectivo", "Transferencia", "Tarjeta", "Mercado Pago", "Otros")),
+        ]
+        self._school_modal("Registrar pago de cuota", fields, lambda data: self.service.record_school_payment(
+            by_label[data["fee"]]["fee_id"], amount=data["amount"], method=data["method"]
+        ), size="590x300")
+
+    def _school_attendance_dialog(self) -> None:
+        try:
+            student = self._selected_school_student()
+            enrollment_id = str(student.get("enrollment_id") or "")
+            if not enrollment_id:
+                raise ValueError("El alumno seleccionado todavía no tiene una inscripción activa.")
+            fields = [
+                ("student", "Alumno", "entry", student.get("name"), ()),
+                ("date", "Fecha", "entry", dt_today(), ()),
+                ("status", "Asistencia", "combo", "Presente", ("Presente", "Ausente", "Justificada", "Recuperada", "Clase cancelada")),
+                ("notes", "Observaciones", "entry", "", ()),
+            ]
+            states = {"Presente": "present", "Ausente": "absent", "Justificada": "excused",
+                      "Recuperada": "recovered", "Clase cancelada": "cancelled"}
+            self._school_modal("Tomar asistencia", fields, lambda data: self.service.record_school_attendance(
+                enrollment_id, data["date"], states[data["status"]], notes=data["notes"]
+            ), size="470x340")
+        except Exception as exc:
+            messagebox.showerror("Tomar asistencia", str(exc), parent=self)
+
+    def _school_approve_pre_enrollment(self) -> None:
+        try:
+            selection = self.school_pre_tree.selection()
+            if not selection:
+                raise ValueError("Seleccioná una preinscripción pendiente.")
+            pre_id = selection[0]
+            pre = next(
+                (row for row in self._school_snapshot.get("pre_enrollments", [])
+                 if str(row.get("pre_enrollment_id")) == pre_id),
+                None,
+            )
+            if not pre:
+                raise ValueError("La preinscripción ya no está pendiente.")
+            groups = [row for row in self.service.school_groups() if int(row.get("available") or 0) > 0]
+            if not groups:
+                raise ValueError("No hay grupos con cupo disponible.")
+            labels = [str(row["name"]) for row in groups]
+            by_name = {str(row["name"]): str(row["group_id"]) for row in groups}
+            initial_group = str(pre.get("group_name") or "")
+            if initial_group not in labels:
+                initial_group = labels[0]
+
+            def submit(data):
+                student = self.service.create_school_student(
+                    name=data["student"],
+                    guardian_name=data["guardian_name"],
+                    guardian_phone=pre.get("guardian_phone"),
+                )
+                self.service.enroll_school_student(
+                    student["student_id"], by_name[data["group"]], start_date=data["start_date"]
+                )
+                self.service.resolve_school_pre_enrollment(pre_id, "approved")
+
+            self._school_modal("Aprobar preinscripción", [
+                ("student", "Alumno", "entry", pre.get("child_name"), ()),
+                ("guardian_name", "Responsable", "entry", pre.get("guardian_name") or "Responsable", ()),
+                ("group", "Grupo", "combo", initial_group, labels),
+                ("start_date", "Fecha de inicio", "entry", dt_today(), ()),
+            ], submit, size="500x350")
+        except Exception as exc:
+            messagebox.showerror("Preinscripción", str(exc), parent=self)
 
     def _refresh_tournaments(self) -> None:
         if not hasattr(self, "tournament_tree"):

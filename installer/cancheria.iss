@@ -1,5 +1,5 @@
 #define MyAppName "CANCHERIA"
-#define MyAppVersion "0.2.62"
+#define MyAppVersion "0.2.63"
 #define MyAppPublisher "CANCHERIA"
 #define PayloadDir "..\build\installer\payload"
 #ifndef MyAppId

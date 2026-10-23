@@ -139476,12 +139476,49 @@ CANONICAL_V184_OPERATIONS = {
     "register_event_payment",
     "choose_event_cash",
     "cancel_event_registration",
+    "query_school",
+    "pre_enroll_school",
+    "query_school_balance",
+    "report_school_absence",
     "business_info",
     "query_price",
     "ask_missing",
     "handoff_human",
     "delegate_legacy",
 }
+
+
+_SCHOOL_AGENT_SERVICE = None
+
+
+def _school_agent_service():
+    """Shared transactional Escuelita service used by canonical AI tools."""
+    global _SCHOOL_AGENT_SERVICE
+    if _SCHOOL_AGENT_SERVICE is None:
+        from cancheria.domain.finance.ledger import FinancialLedger
+        from cancheria.domain.school import SchoolService
+
+        def configured_courts():
+            result = []
+            for raw in COURTS or []:
+                name = str(raw.get("name") if isinstance(raw, dict) else raw or "").strip()
+                if name:
+                    result.append(name)
+            return result
+
+        _SCHOOL_AGENT_SERVICE = SchoolService(
+            runtime_file("escuelita.db"),
+            FinancialLedger(runtime_file("caja.db")),
+            courts_provider=configured_courts,
+        )
+    return _SCHOOL_AGENT_SERVICE
+
+
+def _canonical_school_catalog() -> List[Dict[str, Any]]:
+    try:
+        return list(_school_agent_service().public_catalog())
+    except (OSError, sqlite3.Error, ValueError):
+        return []
 
 
 def _canonical_v184_safe_reservation(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -141147,7 +141184,7 @@ Respondé SOLO JSON:
         except Exception:
             recovered["confidence"] = 0.0
         for key in (
-            "booking", "recurrence", "reservation", "event", "info",
+            "booking", "recurrence", "reservation", "event", "school", "info",
             "context_resolution", "goal_reconstruction",
         ):
             if not isinstance(recovered.get(key), dict):
@@ -141453,7 +141490,7 @@ def _canonical_v232_merge_review_coverage(
                 key: copy.deepcopy(decision.get(key))
                 for key in (
                     "operation", "confidence", "intent_mode", "booking",
-                    "recurrence", "reservation", "event", "info",
+                    "recurrence", "reservation", "event", "school", "info",
                     "context_resolution", "missing_fields", "handoff_reason",
                     "reason",
                 )
@@ -141565,6 +141602,7 @@ async def _canonical_v184_orchestrate(
             "default_duration_hours": DEFAULT_TURN_DURATION_HOURS,
             "requires_deposit": bool(REQUIRES_DEPOSIT),
             "events": _canonical_v184_event_summaries(),
+            "school_groups": _canonical_school_catalog(),
         },
         # Contrato emitido por el descubridor exhaustivo independiente. Sólo
         # existe mientras se planifica un objetivo y no se persiste. El label
@@ -141690,6 +141728,14 @@ Python solicite solamente lo faltante; nunca borres la obligación descubierta.
     - Una consulta concreta de capacidad como “¿se puede reservar 2 horas?” NO implica por sí sola query_price.
 8B. El CANONICAL_STATE es contexto, no una orden. Un booking histórico/hold viejo jamás convierte una consulta informativa nueva en create_booking si el turno actual no lo referencia.
 8C. CONSULTAS SOBRE ELEMENTOS/SERVICIOS DEL NEGOCIO: si el usuario pregunta si el negocio tiene, presta, incluye o dispone de un elemento/servicio (pelota, equipamiento u otro ítem declarado en BUSINESS_SERVICES), usá operation=business_info, intent_mode=information, info.question_domains=["service_policy"], info.target_resources=["service"], info.target_labels=[nombre/objeto entendido], e info.requested_facts con service.available y/o service.loan_available según lo preguntado. BUSINESS_SERVICES del business_config es fuente de verdad y debe consultarse antes de cualquier handoff. No conviertas una pregunta informativa sobre un elemento en create_booking ni handoff_human.
+8E. ESCUELITA ES UN DOMINIO NATIVO Y DINÁMICO:
+    - Usá query_school para consultar existencia, edades, categorías, grupos, días, horarios, profesores, precios o cupos de Escuelita. Extraé child_age/group_id/category/period sólo cuando el usuario los aportó o el contexto los identifica. Los únicos hechos comerciales autorizados son business_constraints.school_groups y la observación de consultar_escuelita.
+    - Usá pre_enroll_school cuando el responsable expresa voluntad de inscribir o preinscribir. No inventes alumno, edad ni grupo. Estructurá school.child_name, child_age, guardian_name y group_id; Python usa el teléfono real del chat y registra una preinscripción idempotente.
+    - Usá query_school_balance para consultar cuota, deuda o estado de pago del alumno vinculado al teléfono actual. school.period puede ser AAAA-MM o null para el período vigente.
+    - Usá report_school_absence cuando el responsable avisa que el alumno no asistirá. Resolvé referencias como hoy, mañana o este jueves contra now y escribí school.class_date en formato AAAA-MM-DD; agregá group_id si se identifica. Es una escritura real de asistencia, no business_info.
+    - Un mensaje puede combinar Escuelita con cualquier otra intención. Conservá una action independiente por tool necesaria y una sola respuesta final.
+    - NO detectes Escuelita por una lista rígida de frases ni la conviertas en business_info genérico. Elegí la operación por el significado completo y el contexto.
+    - Si falta una tool, no hay grupos/datos comerciales configurados o la observación no puede identificar datos reales, Python realiza handoff silencioso. Nunca redactes una respuesta genérica ni inventes información.
 9. handoff_human VISIBLE se usa EXCLUSIVAMENTE si el usuario pide explícitamente hablar con una persona. En ese caso handoff_reason="user_requested_human".
    - Un pedido fuera del dominio autónomo, una capacidad todavía no implementada, falta de información o un error interno NO autorizan handoff visible: Python debe hacer silent handoff.
    - Para una reserva recurrente de cliente usá create_recurring_booking; Python ejecuta el RecurringPlan seguro y sólo escala en silencio si la política automática lo rechaza.
@@ -141703,7 +141749,8 @@ greeting, query_availability, create_booking, create_recurring_booking, replace_
 cancel_booking, reschedule_booking, add_quincho, remove_quincho,
 register_booking_payment, choose_booking_cash,
 query_event, register_event, register_event_payment, choose_event_cash,
-cancel_event_registration, business_info, query_price, ask_missing,
+cancel_event_registration, query_school, pre_enroll_school, query_school_balance,
+report_school_absence, business_info, query_price, ask_missing,
 handoff_human, delegate_legacy.
 
 Respondé SOLO JSON con esta forma:
@@ -141741,6 +141788,11 @@ Respondé SOLO JSON con esta forma:
   "event": {
     "event_id": null, "event_name": null, "event_date": null,
     "team_name": null, "registration_id": null
+  },
+  "school": {
+    "child_name": null, "child_age": null, "guardian_name": null,
+    "group_id": null, "category": null, "class_date": null,
+    "period": null
   },
   "info": {
     "requested_facts": [], "target_resources": [], "target_labels": [],
@@ -141780,6 +141832,7 @@ Respondé SOLO JSON con esta forma:
       "recurrence": {},
       "reservation": {},
       "event": {},
+      "school": {},
       "info": {
         "requested_facts": [], "target_resources": [], "target_labels": [],
         "question_domains": [], "requested_durations": [],
@@ -141941,7 +141994,7 @@ ya resolvió. Respondé el JSON final completo con el mismo schema.'''
     except Exception:
         decision["confidence"] = 0.0
     for key in (
-        "booking", "recurrence", "reservation", "event", "info",
+        "booking", "recurrence", "reservation", "event", "school", "info",
         "context_resolution", "conversation_style", "goal_reconstruction",
     ):
         if not isinstance(decision.get(key), dict):
@@ -142250,6 +142303,7 @@ ya resolvió. Respondé el JSON final completo con el mismo schema.'''
         "recurrence": copy.deepcopy(decision.get("recurrence") or {}),
         "reservation": copy.deepcopy(decision.get("reservation") or {}),
         "event": copy.deepcopy(decision.get("event") or {}),
+        "school": copy.deepcopy(decision.get("school") or {}),
         "info": copy.deepcopy(decision.get("info") or {}),
         "context_resolution": copy.deepcopy(decision.get("context_resolution") or {}),
         "conversation_style": copy.deepcopy(decision.get("conversation_style") or {}),
@@ -142359,7 +142413,7 @@ ya resolvió. Respondé el JSON final completo con el mismo schema.'''
             sibling["confidence"] = max(0.0, min(1.0, float(sibling.get("confidence") or 0.0)))
         except Exception:
             sibling["confidence"] = 0.0
-        for key in ("booking", "recurrence", "reservation", "event", "info", "context_resolution"):
+        for key in ("booking", "recurrence", "reservation", "event", "school", "info", "context_resolution"):
             if not isinstance(sibling.get(key), dict):
                 sibling[key] = {}
         if not isinstance(sibling.get("missing_fields"), list):
@@ -142480,6 +142534,10 @@ def _canonical_v184_goal(operation: str) -> str:
         "register_event": "inscribir_equipo_evento",
         "register_event_payment": "pagar_inscripcion_evento",
         "choose_event_cash": "elegir_metodo_pago_inscripcion_evento",
+        "query_school": "consultar_escuelita",
+        "pre_enroll_school": "preinscribir_escuelita",
+        "query_school_balance": "consultar_cuotas_escuelita",
+        "report_school_absence": "avisar_ausencia_escuelita",
         "business_info": "consulta_informativa",
         "query_price": "consultar_precio",
         "handoff_human": "derivar_humano",
@@ -142503,6 +142561,10 @@ def _canonical_v184_semantic_operation(operation: str) -> str:
         "register_event_payment": "register_event_payment",
         "choose_event_cash": "choose_event_payment_method",
         "cancel_event_registration": "register_event",
+        "query_school": "query_school",
+        "pre_enroll_school": "pre_enroll_school",
+        "query_school_balance": "query_school_balance",
+        "report_school_absence": "report_school_absence",
         "business_info": "query_policy",
         "query_price": "query_price",
         "handoff_human": "handoff_human",
@@ -142529,6 +142591,8 @@ def _canonical_v184_tool_perception(
         "register_booking_payment": "registrar_senia",
         "choose_booking_cash": "registrar_pago_presencial",
         "handoff_human": "solicitar_handoff_humano",
+        "pre_enroll_school": "preinscribir_escuelita",
+        "report_school_absence": "avisar_ausencia_escuelita",
     }
     if operation in action_map:
         explicit_actions.append(action_map[operation])
@@ -142537,10 +142601,11 @@ def _canonical_v184_tool_perception(
         "operation": semantic_operation,
         "domain": (
             "event_registration" if operation.startswith("register_event") or operation in {"query_event", "choose_event_cash", "cancel_event_registration"}
+            else "school" if operation in {"query_school", "pre_enroll_school", "query_school_balance", "report_school_absence"}
             else "booking"
         ),
         "target": {
-            "resource": "quincho" if "quincho" in operation else "reservation",
+            "resource": "school" if operation in {"query_school", "pre_enroll_school", "query_school_balance", "report_school_absence"} else "quincho" if "quincho" in operation else "reservation",
             "reservation_id": reservation_id,
             "registration_id": (args or {}).get("registration_id"),
             "event_id": (args or {}).get("event_id"),
@@ -148423,6 +148488,255 @@ AGENT_V2_UNIFIED_CONVERSATION_KERNEL = "v227-partial-cash-context-binding"
 AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-21_natural_clock_hold_mutations_v246"
 
 # V195 marker is defined immediately above. V194 marker intentionally retired.
+
+
+# ============================================================================
+# V247 — ESCUELITA COMO DOMINIO CANÓNICO NATIVO
+# La IA decide la operación y sus sub-intenciones. Esta capa sólo registra las
+# tools, valida su contrato estructurado y ejecuta verdad persistida.
+# ============================================================================
+
+AGENT_V2_TOOL_CATALOG.update({
+    "consultar_escuelita": {
+        "effect": "read", "risk": "none",
+        "description": "Consulta grupos, categorías, edades, profesores, horarios, cuotas y cupos reales de Escuelita.",
+        "args": {"child_age": "int|null", "group_id": "str|null", "category": "str|null"},
+    },
+    "preinscribir_escuelita": {
+        "effect": "write", "risk": "medium",
+        "description": "Registra una preinscripción real e idempotente para revisión administrativa.",
+        "args": {"child_name": "str", "child_age": "int|null", "guardian_name": "str|null", "group_id": "str|null", "request_key": "str"},
+    },
+    "consultar_cuotas_escuelita": {
+        "effect": "read", "risk": "none",
+        "description": "Consulta cuotas reales del alumno asociado al teléfono del chat.",
+        "args": {"period": "AAAA-MM|null"},
+    },
+    "avisar_ausencia_escuelita": {
+        "effect": "write", "risk": "medium",
+        "description": "Registra una ausencia justificada en una inscripción real.",
+        "args": {"class_date": "AAAA-MM-DD", "group_id": "str|null", "notes": "str|null"},
+    },
+})
+AGENT_V2_GOAL_TOOL_REQUIREMENTS.update({
+    "consultar_escuelita": {"consultar_escuelita"},
+    "preinscribir_escuelita": {"preinscribir_escuelita"},
+    "consultar_cuotas_escuelita": {"consultar_cuotas_escuelita"},
+    "avisar_ausencia_escuelita": {"avisar_ausencia_escuelita"},
+})
+AGENT_V2_GOALS.update({
+    "consultar_escuelita", "preinscribir_escuelita",
+    "consultar_cuotas_escuelita", "avisar_ausencia_escuelita",
+})
+
+
+_validar_tool_agent_v2_v247_base = validar_tool_agent_v2
+
+
+def validar_tool_agent_v2(tool, args, world, perception, goals, image_path=""):
+    school_tools = {
+        "consultar_escuelita", "preinscribir_escuelita",
+        "consultar_cuotas_escuelita", "avisar_ausencia_escuelita",
+    }
+    if tool not in school_tools:
+        return _validar_tool_agent_v2_v247_base(
+            tool, args, world, perception, goals, image_path=image_path
+        )
+    contract = dict((perception or {}).get("execution_contract") or {})
+    if not contract.get("authoritative") or tool not in set(contract.get("allowed_tools") or []):
+        return {"ok": False, "reason": "school_tool_fuera_de_execution_contract", "fatal": True}
+    clean = dict(args or {})
+    if tool == "preinscribir_escuelita" and not str(clean.get("child_name") or "").strip():
+        return {"ok": False, "reason": "school_child_name_missing", "missing": ["school.child_name"]}
+    if tool == "avisar_ausencia_escuelita" and not str(clean.get("class_date") or "").strip():
+        return {"ok": False, "reason": "school_class_date_missing", "missing": ["school.class_date"]}
+    return {"ok": True, "args": clean, "reason": "school_policy_ok"}
+
+
+_ejecutar_tool_agent_v2_v247_base = ejecutar_tool_agent_v2
+
+
+async def ejecutar_tool_agent_v2(
+    tool, args, world, perception, goals, telefono, prospecto,
+    user_messages, page=None, image_path="",
+):
+    if tool not in {
+        "consultar_escuelita", "preinscribir_escuelita",
+        "consultar_cuotas_escuelita", "avisar_ausencia_escuelita",
+    }:
+        return await _ejecutar_tool_agent_v2_v247_base(
+            tool, args, world, perception, goals, telefono, prospecto,
+            user_messages, page=page, image_path=image_path,
+        )
+    service = _school_agent_service()
+    try:
+        if tool == "consultar_escuelita":
+            age = args.get("child_age")
+            age = int(age) if age not in (None, "") else None
+            rows = service.public_catalog(child_age=age)
+            group_id = str(args.get("group_id") or "").strip()
+            category = str(args.get("category") or "").strip().casefold()
+            if group_id:
+                rows = [row for row in rows if str(row.get("group_id")) == group_id]
+            if category:
+                rows = [row for row in rows if str(row.get("category") or "").casefold() == category]
+            return _agent_v2_observation(tool, bool(rows), "success" if rows else "not_configured", {"groups": rows})
+        if tool == "preinscribir_escuelita":
+            if not service.public_catalog():
+                return _agent_v2_observation(tool, False, "not_configured", {"reason": "school_groups_not_configured"})
+            row = service.create_pre_enrollment(
+                child_name=str(args.get("child_name") or "").strip(),
+                child_age=int(args["child_age"]) if args.get("child_age") not in (None, "") else None,
+                guardian_name=str(args.get("guardian_name") or "").strip(),
+                guardian_phone=telefono,
+                group_id=str(args.get("group_id") or "").strip(),
+                source="WhatsApp",
+                notes="Preinscripción creada por el agente canónico",
+                request_key=str(args.get("request_key") or "").strip(),
+            )
+            return _agent_v2_observation(tool, True, "success", {"pre_enrollment": row})
+        if tool == "consultar_cuotas_escuelita":
+            period = str(args.get("period") or "").strip() or None
+            balance = service.contact_balance(telefono, period=period)
+            normalize_phone = lambda value: "".join(
+                char for char in str(value or "") if char.isdigit() or char == "+"
+            )
+            has_enrollment = any(
+                normalize_phone(row.get("guardian_phone")) == normalize_phone(telefono)
+                for row in service.enrollments()
+            )
+            return _agent_v2_observation(
+                tool, has_enrollment, "success" if has_enrollment else "not_found", {"balance": balance}
+            )
+        row = service.report_absence(
+            telefono,
+            class_date=str(args.get("class_date") or "").strip(),
+            group_id=str(args.get("group_id") or "").strip(),
+            notes=str(args.get("notes") or "Aviso recibido por WhatsApp").strip(),
+        )
+        return _agent_v2_observation(tool, True, "success", {"attendance": row})
+    except (ValueError, OSError, sqlite3.Error) as exc:
+        return _agent_v2_observation(tool, False, "rejected", {"reason": str(exc)})
+
+
+async def _canonical_v247_execute_school(
+    operation, message, user_messages, state, decision, prospecto, telefono,
+    *, page=None, image_path="",
+):
+    school = dict(decision.get("school") or {})
+    tool = {
+        "query_school": "consultar_escuelita",
+        "pre_enroll_school": "preinscribir_escuelita",
+        "query_school_balance": "consultar_cuotas_escuelita",
+        "report_school_absence": "avisar_ausencia_escuelita",
+    }[operation]
+    args = {
+        "child_name": school.get("child_name"),
+        "child_age": school.get("child_age"),
+        "guardian_name": school.get("guardian_name") or (prospecto or {}).get("nombre"),
+        "group_id": school.get("group_id"),
+        "category": school.get("category"),
+        "class_date": school.get("class_date"),
+        "period": school.get("period"),
+        "notes": school.get("notes"),
+        "request_key": hashlib.sha256(
+            (str(telefono or "") + "|" + "\n".join(user_messages or [message])).encode("utf-8")
+        ).hexdigest(),
+    }
+    if operation == "pre_enroll_school" and not str(args.get("child_name") or "").strip():
+        state["pending"] = {"field": "school.child_name", "operation": operation}
+        _canonical_v183_save(telefono, state)
+        return _canonical_v184_result(
+            response="¿Cómo se llama el alumno que querés preinscribir?",
+            observations=[], world={"message": message},
+            perception={"source": "canonical_ai_orchestrator_v247", "_v184_canonical_frozen": True},
+            goals={"primary_goal": "preinscribir_escuelita", "goals": []},
+            decision=decision, status="waiting_user",
+        )
+    if operation == "report_school_absence" and not str(args.get("class_date") or "").strip():
+        state["pending"] = {"field": "school.class_date", "operation": operation}
+        _canonical_v183_save(telefono, state)
+        return _canonical_v184_result(
+            response="¿Para qué fecha querés avisar la ausencia?",
+            observations=[], world={"message": message},
+            perception={"source": "canonical_ai_orchestrator_v247", "_v184_canonical_frozen": True},
+            goals={"primary_goal": "avisar_ausencia_escuelita", "goals": []},
+            decision=decision, status="waiting_user",
+        )
+    obs, world, perception, goals = await _canonical_v184_run_tool(
+        operation=operation, tool=tool, args=args, state=state, message=message,
+        user_messages=user_messages, telefono=telefono, prospecto=prospecto,
+        page=page, image_path=image_path, validate=True,
+    )
+    if not obs.get("ok"):
+        return await _canonical_v184_silent_failure(
+            source=f"school_tool_unresolved:{tool}:{obs.get('status')}",
+            message=message, telefono=telefono, prospecto=prospecto or {}, page=page,
+            observations=[obs], original_response="",
+        )
+    data = dict(obs.get("data") or {})
+    if operation == "query_school":
+        lines = []
+        for row in data.get("groups") or []:
+            ages = ""
+            if row.get("age_min") is not None or row.get("age_max") is not None:
+                ages = f" · {row.get('age_min', '?')} a {row.get('age_max', '?')} años"
+            lines.append(
+                f"• {row.get('name')} ({row.get('sport')}){ages}\n"
+                f"  {row.get('schedule')} · {row.get('court')} · ${int(row.get('monthly_fee') or 0):,}/mes · {row.get('available')} cupos".replace(",", ".")
+            )
+        response = "⚽ Estas son las opciones de Escuelita disponibles:\n\n" + "\n\n".join(lines)
+    elif operation == "pre_enroll_school":
+        row = data.get("pre_enrollment") or {}
+        response = f"✅ Registré la preinscripción de {row.get('child_name')}. Quedó pendiente de aprobación del complejo."
+    elif operation == "query_school_balance":
+        balance = data.get("balance") or {}
+        rows = balance.get("fees") or []
+        details = [
+            f"• {row.get('student_name')} · {row.get('period')}: saldo ${int(row.get('balance') or 0):,}".replace(",", ".")
+            for row in rows
+        ]
+        response = "💳 Estado de cuotas:\n\n" + "\n".join(details)
+        response += f"\n\nSaldo total: ${int(balance.get('balance') or 0):,}".replace(",", ".")
+    else:
+        row = data.get("attendance") or {}
+        response = f"✅ Registré la ausencia de {row.get('student_name')} para el {row.get('class_date')}."
+    return _canonical_v184_result(
+        response=response, observations=[obs], world=world, perception=perception,
+        goals=goals, decision=decision,
+    )
+
+
+_canonical_v184_execute_decision_v247_base = _canonical_v184_execute_decision
+
+
+async def _canonical_v184_execute_decision(
+    message, user_messages, state, decision, prospecto, telefono,
+    *, page=None, image_path="",
+):
+    operation = str((decision or {}).get("operation") or "")
+    if operation in {"query_school", "pre_enroll_school", "query_school_balance", "report_school_absence"}:
+        return await _canonical_v247_execute_school(
+            operation, message, user_messages, state, decision, prospecto, telefono,
+            page=page, image_path=image_path,
+        )
+    if operation == "delegate_legacy":
+        return await _canonical_v184_silent_failure(
+            source="canonical_tool_not_available",
+            message=message,
+            telefono=telefono,
+            prospecto=prospecto or {},
+            page=page,
+            observations=[],
+            original_response="",
+        )
+    return await _canonical_v184_execute_decision_v247_base(
+        message, user_messages, state, decision, prospecto, telefono,
+        page=page, image_path=image_path,
+    )
+
+
+AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-23_school_canonical_tools_v247"
 
 
 if __name__ == "__main__":

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.63 - 2026-10-23
+
+- Agrega **Escuelita** después de Torneos con alumnos y responsables, profesores, grupos, cupos, horarios recurrentes, inscripciones, asistencia, preinscripciones y cuotas.
+- Bloquea las canchas de cada clase recurrente en la misma disponibilidad real utilizada por Reservas, Horas y WhatsApp, sin fabricar reservas ni cobros.
+- Registra pagos parciales o totales de cuotas en el ledger de **Caja** con claves idempotentes y conserva historial SQLite después de reiniciar.
+- Incorpora las tools canónicas dinámicas `consultar_escuelita`, `preinscribir_escuelita`, `consultar_cuotas_escuelita` y `avisar_ausencia_escuelita`.
+- Mantiene a la IA como autoridad para elegir tools por intención o subintención; la falta de tool o de información comercial produce handoff silencioso, sin respuesta genérica ni datos inventados.
+- Añade pruebas de persistencia, bloqueos, conflictos, cupos, asistencia, pagos parciales, Caja, preinscripciones, contexto por teléfono y contrato visual/canónico.
+- Actualiza el identificador operativo a `2026-10-23_school_canonical_tools_v247`.
+
 ## 0.2.50 - 2026-10-20
 
 - Unifica una o muchas intenciones bajo el mismo ledger dinámico: el FAST PATH descubre objetivos y el CANÓNICO interpreta y ejecuta cada uno con contexto compartido.

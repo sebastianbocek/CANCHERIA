@@ -25,8 +25,11 @@ import sys
 import argparse
 import threading
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Optional, Tuple, List
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from cancheria.domain.school import school_slot_block
 
 
 def _configure_utf8_console_streams() -> None:
@@ -838,6 +841,15 @@ class CalendarioLlamadas:
         fecha_str = _fecha_a_str(fecha)
         hora_str = _hora_a_str(hora)
         cancha = cancha or CANCHA_DEFAULT
+        school_database = Path(self.csv_path).resolve().parent / "escuelita.db"
+        if school_slot_block(
+            school_database,
+            fecha,
+            hora_str,
+            cancha,
+            slot_minutes=DURACION_MINUTOS,
+        ):
+            return True
         for row in self._leer_todos():
             row_fecha, _ = _extraer_fecha_hora_de_row(row)
             if (row_fecha and _fecha_a_str(row_fecha) == fecha_str and

@@ -16,13 +16,14 @@ from cancheria.domain.reservations.calendar import CalendarioLlamadas
 from cancheria.domain.events import registration as event_registration
 from cancheria.domain.finance.ledger import FinancialLedger, cents_to_pesos
 from cancheria.domain.bar import BarService
+from cancheria.domain.school import SchoolService
 from cancheria.infrastructure.persistence.json_store import JSONStore
 from cancheria.legacy_bridge import legacy_callable
 
 
 ACTIVE_STATES = {str(value).strip().lower() for value in cfg.ACTIVE_BOOKING_STATUSES}
 NOTIFICATION_KEYS = (
-    "bookings", "hours", "cash", "bar", "operation", "cases", "tournaments", "fixed_turns",
+    "bookings", "hours", "cash", "bar", "operation", "cases", "tournaments", "school", "fixed_turns",
     "blacklist", "commands",
 )
 
@@ -52,6 +53,7 @@ class DesktopAdminService:
     def __init__(self, root: Path) -> None:
         self.root = Path(root).resolve()
         self.runtime = self.root / "runtime"
+        self.runtime.mkdir(parents=True, exist_ok=True)
         self.calendar = CalendarioLlamadas(str(self.runtime / "calendario_turnos.csv"))
         try:
             _call_with_optional_now(
@@ -72,6 +74,27 @@ class DesktopAdminService:
         self.bar = BarService(
             self.runtime / "bar.db", self.cash_ledger, courts_provider=self.courts
         )
+        self.school = SchoolService(
+            self.runtime / "escuelita.db",
+            self.cash_ledger,
+            courts_provider=self.courts,
+            conflict_provider=self._calendar_slot_has_booking,
+        )
+
+    def _calendar_slot_has_booking(self, day: str, time: str, court: str) -> bool:
+        """Check persisted reservations without consulting Escuelita again."""
+        selected = self._parse_panel_date(day)
+        for row in self.calendar.asegurar_ids_reservas():
+            if str(row.get("estado") or "").strip().lower() not in ACTIVE_STATES:
+                continue
+            if not self._row_matches_date(row, selected):
+                continue
+            row_court = str(
+                row.get("cancha") or getattr(cfg, "DEFAULT_COURT_NAME", "Cancha 1")
+            ).strip()
+            if row_court == str(court).strip() and str(row.get("hora") or "").strip() == time:
+                return True
+        return False
 
     def _migrate_v230_cash_json(self) -> None:
         """Preserve manual movements created by the first Caja implementation."""
@@ -268,6 +291,11 @@ class DesktopAdminService:
         bookings = max(0, int(current.get("pending", 0) or 0))
         cases = max(0, int(current.get("cases", 0) or 0))
         tournaments = max(0, int(current.get("tournaments", 0) or 0))
+        try:
+            school_service = getattr(self, "school", None)
+            school = int(school_service.snapshot().get("pending_pre_enrollments") or 0) if school_service else 0
+        except (OSError, ValueError, AttributeError):
+            school = 0
         return {
             "bookings": bookings,
             "hours": 0,
@@ -276,10 +304,11 @@ class DesktopAdminService:
             "operation": 0,
             "cases": cases,
             "tournaments": tournaments,
+            "school": school,
             "fixed_turns": 0,
             "blacklist": 0,
             "commands": 0,
-            "total": bookings + cases + tournaments,
+            "total": bookings + cases + tournaments + school,
         }
 
     def unread_notification_counts(
@@ -369,6 +398,14 @@ class DesktopAdminService:
                         for key in ("created_at", "phone", "team_name")
                     ) or str(index)
                 items["tournaments"].add(f"{event_id}:{registration_id}")
+        try:
+            school_service = getattr(self, "school", None)
+            for row in school_service.pre_enrollments() if school_service else []:
+                identity = str(row.get("pre_enrollment_id") or "").strip()
+                if identity:
+                    items["school"].add(f"pre:{identity}")
+        except (OSError, ValueError, AttributeError):
+            pass
         return items
 
     @staticmethod
@@ -602,6 +639,15 @@ class DesktopAdminService:
                     event_date = None
                 if event_date is not None and event_date >= today and str(row.get("status")) == "confirmed":
                     future_total += self._cash_amount(row.get("required_payment"))
+        school_service = getattr(self, "school", None)
+        if school_service is not None:
+            try:
+                pending_total += sum(
+                    int(row.get("balance") or 0)
+                    for row in school_service.fees(pending_only=True)
+                )
+            except (OSError, ValueError):
+                pass
         return pending_total, future_total
 
     @staticmethod
@@ -1475,6 +1521,58 @@ class DesktopAdminService:
     def _minutes_to_time(value: int) -> str:
         return f"{value // 60:02d}:{value % 60:02d}"
 
+    # ------------------------------------------------------------------
+    # Escuelita
+    # ------------------------------------------------------------------
+    def school_snapshot(self, period: str | None = None) -> dict[str, Any]:
+        return self.school.snapshot(period=period)
+
+    def school_teachers(self, *, include_inactive: bool = False) -> list[dict[str, Any]]:
+        return self.school.teachers(include_inactive=include_inactive)
+
+    def school_groups(self, *, include_inactive: bool = False) -> list[dict[str, Any]]:
+        return self.school.groups(include_inactive=include_inactive)
+
+    def school_students(self, *, include_inactive: bool = False) -> list[dict[str, Any]]:
+        return self.school.students(include_inactive=include_inactive)
+
+    def school_enrollments(self, *, active_only: bool = True) -> list[dict[str, Any]]:
+        return self.school.enrollments(active_only=active_only)
+
+    def school_fees(self, period: str | None = None, *, pending_only: bool = False) -> list[dict[str, Any]]:
+        return self.school.fees(period=period, pending_only=pending_only)
+
+    def create_school_teacher(self, **payload: Any) -> dict[str, Any]:
+        return self.school.create_teacher(**payload)
+
+    def create_school_group(self, **payload: Any) -> dict[str, Any]:
+        return self.school.create_group(**payload)
+
+    def update_school_group(self, group_id: str, **payload: Any) -> dict[str, Any]:
+        return self.school.update_group(group_id, **payload)
+
+    def create_school_student(self, **payload: Any) -> dict[str, Any]:
+        return self.school.create_student(**payload)
+
+    def update_school_student(self, student_id: str, **payload: Any) -> dict[str, Any]:
+        return self.school.update_student(student_id, **payload)
+
+    def enroll_school_student(self, student_id: str, group_id: str, **payload: Any) -> dict[str, Any]:
+        return self.school.enroll_student(student_id, group_id, **payload)
+
+    def record_school_attendance(
+        self, enrollment_id: str, class_date: str, status: str, **payload: Any
+    ) -> dict[str, Any]:
+        return self.school.record_attendance(enrollment_id, class_date, status, **payload)
+
+    def record_school_payment(self, fee_id: str, **payload: Any) -> dict[str, Any]:
+        return self.school.record_payment(fee_id, **payload)
+
+    def resolve_school_pre_enrollment(
+        self, pre_enrollment_id: str, status: str, **payload: Any
+    ) -> dict[str, Any]:
+        return self.school.resolve_pre_enrollment(pre_enrollment_id, status, **payload)
+
     def day_schedule(self, day: str, *, include_all: bool = False) -> dict[str, Any]:
         """Build the admin hour grid from the same CSV/config used by WhatsApp."""
         selected = self._parse_panel_date(day)
@@ -1510,6 +1608,31 @@ class DesktopAdminService:
                 ).strip()
                 time = str(row.get("hora") or "").strip()
                 active_rows.setdefault((court, time), dict(row))
+
+        # Recurring Escuelita classes occupy the same operational grid as real
+        # bookings, without manufacturing reservation/payment rows.
+        school_service = getattr(self, "school", None)
+        school_classes = school_service.classes_for_day(selected) if school_service else []
+        for school_class in school_classes:
+            start = self._time_to_minutes(str(school_class.get("start_time") or ""))
+            end = start + int(school_class.get("duration_minutes") or slot_minutes)
+            cursor = start
+            while cursor < end:
+                time = self._minutes_to_time(cursor)
+                active_rows.setdefault((str(school_class.get("court") or ""), time), {
+                    "reservation_id": f"school:{school_class.get('group_id')}:{selected.isoformat()}",
+                    "fecha": selected.strftime("%A %d/%m"),
+                    "hora": time,
+                    "cancha": str(school_class.get("court") or ""),
+                    "nombre": f"Escuelita · {school_class.get('group_name') or ''}",
+                    "telefono": f"SCHOOL:{school_class.get('group_id') or ''}",
+                    "estado": "escuelita",
+                    "senia_estado": "no aplica",
+                    "tipo_turno": "Escuelita",
+                    "school_class": True,
+                    "teacher_name": str(school_class.get("teacher_name") or ""),
+                })
+                cursor += slot_minutes
 
         attention_day = selected.weekday() in set(cfg.obtener_dias_atencion())
         now = dt.datetime.now()

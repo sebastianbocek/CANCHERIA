@@ -92,6 +92,7 @@ echo [4/8] Compilando cancheria.exe...
   --hidden-import cancheria.config.legacy_config ^
   --hidden-import cancheria.domain.events.registration ^
   --hidden-import cancheria.domain.bar.service ^
+  --hidden-import cancheria.domain.school.service ^
   --hidden-import cancheria.domain.finance.ledger ^
   --hidden-import cancheria.domain.reservations.calendar ^
   --hidden-import cancheria.desktop.update_service ^
