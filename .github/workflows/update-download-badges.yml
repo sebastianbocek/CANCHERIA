@@ -55,25 +55,16 @@ jobs:
             git rm -rf . >/dev/null 2>&1 || true
           fi
 
-          jq -n --arg message "${windows_downloads} descargas" '{
-            schemaVersion: 1,
-            label: "Windows",
-            message: $message,
-            color: "1673FF",
-            namedLogo: "windows11",
-            logoColor: "white"
-          }' > windows-downloads.json
+          curl --fail --silent --show-error --location \
+            "https://img.shields.io/badge/Windows-${windows_downloads}%20descargas-1673FF?style=for-the-badge&logo=windows11&logoColor=white" \
+            --output windows-downloads.svg
 
-          jq -n --arg message "${linux_downloads} descargas" '{
-            schemaVersion: 1,
-            label: "Debian / Linux",
-            message: $message,
-            color: "D70A53",
-            namedLogo: "debian",
-            logoColor: "white"
-          }' > linux-downloads.json
+          curl --fail --silent --show-error --location \
+            "https://img.shields.io/badge/Debian%20%2F%20Linux-${linux_downloads}%20descargas-D70A53?style=for-the-badge&logo=debian&logoColor=white" \
+            --output linux-downloads.svg
 
-          git add windows-downloads.json linux-downloads.json
+          rm -f windows-downloads.json linux-downloads.json
+          git add --all
 
           if git diff --cached --quiet; then
             echo "Los contadores ya estaban actualizados."

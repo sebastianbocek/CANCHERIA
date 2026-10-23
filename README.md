@@ -7,10 +7,10 @@
 
 <p align="center">
   <a href="https://github.com/sebastianbocek/CANCHERIA/releases">
-    <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsebastianbocek%2FCANCHERIA%2Fbadges%2Fwindows-downloads.json&amp;style=for-the-badge&amp;cacheSeconds=3600" alt="Descargas para Windows">
+    <img src="https://raw.githubusercontent.com/sebastianbocek/CANCHERIA/badges/windows-downloads.svg" alt="Descargas para Windows">
   </a>
   <a href="https://github.com/sebastianbocek/CANCHERIA/releases">
-    <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsebastianbocek%2FCANCHERIA%2Fbadges%2Flinux-downloads.json&amp;style=for-the-badge&amp;cacheSeconds=3600" alt="Descargas para Debian y Linux">
+    <img src="https://raw.githubusercontent.com/sebastianbocek/CANCHERIA/badges/linux-downloads.svg" alt="Descargas para Debian y Linux">
   </a>
 </p>
 
