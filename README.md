@@ -6,6 +6,15 @@
 <h3 align="center">El primer Agente IA de reservas para complejos deportivos totalmente gratuito</h3>
 
 <p align="center">
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases">
+    <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsebastianbocek%2FCANCHERIA%2Fbadges%2Fwindows-downloads.json&amp;style=for-the-badge&amp;cacheSeconds=3600" alt="Descargas para Windows">
+  </a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases">
+    <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsebastianbocek%2FCANCHERIA%2Fbadges%2Flinux-downloads.json&amp;style=for-the-badge&amp;cacheSeconds=3600" alt="Descargas para Debian y Linux">
+  </a>
+</p>
+
+<p align="center">
   <strong>Contacto y soporte · Sebastián Bocek</strong><br>
   Email: <a href="mailto:sebastianbocek.marketing@gmail.com">sebastianbocek.marketing@gmail.com</a><br>
   WhatsApp: <a href="https://wa.me/5493513441882">+54 9 351 344-1882</a><br>

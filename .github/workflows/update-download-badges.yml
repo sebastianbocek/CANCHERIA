@@ -1,0 +1,84 @@
+name: Actualizar contadores de descargas
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+  release:
+    types: [published, edited, deleted]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: download-badges
+  cancel-in-progress: true
+
+jobs:
+  update:
+    name: Contar instaladores publicados
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Actualizar badges acumulados
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          api_path="repos/${GITHUB_REPOSITORY}/releases?per_page=100"
+
+          sum_asset_downloads() {
+            local asset_name="$1"
+            gh api --paginate "$api_path" \
+              --jq ".[] | .assets[]? | select(.name == \"${asset_name}\") | .download_count" \
+              | awk '{ total += $1 } END { print total + 0 }'
+          }
+
+          windows_downloads="$(sum_asset_downloads "InstaladorCancheria.exe")"
+          linux_downloads="$(sum_asset_downloads "InstaladorCancheriaLinux.run")"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin badges >/dev/null 2>&1; then
+            git fetch origin badges
+            git switch --force-create badges origin/badges
+          else
+            git switch --orphan badges
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+
+          jq -n --arg message "${windows_downloads} descargas" '{
+            schemaVersion: 1,
+            label: "Windows",
+            message: $message,
+            color: "1673FF",
+            namedLogo: "windows11",
+            logoColor: "white"
+          }' > windows-downloads.json
+
+          jq -n --arg message "${linux_downloads} descargas" '{
+            schemaVersion: 1,
+            label: "Debian / Linux",
+            message: $message,
+            color: "D70A53",
+            namedLogo: "debian",
+            logoColor: "white"
+          }' > linux-downloads.json
+
+          git add windows-downloads.json linux-downloads.json
+
+          if git diff --cached --quiet; then
+            echo "Los contadores ya estaban actualizados."
+            exit 0
+          fi
+
+          git commit -m "Actualizar contadores de descargas"
+          git push origin badges
