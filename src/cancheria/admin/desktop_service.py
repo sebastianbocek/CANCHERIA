@@ -1706,6 +1706,13 @@ class DesktopAdminService:
         school_service = getattr(self, "school", None)
         school_classes = school_service.classes_for_day(selected) if school_service else []
         for school_class in school_classes:
+            school_contacts = school_service.group_contacts(
+                str(school_class.get("group_id") or "")
+            )
+            recipient_phones = [
+                str(contact.get("phone") or "").strip() for contact in school_contacts
+                if str(contact.get("phone") or "").strip()
+            ]
             start = self._time_to_minutes(str(school_class.get("start_time") or ""))
             end = start + int(school_class.get("duration_minutes") or slot_minutes)
             cursor = start
@@ -1717,11 +1724,14 @@ class DesktopAdminService:
                     "hora": time,
                     "cancha": str(school_class.get("court") or ""),
                     "nombre": f"Escuelita · {school_class.get('group_name') or ''}",
-                    "telefono": f"SCHOOL:{school_class.get('group_id') or ''}",
+                    "telefono": recipient_phones[0] if len(recipient_phones) == 1 else "",
+                    "recipient_phones": recipient_phones,
+                    "recipient_contacts": school_contacts,
                     "estado": "escuelita",
                     "senia_estado": "no aplica",
                     "tipo_turno": "Escuelita",
                     "school_class": True,
+                    "school_group_id": str(school_class.get("group_id") or ""),
                     "teacher_name": str(school_class.get("teacher_name") or ""),
                 })
                 cursor += slot_minutes
@@ -1899,41 +1909,61 @@ class DesktopAdminService:
         clean_message = str(message or "").strip()
         if not clean_message:
             raise ValueError("Escribí el mensaje que querés enviar.")
-        phone = str((booking or {}).get("telefono") or "").strip()
-        digits = self._phone_digits(phone)
-        if len(digits) < 8:
+        phones = list((booking or {}).get("recipient_phones") or [])
+        if not phones:
+            phones = [str((booking or {}).get("telefono") or "").strip()]
+        recipients: list[str] = []
+        for phone in phones:
+            digits = self._phone_digits(str(phone or ""))
+            if len(digits) >= 8 and digits not in recipients:
+                recipients.append(digits)
+        if not recipients:
             raise ValueError("La reserva no tiene un teléfono válido asociado.")
-
-        delivery_id = f"customer_message_{uuid.uuid4().hex}"
-        now_iso = dt.datetime.now().astimezone().isoformat()
-        request = {
-            "delivery_id": delivery_id,
-            "batch_key": delivery_id,
-            "category": "operator_customer_message",
-            "recipient": f"+{digits}",
-            "text": clean_message,
-            "attachment_path": "",
-            "attachment_title": "",
-            "context": {
-                "reservation_id": str(
-                    (booking or {}).get("reservation_id") or ""
-                ).strip(),
-                "telefono": f"+{digits}",
-                "source": "admin_hours_promotion",
-            },
-            "text_sent": False,
-            "attachment_title_sent": False,
-            "attempts": 0,
-            "created_at": now_iso,
-            "last_attempt_at": None,
-            "last_error": "",
-        }
         # One file per request means the desktop and WhatsApp worker never
         # perform a competing read/modify/write on proactive_state.json.
         request_dir = self.runtime / "admin_outbox_requests"
         request_dir.mkdir(parents=True, exist_ok=True)
-        JSONStore(request_dir / f"{delivery_id}.json").write(request)
-        return delivery_id
+        delivery_ids: list[str] = []
+        for digits in recipients:
+            delivery_id = f"customer_message_{uuid.uuid4().hex}"
+            now_iso = dt.datetime.now().astimezone().isoformat()
+            request = {
+                "delivery_id": delivery_id,
+                "batch_key": delivery_id,
+                "category": "operator_customer_message",
+                "recipient": f"+{digits}",
+                "text": clean_message,
+                "attachment_path": "",
+                "attachment_title": "",
+                "context": {
+                    "reservation_id": str(
+                        (booking or {}).get("reservation_id") or ""
+                    ).strip(),
+                    "school_group_id": str(
+                        (booking or {}).get("school_group_id") or ""
+                    ).strip(),
+                    "telefono": f"+{digits}",
+                    "source": "admin_hours_promotion",
+                },
+                "text_sent": False,
+                "attachment_title_sent": False,
+                "attempts": 0,
+                "created_at": now_iso,
+                "last_attempt_at": None,
+                "last_error": "",
+            }
+            JSONStore(request_dir / f"{delivery_id}.json").write(request)
+            delivery_ids.append(delivery_id)
+        return ",".join(delivery_ids)
+
+    def promotion_recipient_count(self, booking: dict[str, Any]) -> int:
+        phones = list((booking or {}).get("recipient_phones") or [])
+        if not phones:
+            phones = [str((booking or {}).get("telefono") or "").strip()]
+        return len({
+            digits for digits in (self._phone_digits(str(phone or "")) for phone in phones)
+            if len(digits) >= 8
+        })
 
     @staticmethod
     def _phone_digits(value: str) -> str:
@@ -2037,12 +2067,24 @@ class DesktopAdminService:
                 for minute in target_times
             ):
                 raise ValueError("La reserva completa debe quedar dentro del horario de atención.")
-            if selected == dt.date.today() and dt.datetime.combine(
-                selected, dt.time.fromisoformat(normalized_time)
-            ) <= dt.datetime.now():
+            target_index_set = set(target_indices)
+            current_rows = [rows[index] for index in target_indices]
+            current_rows.sort(key=lambda row: str(row.get("hora") or ""))
+            current_start = str(current_rows[0].get("hora") or "").strip()
+            current_court = str(current_rows[0].get("cancha") or "").strip()
+            same_schedule = (
+                self._row_matches_date(current_rows[0], selected)
+                and current_start == normalized_time
+                and current_court == court
+            )
+            if (
+                selected == dt.date.today()
+                and dt.datetime.combine(selected, dt.time.fromisoformat(normalized_time))
+                <= dt.datetime.now()
+                and not same_schedule
+            ):
                 raise ValueError("No se puede mover una reserva a un horario que ya pasó.")
 
-            target_index_set = set(target_indices)
             target_time_values = {self._minutes_to_time(value) for value in target_times}
             for index, row in enumerate(rows):
                 if index in target_index_set:

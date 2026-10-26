@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.70 - 2026-10-26
+
+- Corrige las promociones de clases de Escuelita: Horas deja de tratar el identificador interno `SCHOOL:...` como un teléfono.
+- Resuelve y deduplica los teléfonos reales de los responsables con inscripción activa en el grupo.
+- Si la clase tiene varios responsables, encola el mensaje una vez para cada número mediante la misma sesión encendida de CANCHERIA.
+- Muestra en el diálogo si la promoción se enviará a un teléfono o a varios responsables.
+- Agrega **Editar turno** dentro de los turnos en curso y recién terminados; las reservas abren su editor y las clases abren la edición del grupo.
+- Permite corregir nombre o teléfono de una reserva en curso sin moverla, conservando el bloqueo para trasladarla a otro horario pasado.
+- Agrega regresiones para destinatarios de Escuelita, deduplicación, envío múltiple y edición durante el turno.
+
 ## 0.2.69 - 2026-10-26
 
 - Agrega **Borrar** dentro de los diálogos de **Editar alumno** y **Editar grupo** de Escuelita.

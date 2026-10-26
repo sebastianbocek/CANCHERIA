@@ -284,6 +284,104 @@ def test_customer_message_is_queued_for_active_whatsapp_worker(monkeypatch, tmp_
     assert not (service.runtime / "proactive_state.json").exists()
 
 
+def test_school_promotion_queues_one_message_per_unique_guardian(monkeypatch, tmp_path):
+    service = build_service(monkeypatch, [])
+    service.root = tmp_path
+    service.runtime = tmp_path / "runtime"
+    service.runtime.mkdir()
+    delivery_ids = service.queue_customer_whatsapp_message(
+        {
+            "reservation_id": "school:G-1:2031-05-10",
+            "school_group_id": "G-1",
+            "recipient_phones": [
+                "+54 9 351 111-2222", "+5493511112222", "+54 9 351 333-4444"
+            ],
+        },
+        "2x1 en bebidas",
+    ).split(",")
+
+    assert len(delivery_ids) == 2
+    queued = [
+        service_module.JSONStore(
+            service.runtime / "admin_outbox_requests" / f"{delivery_id}.json"
+        ).read({})
+        for delivery_id in delivery_ids
+    ]
+    assert {row["recipient"] for row in queued} == {
+        "+5493511112222", "+5493513334444"
+    }
+    assert all(row["context"]["school_group_id"] == "G-1" for row in queued)
+    assert service.promotion_recipient_count({
+        "recipient_phones": ["+5493511112222", "+5493511112222", "+5493513334444"]
+    }) == 2
+
+
+def test_school_hours_cell_uses_real_guardian_recipients(monkeypatch, tmp_path):
+    monkeypatch.setattr(service_module.cfg, "COURTS", [{"name": "Cancha 1"}])
+    monkeypatch.setattr(service_module.cfg, "DEFAULT_COURT_NAME", "Cancha 1")
+    monkeypatch.setattr(service_module.cfg, "CALL_SLOT_DURATION_MINUTES", 60)
+    monkeypatch.setattr(
+        service_module.cfg, "obtener_franjas_atencion_minutos", lambda: [(10 * 60, 20 * 60)]
+    )
+    monkeypatch.setattr(service_module.cfg, "obtener_dias_atencion", lambda: list(range(7)))
+    service = DesktopAdminService(tmp_path)
+    day = future_day()
+    group = service.create_school_group(
+        name="Categoría 2015", sport="Fútbol", category="2015", court="Cancha 1",
+        capacity=10, monthly_fee=20000,
+        schedules=[{
+            "weekday": day.weekday(), "start_time": "18:00", "duration_minutes": 60,
+        }],
+    )
+    for name, phone in (("Leo", "+5493511112222"), ("Luz", "+5493513334444")):
+        student = service.create_school_student(
+            name=name, guardian_name=f"Responsable {name}", guardian_phone=phone
+        )
+        service.enroll_school_student(student["student_id"], group["group_id"])
+
+    schedule = service.day_schedule(day.isoformat(), include_all=True)
+    cell = next(
+        row for row in schedule["cells"]
+        if row["court"] == "Cancha 1" and row["time"] == "18:00"
+    )
+
+    assert cell["booking"]["school_class"] is True
+    assert cell["booking"]["school_group_id"] == group["group_id"]
+    assert cell["booking"]["telefono"] == ""
+    assert cell["booking"]["recipient_phones"] == [
+        "+5493511112222", "+5493513334444"
+    ]
+
+
+def test_in_progress_booking_can_update_contact_without_moving_to_past(monkeypatch):
+    today = dt.date.today()
+
+    class FixedDateTime(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(today.year, today.month, today.day, 10, 30)
+            return value if tz is None else value.replace(tzinfo=tz)
+
+    monkeypatch.setattr(service_module.dt, "datetime", FixedDateTime)
+    service = build_service(monkeypatch, [{
+        "reservation_id": "CURRENT-1",
+        "fecha": display_day(today),
+        "hora": "10:00",
+        "cancha": "Cancha 1",
+        "estado": "reservado",
+        "nombre": "Nombre anterior",
+        "telefono": "ADMIN:MANUAL:Nombre anterior",
+    }], end_hour=14)
+
+    service.update_booking(
+        "CURRENT-1", day=today.isoformat(), time="10:00", court="Cancha 1",
+        name="Cliente corregido", phone="+5493515556666",
+    )
+
+    assert service.calendar.rows[0]["nombre"] == "Cliente corregido"
+    assert service.calendar.rows[0]["telefono"] == "+5493515556666"
+
+
 def test_bookings_with_history_keeps_current_first_and_history_newest_first(monkeypatch):
     current_day = future_day()
     service = build_service(monkeypatch, [{
@@ -712,6 +810,7 @@ def test_admin_panel_exposes_hours_tab_and_click_editing():
     assert "def _promotion_dialog" in source
     assert '"in_progress", "recently_finished"' in source
     assert '"Enviar Mensaje"' in source
+    assert '"Editar turno"' in source
     assert "webbrowser.open_new_tab" not in source
     assert "def _hours_schedule_signature" in source
     assert "self._refresh_hours(schedule)" in source

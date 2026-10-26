@@ -751,6 +751,32 @@ class SchoolService:
                     {where} ORDER BY g.name COLLATE NOCASE, s.name COLLATE NOCASE"""
             ).fetchall()]
 
+    def group_contacts(self, group_id: str) -> list[dict[str, str]]:
+        """Return unique active guardian contacts for an Escuelita group."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT s.guardian_name, s.guardian_phone, s.name AS student_name
+                   FROM school_enrollments e
+                   JOIN school_students s ON s.student_id=e.student_id
+                   WHERE e.group_id=? AND e.status='active' AND s.status='active'
+                   ORDER BY s.name COLLATE NOCASE""",
+                (str(group_id or ""),),
+            ).fetchall()
+        result: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for row in rows:
+            phone = _phone(row["guardian_phone"])
+            digits = "".join(character for character in phone if character.isdigit())
+            if len(digits) < 8 or digits in seen:
+                continue
+            seen.add(digits)
+            result.append({
+                "name": str(row["guardian_name"] or "").strip(),
+                "phone": phone,
+                "student_name": str(row["student_name"] or "").strip(),
+            })
+        return result
+
     def cancel_enrollment(
         self, enrollment_id: str, *, responsible: str = "Administrador"
     ) -> dict[str, Any]:

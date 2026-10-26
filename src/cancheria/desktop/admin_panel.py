@@ -4432,6 +4432,14 @@ class AdminPanel(tk.Toplevel):
         dialog.resizable(False, False)
         dialog.configure(bg=self.SURFACE)
 
+        recipient_phones = list(booking.get("recipient_phones") or [])
+        whatsapp_label = str(booking.get("telefono") or "-")
+        if recipient_phones:
+            whatsapp_label = (
+                recipient_phones[0]
+                if len(recipient_phones) == 1
+                else f"{len(recipient_phones)} responsables"
+            )
         tk.Label(
             dialog,
             text=f"{status_label} · {cell.get('court')} · {cell.get('time')}",
@@ -4443,7 +4451,7 @@ class AdminPanel(tk.Toplevel):
             dialog,
             text=(
                 f"Cliente: {booking.get('nombre') or '-'}  ·  "
-                f"WhatsApp: {booking.get('telefono') or '-'}"
+                f"WhatsApp: {whatsapp_label}"
             ),
             bg=self.SURFACE,
             fg=self.MUTED,
@@ -4516,6 +4524,24 @@ class AdminPanel(tk.Toplevel):
             dialog.destroy,
             self.PAST_GRAY,
         ).pack(side="right", padx=(0, 8))
+        def edit_turn() -> None:
+            dialog.destroy()
+            try:
+                if booking.get("school_class"):
+                    self._edit_school_group_dialog(
+                        str(booking.get("school_group_id") or "")
+                    )
+                else:
+                    self._edit_booking_dialog(cell)
+            except Exception as exc:
+                messagebox.showerror("Editar turno", str(exc), parent=self)
+
+        self._action_button(
+            buttons,
+            "Editar turno",
+            edit_turn,
+            self.BLUE,
+        ).pack(side="left")
         dialog.grab_set()
         message.focus_set()
 

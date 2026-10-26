@@ -179,6 +179,26 @@ def test_students_enrollment_attendance_partial_payments_and_cash(tmp_path):
     assert sum(cents_to_pesos(row["amount_cents"]) for row in school_rows) == 30000
 
 
+def test_group_contacts_returns_unique_active_guardian_phones(tmp_path):
+    school = build_school(tmp_path)
+    group = create_group(school)
+    for name, guardian, phone in (
+        ("Leo", "Sebastián", "+54 9 351 111-2222"),
+        ("Luz", "Sebastián", "+54 9 351 111-2222"),
+        ("Mateo", "Laura", "+54 9 351 333-4444"),
+    ):
+        student = school.create_student(
+            name=name, guardian_name=guardian, guardian_phone=phone
+        )
+        school.enroll_student(student["student_id"], group["group_id"])
+
+    contacts = school.group_contacts(group["group_id"])
+
+    assert [row["phone"] for row in contacts] == [
+        "+5493511112222", "+5493513334444"
+    ]
+
+
 def test_pre_enrollment_balance_and_absence_are_contact_scoped(tmp_path):
     school = build_school(tmp_path)
     group = create_group(school)
@@ -243,6 +263,8 @@ def test_school_ui_and_canonical_whatsapp_contract_are_present():
     assert "delete_school_student" in panel
     assert "delete_school_group" in panel
     assert '"🗑  Borrar"' in panel
+    assert '"Editar turno"' in panel
+    assert "school_group_id" in panel
     assert '"<Double-1>"' in panel
     assert "self.school_side_canvas" in panel
     assert "self.school_side_scroll" in panel

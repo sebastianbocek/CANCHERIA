@@ -1126,13 +1126,24 @@ class CancheriaDesktop(tk.Tk):
             booking,
             message,
         )
-        phone = str((booking or {}).get("telefono") or "cliente").strip()
-        self._append_log(
-            f"📤 [MENSAJE MANUAL] encolado para {phone} id={delivery_id}"
+        service = self._get_admin_service()
+        recipient_count = service.promotion_recipient_count(booking)
+        phone = str((booking or {}).get("telefono") or "").strip()
+        recipient_label = (
+            phone if recipient_count == 1 and phone
+            else f"{recipient_count} responsables"
         )
+        self._append_log(
+            f"📤 [MENSAJE MANUAL] encolado para {recipient_label} id={delivery_id}"
+        )
+        if recipient_count == 1:
+            return (
+                "El mensaje quedó listo para enviarse desde la sesión de WhatsApp "
+                "que CANCHERIA ya tiene encendida."
+            )
         return (
-            "El mensaje quedó listo para enviarse desde la sesión de WhatsApp "
-            "que CANCHERIA ya tiene encendida."
+            f"Los {recipient_count} mensajes quedaron listos para enviarse a los "
+            "responsables desde la sesión de WhatsApp que CANCHERIA ya tiene encendida."
         )
 
     def _get_admin_service(self):
