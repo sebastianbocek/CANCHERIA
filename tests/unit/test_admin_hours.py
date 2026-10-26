@@ -102,6 +102,32 @@ def test_day_schedule_marks_free_occupied_and_blocked(monkeypatch):
     assert statuses[("11:00", "Cancha 2")] == "free"
 
 
+def test_day_schedule_hot_reloads_attention_window_saved_by_configurator(monkeypatch, tmp_path):
+    from cancheria.domain.reservations import calendar as calendar_module
+
+    monkeypatch.setattr(service_module.cfg, "COURTS", [{"name": "Cancha 1"}])
+    monkeypatch.setattr(service_module.cfg, "CALL_TIME_WINDOWS", [("10:00", "00:00")])
+    monkeypatch.setattr(
+        calendar_module, "CALL_TIME_WINDOWS", [("10:00", "00:00")], raising=False
+    )
+    config_path = tmp_path / "legacy_config.py"
+    config_path.write_text(
+        "CALL_TIME_WINDOWS = [('05:00', '00:00')]\n",
+        encoding="utf-8",
+    )
+    service = object.__new__(DesktopAdminService)
+    service.calendar = calendar_module.CalendarioLlamadas(str(tmp_path / "calendar.csv"))
+    service._config_path = config_path
+    service._config_signature = None
+
+    schedule = service.day_schedule(future_day().isoformat())
+
+    assert schedule["slots"][0] == "05:00"
+    assert schedule["slots"][-1] == "23:00"
+    assert service_module.cfg.CALL_TIME_WINDOWS == [("05:00", "00:00")]
+    assert calendar_module.CALL_TIME_WINDOWS == [("05:00", "00:00")]
+
+
 def test_day_schedule_hides_every_elapsed_slot_for_today(monkeypatch):
     class FixedDateTime(dt.datetime):
         @classmethod

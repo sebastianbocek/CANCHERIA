@@ -5,6 +5,7 @@ import csv
 import inspect
 import json
 import re
+import sys
 import uuid
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from contextlib import nullcontext
@@ -55,6 +56,11 @@ class DesktopAdminService:
         self.root = Path(root).resolve()
         self.runtime = self.root / "runtime"
         self.runtime.mkdir(parents=True, exist_ok=True)
+        # La configuración es un archivo Python editable por el configurador
+        # externo. Se fuerza una primera lectura desde disco al abrir Horas y
+        # luego sólo se repite cuando cambia su firma.
+        self._config_path = Path(str(getattr(cfg, "__file__", ""))).resolve()
+        self._config_signature: tuple[int, int] | None = None
         self.calendar = CalendarioLlamadas(str(self.runtime / "calendario_turnos.csv"))
         try:
             _call_with_optional_now(
@@ -81,6 +87,82 @@ class DesktopAdminService:
             courts_provider=self.courts,
             conflict_provider=self._calendar_slot_has_booking,
         )
+
+    @staticmethod
+    def _source_signature(path: Path) -> tuple[int, int] | None:
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        return int(stat.st_mtime_ns), int(stat.st_size)
+
+    def _refresh_runtime_config_if_changed(self) -> bool:
+        """Apply configurator changes without restarting the desktop shell.
+
+        Executing a compiled source snapshot avoids Python's timestamp-based
+        bytecode cache, which can otherwise retain an old value when a user
+        changes ``10:00`` to ``05:00`` (same file size) quickly.
+        """
+        path = getattr(self, "_config_path", None)
+        if not isinstance(path, Path) or not path.is_file():
+            return False
+        signature = self._source_signature(path)
+        if signature is not None and signature == getattr(self, "_config_signature", None):
+            return False
+
+        try:
+            source = path.read_text(encoding="utf-8-sig")
+            code = compile(source, str(path), "exec")
+            validation_namespace = dict(cfg.__dict__)
+            validation_namespace["__file__"] = str(path)
+            exec(code, validation_namespace)
+        except Exception as exc:
+            raise RuntimeError(
+                "La configuración cambió pero no se pudo recargar. "
+                "Revisá el archivo desde Configuración."
+            ) from exc
+
+        # La validación anterior dejó el módulo intacto. Recién ahora se
+        # aplica sobre su diccionario real para que las funciones recargadas
+        # sigan leyendo los globals vivos de ``legacy_config``.
+        cfg.__dict__["__file__"] = str(path)
+        exec(code, cfg.__dict__)
+        self._config_signature = signature
+
+        # El calendario histórico importa algunas constantes por valor. Se
+        # sincronizan junto con el módulo principal para que disponibilidad,
+        # bloqueos y la grilla compartan la misma verdad inmediatamente.
+        calendar_module = sys.modules.get(self.calendar.__class__.__module__)
+        for name in (
+            "COURTS",
+            "ATTENTION_DAYS",
+            "CALL_TIME_WINDOWS",
+            "CALL_SLOT_DURATION_MINUTES",
+            "TURN_DURATION_MINUTES",
+            "ALLOWED_TURN_DURATIONS",
+            "DEFAULT_TURN_DURATION_HOURS",
+            "DEFAULT_COURT_NAME",
+            "ACTIVE_BOOKING_STATUSES",
+            "BOOKING_STATUS_PENDING",
+            "BOOKING_STATUS_RESERVED",
+            "BOOKING_STATUS_CONFIRMED",
+        ):
+            if calendar_module is not None and hasattr(cfg, name):
+                setattr(calendar_module, name, getattr(cfg, name))
+        if calendar_module is not None:
+            calendar_module.DURACION_MINUTOS = int(
+                getattr(cfg, "CALL_SLOT_DURATION_MINUTES", 60) or 60
+            )
+            calendar_module.CANCHA_DEFAULT = str(
+                getattr(cfg, "DEFAULT_COURT_NAME", "Cancha 1")
+            )
+
+        global ACTIVE_STATES
+        ACTIVE_STATES = {
+            str(value).strip().lower()
+            for value in getattr(cfg, "ACTIVE_BOOKING_STATUSES", [])
+        }
+        return True
 
     def _calendar_slot_has_booking(self, day: str, time: str, court: str) -> bool:
         """Check persisted reservations without consulting Escuelita again."""
@@ -1576,6 +1658,7 @@ class DesktopAdminService:
 
     def day_schedule(self, day: str, *, include_all: bool = False) -> dict[str, Any]:
         """Build the admin hour grid from the same CSV/config used by WhatsApp."""
+        self._refresh_runtime_config_if_changed()
         selected = self._parse_panel_date(day)
         slot_minutes = max(1, int(getattr(cfg, "CALL_SLOT_DURATION_MINUTES", 60) or 60))
         slots: list[str] = []

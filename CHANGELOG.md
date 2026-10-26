@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.67 - 2026-10-26
+
+- Corrige la pestaña **Horas** para que relea automáticamente los cambios guardados por el configurador sin reiniciar CANCHERIA.
+- Sincroniza las franjas, días, canchas, duraciones y estados con el calendario ya cargado en memoria para evitar configuraciones divergentes.
+- Evita que el caché de bytecode conserve el valor anterior cuando una edición mantiene el mismo tamaño, por ejemplo `10:00` → `05:00`.
+- Agrega una regresión automatizada que comprueba que una franja guardada como `05:00-00:00` aparece inmediatamente desde las 05:00 en Administración.
+
 ## 0.2.66 - 2026-10-26
 
 - Agrega el estado azul **En curso** para turnos cuyo bloque comenzó pero todavía no terminó.
