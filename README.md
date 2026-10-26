@@ -27,13 +27,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.65/InstaladorCancheria.exe"><strong>⬇️ Descargar para Windows</strong></a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.66/InstaladorCancheria.exe"><strong>⬇️ Descargar para Windows</strong></a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.65/InstaladorCancheriaLinux.run"><strong>⬇️ Descargar para Debian</strong></a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.66/InstaladorCancheriaLinux.run"><strong>⬇️ Descargar para Debian</strong></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/tag/v0.2.65">Ver versión v0.2.65</a>
+  <a href="https://github.com/sebastianbocek/CANCHERIA/releases/tag/v0.2.66">Ver versión v0.2.66</a>
   ·
   <a href="docs/MANUAL_DE_USO_CANCHERIA_DUENOS_ENCARGADOS.pdf">Manual completo</a>
 </p>
@@ -98,7 +98,7 @@ Desde aquí se enciende o pausa el agente, se administra la sesión de WhatsApp 
 
 ### Agenda visual por horas
 
-La pestaña **Horas** muestra cada horario y cancha en una grilla: verde cuando está disponible, rojo cuando está ocupado o bloqueado y gris cuando el horario ya pasó o está fuera de atención. Al seleccionar una celda se puede crear, editar, cancelar, bloquear o desbloquear un turno.
+La pestaña **Horas** muestra cada horario y cancha en una grilla: verde cuando está disponible, rojo cuando está ocupado o bloqueado, azul cuando el turno está en curso, celeste durante la hora posterior a su finalización y gris cuando está fuera de atención. Al seleccionar un turno azul o celeste se puede redactar una promoción y abrir el `whatsapp_link` del cliente con el mensaje listo para enviar; las demás celdas permiten crear, editar, cancelar, bloquear o desbloquear turnos.
 
 ![Panel de administración de horarios](docs/images/cancheria-panel-horas.png)
 
@@ -128,7 +128,7 @@ El agente puede consultar dinámicamente grupos, edades, días, horarios, profes
 
 ### Windows 10 y Windows 11
 
-1. Descargá **[InstaladorCancheria.exe](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.65/InstaladorCancheria.exe)**.
+1. Descargá **[InstaladorCancheria.exe](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.66/InstaladorCancheria.exe)**.
 2. Cerrá una instalación anterior de CANCHERIA si estuviera abierta.
 3. Ejecutá `InstaladorCancheria.exe` y seguí el asistente.
 4. Dejá marcada la opción **Configurar mi negocio ahora**.
@@ -147,7 +147,7 @@ Requisitos:
 - Usuario normal con acceso a `sudo`.
 - Conexión a Internet.
 
-1. Descargá **[InstaladorCancheriaLinux.run](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.65/InstaladorCancheriaLinux.run)**.
+1. Descargá **[InstaladorCancheriaLinux.run](https://github.com/sebastianbocek/CANCHERIA/releases/download/v0.2.66/InstaladorCancheriaLinux.run)**.
 2. Abrí una terminal en la carpeta de descarga.
 3. Ejecutá el instalador con tu usuario normal, sin anteponer `sudo`:
 
@@ -388,7 +388,7 @@ Los resultados se guardan en `release/`. Los generadores usan una configuración
 
 ## Estado de licencia
 
-CANCHERIA `v0.2.65` se ofrece para descarga y uso sin costo de licencia. La licencia jurídica definitiva del código fuente continúa pendiente de selección por AI BROTHERS; consultá [docs/licensing.md](docs/licensing.md). Esto no afecta la descarga gratuita de los instaladores publicados.
+CANCHERIA `v0.2.66` se ofrece para descarga y uso sin costo de licencia. La licencia jurídica definitiva del código fuente continúa pendiente de selección por AI BROTHERS; consultá [docs/licensing.md](docs/licensing.md). Esto no afecta la descarga gratuita de los instaladores publicados.
 
 ---
 

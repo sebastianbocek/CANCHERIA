@@ -6,6 +6,7 @@ import inspect
 import json
 import re
 import uuid
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
@@ -1597,17 +1598,19 @@ class DesktopAdminService:
             time = str(row.get("hora") or "").strip()
             active_rows[(court, time)] = dict(row)
 
-        if include_all:
-            for row in self.past_bookings():
-                if not self._row_matches_date(row, selected):
-                    continue
-                if str(row.get("estado") or "").strip().casefold() != "finalizada":
-                    continue
-                court = str(
-                    row.get("cancha") or getattr(cfg, "DEFAULT_COURT_NAME", "Cancha 1")
-                ).strip()
-                time = str(row.get("hora") or "").strip()
-                active_rows.setdefault((court, time), dict(row))
+        # Los turnos terminados se cargan también en la vista normal para poder
+        # conservar visibles los que siguen dentro de la ventana de tercer
+        # tiempo. Los históricos antiguos se filtran más abajo.
+        for row in self.past_bookings():
+            if not self._row_matches_date(row, selected):
+                continue
+            if str(row.get("estado") or "").strip().casefold() != "finalizada":
+                continue
+            court = str(
+                row.get("cancha") or getattr(cfg, "DEFAULT_COURT_NAME", "Cancha 1")
+            ).strip()
+            time = str(row.get("hora") or "").strip()
+            active_rows.setdefault((court, time), dict(row))
 
         # Recurring Escuelita classes occupy the same operational grid as real
         # bookings, without manufacturing reservation/payment rows.
@@ -1636,25 +1639,86 @@ class DesktopAdminService:
 
         attention_day = selected.weekday() in set(cfg.obtener_dias_atencion())
         now = dt.datetime.now()
-        visible_slots = slots if include_all else [
-            time for time in slots
-            if dt.datetime.combine(selected, dt.time.fromisoformat(time)) > now
-        ]
+        recent_minutes = max(
+            1, int(getattr(cfg, "POST_GAME_PROMOTION_MINUTES", 60) or 60)
+        )
+
+        grouped_rows: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+        for index, booking in enumerate(active_rows.values()):
+            reservation_id = str(booking.get("reservation_id") or "").strip()
+            if reservation_id:
+                key = ("reservation", reservation_id)
+            else:
+                key = (
+                    "row",
+                    str(booking.get("telefono") or booking.get("nombre") or "").strip(),
+                    str(booking.get("fecha") or "").strip(),
+                    str(booking.get("cancha") or "").strip(),
+                    str(index),
+                )
+            grouped_rows.setdefault(key, []).append(booking)
+
+        booking_bounds: dict[int, tuple[dt.datetime, dt.datetime]] = {}
+        for group in grouped_rows.values():
+            starts = []
+            for booking in group:
+                try:
+                    starts.append(dt.datetime.combine(
+                        selected,
+                        dt.time.fromisoformat(str(booking.get("hora") or "").strip()),
+                    ))
+                except ValueError:
+                    continue
+            if not starts:
+                continue
+            declared_minutes = []
+            for booking in group:
+                try:
+                    declared_minutes.append(int(round(float(
+                        str(booking.get("duracion_horas") or "").replace(",", ".")
+                    ) * 60)))
+                except (TypeError, ValueError):
+                    try:
+                        declared_minutes.append(int(float(
+                            booking.get("duracion_minutos") or slot_minutes
+                        )))
+                    except (TypeError, ValueError):
+                        declared_minutes.append(slot_minutes)
+            start = min(starts)
+            end = max(
+                start + dt.timedelta(minutes=max(declared_minutes or [slot_minutes])),
+                max(starts) + dt.timedelta(minutes=slot_minutes),
+            )
+            for booking in group:
+                booking_bounds[id(booking)] = (start, end)
+
         cells: list[dict[str, Any]] = []
-        for time in visible_slots:
+        for time in slots:
             slot_dt = dt.datetime.combine(selected, dt.time.fromisoformat(time))
             for court in self.courts():
                 booking = active_rows.get((court, time))
+                starts_at = None
+                ends_at = None
                 if booking:
                     blocked = (
                         str(booking.get("telefono") or "").startswith("ADMIN:CERRADO")
                         or str(booking.get("nombre") or "").strip().upper() == "CERRADO"
                     )
-                    historical = bool(booking.get("_history")) or slot_dt <= now
                     if blocked:
-                        status = "past_blocked" if historical else "blocked"
+                        status = "past_blocked" if slot_dt <= now else "blocked"
                     else:
-                        status = "past_occupied" if historical else "occupied"
+                        starts_at, ends_at = booking_bounds.get(
+                            id(booking),
+                            (slot_dt, slot_dt + dt.timedelta(minutes=slot_minutes)),
+                        )
+                        if starts_at <= now < ends_at:
+                            status = "in_progress"
+                        elif ends_at <= now < ends_at + dt.timedelta(minutes=recent_minutes):
+                            status = "recently_finished"
+                        elif now < starts_at:
+                            status = "occupied"
+                        else:
+                            status = "past_occupied"
                 elif not attention_day or slot_dt <= now:
                     status = "closed"
                 else:
@@ -1665,7 +1729,21 @@ class DesktopAdminService:
                     "court": court,
                     "status": status,
                     "booking": booking,
+                    "starts_at": starts_at.isoformat() if starts_at else "",
+                    "ends_at": ends_at.isoformat() if ends_at else "",
                 })
+
+        visible_slots = slots if include_all else [
+            time for time in slots
+            if dt.datetime.combine(selected, dt.time.fromisoformat(time)) > now
+            or any(
+                cell["time"] == time
+                and cell["status"] in {"in_progress", "recently_finished"}
+                for cell in cells
+            )
+        ]
+        if not include_all:
+            cells = [cell for cell in cells if cell["time"] in visible_slots]
 
         return {
             "day": selected.isoformat(),
@@ -1676,6 +1754,54 @@ class DesktopAdminService:
             "slots": visible_slots,
             "cells": cells,
         }
+
+    def promotion_message_template(self) -> str:
+        business_name = str(
+            getattr(cfg, "BUSINESS_NAME", "CANCHERIA") or "CANCHERIA"
+        ).strip()
+        return (
+            f"¡Gracias por elegir jugar en {business_name}! Tenemos una promoción "
+            "de {} solo para vos si mostrás este mensaje en cantina."
+        )
+
+    def promotion_whatsapp_link(self, booking: dict[str, Any], message: str) -> str:
+        """Build a WhatsApp URL from the contact's persisted whatsapp_link."""
+        clean_message = str(message or "").strip()
+        if not clean_message:
+            raise ValueError("Escribí el mensaje de la promoción.")
+
+        phone = str((booking or {}).get("telefono") or "").strip()
+        link = str((booking or {}).get("whatsapp_link") or "").strip()
+        contacts_path = Path(getattr(cfg, "CONTACTS_CSV", self.runtime / "reservas_contactos.csv"))
+        if contacts_path.is_file():
+            try:
+                with contacts_path.open("r", encoding="utf-8-sig", newline="") as handle:
+                    for contact in csv.DictReader(handle):
+                        contact_phone = str(contact.get("telefono") or "").strip()
+                        if self._phone_digits(contact_phone) == self._phone_digits(phone):
+                            link = str(contact.get("whatsapp_link") or link).strip()
+                            break
+            except OSError:
+                pass
+
+        digits = self._phone_digits(phone)
+        if not link and digits:
+            link = f"https://wa.me/{digits}"
+        if not link:
+            raise ValueError(
+                "La reserva no tiene un whatsapp_link ni un teléfono válido asociado."
+            )
+        parts = urlsplit(link)
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        query["text"] = clean_message
+        return urlunsplit((parts.scheme or "https", parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+    @staticmethod
+    def _phone_digits(value: str) -> str:
+        raw = str(value or "").strip()
+        if raw.upper().startswith(("ADMIN:", "SCHOOL:", "NOMBRE:")):
+            return ""
+        return "".join(character for character in raw if character.isdigit())
 
     def booking_details(self, reservation_id: str, day: str = "") -> dict[str, Any]:
         rows = self.calendar.asegurar_ids_reservas()

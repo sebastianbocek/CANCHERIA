@@ -118,6 +118,68 @@ def test_day_schedule_hides_every_elapsed_slot_for_today(monkeypatch):
     assert {cell["status"] for cell in schedule["cells"]} == {"free"}
 
 
+def test_day_schedule_keeps_a_started_booking_visible_as_in_progress(monkeypatch):
+    class FixedDateTime(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2031, 5, 10, 14, 30)
+            return value if tz is None else value.replace(tzinfo=tz)
+
+    monkeypatch.setattr(service_module.dt, "datetime", FixedDateTime)
+    service = build_service(monkeypatch, [{
+        "reservation_id": "LIVE-1",
+        "fecha": "Sábado 10/05/2031",
+        "hora": "14:00",
+        "cancha": "Cancha 1",
+        "estado": "reservado",
+        "nombre": "Equipo Azul",
+        "telefono": "+5493511111111",
+        "duracion_horas": "1",
+    }], end_hour=17)
+
+    schedule = service.day_schedule("2031-05-10")
+    live = next(
+        cell for cell in schedule["cells"]
+        if cell["time"] == "14:00" and cell["court"] == "Cancha 1"
+    )
+
+    assert schedule["slots"] == ["14:00", "15:00", "16:00"]
+    assert live["status"] == "in_progress"
+    assert live["starts_at"] == "2031-05-10T14:00:00"
+    assert live["ends_at"] == "2031-05-10T15:00:00"
+
+
+def test_day_schedule_keeps_recently_finished_archived_booking_for_third_time(monkeypatch):
+    class FixedDateTime(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2031, 5, 10, 14, 30)
+            return value if tz is None else value.replace(tzinfo=tz)
+
+    monkeypatch.setattr(service_module.dt, "datetime", FixedDateTime)
+    monkeypatch.setattr(service_module.cfg, "POST_GAME_PROMOTION_MINUTES", 60)
+    service = build_service(monkeypatch, [], end_hour=17)
+    service.calendar.finished = [{
+        "reservation_id": "RECENT-1",
+        "fecha": "Sábado 10/05/2031",
+        "hora": "13:00",
+        "cancha": "Cancha 1",
+        "estado": "finalizada",
+        "nombre": "Equipo Celeste",
+        "telefono": "+5493512222222",
+        "duracion_horas": "1",
+    }]
+
+    schedule = service.day_schedule("2031-05-10")
+    recent = next(
+        cell for cell in schedule["cells"]
+        if cell["time"] == "13:00" and cell["court"] == "Cancha 1"
+    )
+
+    assert schedule["slots"] == ["13:00", "15:00", "16:00"]
+    assert recent["status"] == "recently_finished"
+
+
 def test_day_schedule_show_all_includes_elapsed_and_archived_occupied_slots(monkeypatch):
     class FixedDateTime(dt.datetime):
         @classmethod
@@ -144,9 +206,32 @@ def test_day_schedule_show_all_includes_elapsed_and_archived_occupied_slots(monk
     }
 
     assert schedule["slots"] == ["10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00"]
-    assert statuses[("13:00", "Cancha 1")] == "past_occupied"
+    assert statuses[("13:00", "Cancha 1")] == "recently_finished"
     assert statuses[("12:00", "Cancha 1")] == "closed"
     assert statuses[("15:00", "Cancha 1")] == "free"
+
+
+def test_promotion_link_uses_persisted_whatsapp_link_and_encodes_message(monkeypatch, tmp_path):
+    contacts = tmp_path / "reservas_contactos.csv"
+    contacts.write_text(
+        "telefono,whatsapp_link\n+5493513333333,https://wa.me/5493513333333\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(service_module.cfg, "CONTACTS_CSV", str(contacts))
+    monkeypatch.setattr(service_module.cfg, "BUSINESS_NAME", "Club Prueba")
+    service = build_service(monkeypatch, [])
+    service.root = tmp_path
+    service.runtime = tmp_path
+
+    template = service.promotion_message_template()
+    link = service.promotion_whatsapp_link(
+        {"telefono": "+54 9 351 333-3333"},
+        template.replace("{}", "2x1 en bebidas"),
+    )
+
+    assert "Club+Prueba" in link
+    assert "2x1+en+bebidas" in link
+    assert link.startswith("https://wa.me/5493513333333?text=")
 
 
 def test_bookings_with_history_keeps_current_first_and_history_newest_first(monkeypatch):
@@ -574,6 +659,9 @@ def test_admin_panel_exposes_hours_tab_and_click_editing():
     assert "bookings_with_history" in source
     assert "include_all=True" in source
     assert "def _past_booking_details_dialog" in source
+    assert "def _promotion_dialog" in source
+    assert '"in_progress", "recently_finished"' in source
+    assert '"Abrir WhatsApp"' in source
     assert "Detalle del turno pasado" in source
     assert "Consulta de solo lectura" in source
     assert "def _toggle_booking_sort" in source

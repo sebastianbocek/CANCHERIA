@@ -3,6 +3,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 import datetime as dt
+import webbrowser
 from pathlib import Path
 from typing import Callable
 
@@ -650,6 +651,8 @@ class AdminPanel(tk.Toplevel):
     ORANGE = "#F97316"
     RED = "#DC2626"
     FREE_GREEN = "#079455"
+    IN_PROGRESS_BLUE = "#2563EB"
+    RECENT_CYAN = "#0891B2"
     PAST_GRAY = "#64748B"
     MUTED = "#64748B"
     BORDER = "#E2E8F0"
@@ -1135,6 +1138,8 @@ class AdminPanel(tk.Toplevel):
         self.hours_legend_pills = [
             self._legend_item(self.hours_legend, self.FREE_GREEN, "Disponible", "#E3F8EF", 155),
             self._legend_item(self.hours_legend, self.RED, "Ocupado / bloqueado", "#FDEBEC", 235),
+            self._legend_item(self.hours_legend, self.IN_PROGRESS_BLUE, "En curso", "#E8F0FF", 145),
+            self._legend_item(self.hours_legend, self.RECENT_CYAN, "Recién terminado", "#E6F8FC", 190),
             self._legend_item(self.hours_legend, self.PAST_GRAY, "Fuera de atención", "#EEF2F7", 205),
         ]
         self.hours_show_all_var = tk.BooleanVar(value=False)
@@ -1215,7 +1220,7 @@ class AdminPanel(tk.Toplevel):
                 pady=(4, 0),
             )
             self.hours_legend.grid_configure(columnspan=1)
-            for pill, width in zip(self.hours_legend_pills, (125, 190, 165)):
+            for pill, width in zip(self.hours_legend_pills, (115, 175, 110, 145, 150)):
                 pill.configure(width=width)
         else:
             self.hours_controls.grid_configure(columnspan=1)
@@ -1228,7 +1233,7 @@ class AdminPanel(tk.Toplevel):
                 pady=(0, 0),
             )
             self.hours_legend.grid_configure(columnspan=2)
-            for pill, width in zip(self.hours_legend_pills, (155, 235, 205)):
+            for pill, width in zip(self.hours_legend_pills, (145, 215, 135, 175, 185)):
                 pill.configure(width=width)
 
     def _show_date_picker(
@@ -4225,6 +4230,8 @@ class AdminPanel(tk.Toplevel):
                 hover = {
                     self.FREE_GREEN: "#067C4D",
                     self.RED: "#C71F27",
+                    self.IN_PROGRESS_BLUE: "#1D4ED8",
+                    self.RECENT_CYAN: "#0E7490",
                     self.PAST_GRAY: "#55657B",
                 }.get(color, color)
                 HoursTile(
@@ -4312,6 +4319,12 @@ class AdminPanel(tk.Toplevel):
         if status == "occupied":
             client = str(booking.get("nombre") or booking.get("telefono") or "Reserva").strip()
             return f"OCUPADO\n{client}", self.RED
+        if status == "in_progress":
+            client = str(booking.get("nombre") or booking.get("telefono") or "Reserva").strip()
+            return f"EN CURSO\n{client}", self.IN_PROGRESS_BLUE
+        if status == "recently_finished":
+            client = str(booking.get("nombre") or booking.get("telefono") or "Reserva").strip()
+            return f"RECIÉN TERMINADO\n{client}", self.RECENT_CYAN
         if status == "past_occupied":
             client = str(booking.get("nombre") or booking.get("telefono") or "Reserva").strip()
             return f"OCUPADO\n{client}", self.RED
@@ -4331,6 +4344,9 @@ class AdminPanel(tk.Toplevel):
         if status == "occupied":
             self._edit_booking_dialog(cell)
             return
+        if status in {"in_progress", "recently_finished"}:
+            self._promotion_dialog(cell)
+            return
         if status == "blocked":
             self._blocked_slot_dialog(cell)
             return
@@ -4342,6 +4358,104 @@ class AdminPanel(tk.Toplevel):
             "Ese horario ya pasó." if status == "past" else "La fecha está fuera de los días de atención configurados.",
             parent=self,
         )
+
+    def _promotion_dialog(self, cell: dict) -> None:
+        booking = cell.get("booking") or {}
+        status_label = (
+            "Turno en curso" if cell.get("status") == "in_progress" else "Tercer tiempo"
+        )
+        template_method = getattr(self.service, "promotion_message_template", None)
+        template = (
+            template_method() if callable(template_method)
+            else "¡Gracias por elegir jugar en CANCHERIA! Tenemos una promoción de {} solo para vos si mostrás este mensaje en cantina."
+        )
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Enviar promoción por WhatsApp")
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        dialog.configure(bg=self.SURFACE)
+
+        tk.Label(
+            dialog,
+            text=f"{status_label} · {cell.get('court')} · {cell.get('time')}",
+            bg=self.SURFACE,
+            fg=self.NAVY,
+            font=("Segoe UI", 12, "bold"),
+        ).pack(anchor="w", padx=18, pady=(16, 4))
+        tk.Label(
+            dialog,
+            text=(
+                f"Cliente: {booking.get('nombre') or '-'}  ·  "
+                f"WhatsApp: {booking.get('telefono') or '-'}"
+            ),
+            bg=self.SURFACE,
+            fg=self.MUTED,
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=18, pady=(0, 12))
+        tk.Label(
+            dialog,
+            text="Mensaje",
+            bg=self.SURFACE,
+            fg=self.NAVY,
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w", padx=18)
+        message = tk.Text(
+            dialog,
+            width=68,
+            height=6,
+            wrap="word",
+            font=("Segoe UI", 10),
+            relief="solid",
+            borderwidth=1,
+            padx=10,
+            pady=8,
+        )
+        message.pack(padx=18, pady=(5, 8))
+        message.insert("1.0", template)
+        tk.Label(
+            dialog,
+            text="Reemplazá {} por el descuento, 2x1 o beneficio que quieras ofrecer.",
+            bg=self.SURFACE,
+            fg=self.MUTED,
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=18, pady=(0, 12))
+
+        buttons = tk.Frame(dialog, bg=self.SURFACE)
+        buttons.pack(fill="x", padx=18, pady=(0, 16))
+
+        def open_whatsapp() -> None:
+            text_value = message.get("1.0", "end").strip()
+            if "{}" in text_value:
+                messagebox.showwarning(
+                    "Promoción",
+                    "Reemplazá {} por la promoción concreta antes de abrir WhatsApp.",
+                    parent=dialog,
+                )
+                return
+            try:
+                link_method = getattr(self.service, "promotion_whatsapp_link")
+                target = link_method(booking, text_value)
+                if not webbrowser.open_new_tab(target):
+                    raise RuntimeError("No se pudo abrir WhatsApp en el navegador.")
+                dialog.destroy()
+            except Exception as exc:
+                messagebox.showerror("Promoción por WhatsApp", str(exc), parent=dialog)
+
+        self._action_button(
+            buttons,
+            "Abrir WhatsApp",
+            open_whatsapp,
+            self.GREEN,
+        ).pack(side="right")
+        self._action_button(
+            buttons,
+            "Cancelar",
+            dialog.destroy,
+            self.PAST_GRAY,
+        ).pack(side="right", padx=(0, 8))
+        dialog.grab_set()
+        message.focus_set()
 
     def _edit_booking_dialog(self, cell: dict) -> None:
         booking = cell.get("booking") or {}

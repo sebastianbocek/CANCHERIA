@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.66 - 2026-10-26
+
+- Agrega el estado azul **En curso** para turnos cuyo bloque comenzó pero todavía no terminó.
+- Agrega el estado celeste **Recién terminado** durante 60 minutos después del final del turno para identificar el posible “tercer tiempo”.
+- Mantiene ambos estados visibles en la vista normal de **Horas**, incluso cuando la hora inicial ya pasó.
+- Permite hacer clic en esos turnos, redactar una promoción personalizada y abrir el `whatsapp_link` real del cliente con el mensaje listo para enviar.
+- Usa el nombre comercial configurado en la plantilla y valida que el operador reemplace `{}` por el beneficio concreto.
+- Agrega pruebas de intervalos completos, reservas archivadas recientes y codificación segura del enlace de WhatsApp.
+
 ## 0.2.65 - 2026-10-23
 
 - Permite desplazar el lateral de **Escuelita** con la rueda del mouse desde cualquier punto del contenido.

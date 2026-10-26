@@ -240,6 +240,12 @@ ACTIVE_BOOKING_STATUSES = [
     "",
 ]
 UPCOMING_BOOKINGS_LIMIT = 5
+# Durante esta ventana posterior al final del turno, la grilla de Horas lo
+# mantiene visible como oportunidad de "tercer tiempo" para cantina/bar.
+POST_GAME_PROMOTION_MINUTES = max(
+    1,
+    int(os.getenv("POST_GAME_PROMOTION_MINUTES", "60")),
+)
 
 # ================================
 # CONFIGURACION OPERATIVA
