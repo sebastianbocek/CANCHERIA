@@ -118,7 +118,7 @@ El inventario permite crear y editar productos, agregar o descontar existencias 
 
 ### Sección de Escuelita
 
-La pestaña **Escuelita** conecta la actividad formativa con la operación real del complejo. Permite administrar alumnos y responsables, profesores, grupos con horarios recurrentes, cupos, inscripciones, asistencia, preinscripciones y cuotas con pagos parciales. Cada clase bloquea su cancha en la misma disponibilidad que usa WhatsApp, sin crear reservas ficticias, y cada cobro confirmado se registra una sola vez en **Caja**.
+La pestaña **Escuelita** conecta la actividad formativa con la operación real del complejo. Permite administrar y editar alumnos y responsables, profesores, grupos con horarios recurrentes, cupos, inscripciones, asistencia, preinscripciones y cuotas con pagos parciales. **Editar seleccionado** y el doble clic funcionan sobre alumnos, grupos, clases de hoy y cuotas pendientes. Cada clase bloquea su cancha en la misma disponibilidad que usa WhatsApp, sin crear reservas ficticias, y cada cobro confirmado se registra una sola vez en **Caja**.
 
 El agente puede consultar dinámicamente grupos, edades, días, horarios, profesores, precios y cupos; crear preinscripciones; informar cuotas vinculadas al teléfono del responsable; y registrar avisos de ausencia. La IA elige la herramienta adecuada según cada intención o subintención. Cuando no existe una herramienta o falta información real del negocio, CANCHERIA crea un caso de atención humana en silencio y evita respuestas genéricas o datos inventados.
 

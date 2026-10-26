@@ -8,6 +8,10 @@
 - Envía promociones desde la misma sesión de WhatsApp que CANCHERIA tiene encendida, reutilizando la cola durable y el ejecutor de alertas.
 - Separa las solicitudes del panel en archivos atómicos para evitar escrituras simultáneas sobre el estado operativo del agente.
 - Bloquea el envío con una explicación clara cuando CANCHERIA está apagado y agrega regresiones de cola, entrega y actualización automática.
+- Agrega **Editar seleccionado** y doble clic en Escuelita para modificar alumnos o grupos desde Alumnos, Grupos y cupos, Clases de hoy y Cuotas pendientes.
+- Conserva la validación de conflictos y actualiza de inmediato ocupación de cancha, cupos, cuotas, responsables y estados después de editar.
+- Permite que la IA represente un deporte genérico con múltiples modalidades configuradas: “fútbol” consulta Fútbol 5 y Fútbol 7, mientras una petición específica sigue filtrando sólo su modalidad.
+- Actualiza el marcador operativo a `2026-10-26_generic_sport_scope_school_edit_v248`.
 
 ## 0.2.67 - 2026-10-26
 

@@ -138738,7 +138738,9 @@ def _canonical_v183_merge_booking_decision(
     )
 
     resource_types = _canonical_configured_court_types(
-        incoming.get("resource_type")
+        incoming.get("resource_types")
+        or incoming.get("resource_type")
+        or stored.get("resource_types")
         or stored.get("resource_type")
         or pending.get("resource_type")
         or availability.get("resource_type")
@@ -138768,6 +138770,7 @@ def _canonical_v183_merge_booking_decision(
         "time_source": incoming.get("time_source") or stored.get("time_source"),
         "time_evidence": incoming.get("time_evidence") or stored.get("time_evidence"),
         "resource_type": resource_type,
+        "resource_types": resource_types,
         "duration_hours": duration,
     }
 
@@ -140270,23 +140273,29 @@ async def _canonical_v205_current_turn_resource_receipt(
     ).strip()
     configured_types = list(_configured_court_type_labels())
     if not full_turn or not configured_types:
-        return {"explicit": False, "resource_type": None, "evidence": None}
+        return {"explicit": False, "resource_type": None, "resource_types": [], "evidence": None}
 
     system = r"""Sos un extractor semántico de deportes para CANCHERIA.
 Analizá EXCLUSIVAMENTE el turno físico actual. No recibís ni podés inferir
 contexto histórico. Tu única tarea es informar si el usuario mencionó de forma
-explícita un tipo de cancha/deporte y mapearlo a una etiqueta configurada.
+explícita un tipo de cancha/deporte y mapearlo a una o más etiquetas
+configuradas compatibles con el alcance pedido.
 
 REGLAS:
 1. No decidas intención, disponibilidad ni si hay que reservar.
 2. No inventes ni heredes un deporte.
 3. Si hay una mención explícita, evidence debe ser un fragmento LITERAL exacto
    del turno actual que expresa ese deporte.
-4. resource_type debe ser exactamente una de configured_resource_types.
-5. Si no hay deporte explícito o la mención es ambigua, explicit=false.
+4. resource_types sólo puede contener valores exactos de configured_resource_types.
+5. Una modalidad específica (por ejemplo "fútbol 5") devuelve sólo esa etiqueta.
+   Un deporte genérico (por ejemplo "fútbol") devuelve TODAS las modalidades
+   configuradas de ese deporte (por ejemplo Fútbol 5 y Fútbol 7). No elijas una
+   modalidad arbitraria cuando el usuario no la especificó.
+6. resource_type se completa solamente cuando resource_types tiene un elemento.
+7. Si no hay deporte explícito o no puede vincularse a ninguna etiqueta, explicit=false.
 
 Respondé SOLO JSON:
-{"explicit":false,"resource_type":null,"evidence":null,"confidence":0.0}"""
+{"explicit":false,"resource_type":null,"resource_types":[],"evidence":null,"confidence":0.0}"""
     payload = {
         "current_user_turn": full_turn,
         "configured_resource_types": configured_types,
@@ -140309,22 +140318,28 @@ Respondé SOLO JSON:
             "   ⚠️ [CANONICAL V205 CURRENT TURN RESOURCE] "
             f"extractor no disponible: {type(exc).__name__}: {exc}"
         )
-        return {"explicit": False, "resource_type": None, "evidence": None}
+        return {"explicit": False, "resource_type": None, "resource_types": [], "evidence": None}
 
     evidence = str(receipt.get("evidence") or "").strip()
-    proposed = _canonical_configured_court_type(receipt.get("resource_type"))
+    proposed_types = _canonical_configured_court_types(
+        receipt.get("resource_types") or receipt.get("resource_type")
+    )
+    proposed = proposed_types[0] if len(proposed_types) == 1 else None
     literal = bool(
         evidence
         and _texto_simple_para_detector(evidence)
         in _texto_simple_para_detector(full_turn)
     )
-    configured = proposed in configured_types
-    explicit = bool(receipt.get("explicit") is True and proposed and literal and configured)
+    configured = bool(proposed_types) and all(
+        value in configured_types for value in proposed_types
+    )
+    explicit = bool(receipt.get("explicit") is True and literal and configured)
     if not explicit:
-        return {"explicit": False, "resource_type": None, "evidence": None}
+        return {"explicit": False, "resource_type": None, "resource_types": [], "evidence": None}
     return {
         "explicit": True,
         "resource_type": proposed,
+        "resource_types": proposed_types,
         "evidence": evidence,
         "confidence": receipt.get("confidence"),
         "source": "isolated_current_turn_ai",
@@ -140338,13 +140353,18 @@ def _canonical_v205_apply_current_turn_resource(
     """Hace autoritativo el deporte explícito actual antes de continuidad."""
     if not isinstance(decision, dict) or not receipt.get("explicit"):
         return decision
-    resource_type = _canonical_configured_court_type(receipt.get("resource_type"))
-    if not resource_type:
+    resource_types = _canonical_configured_court_types(
+        receipt.get("resource_types") or receipt.get("resource_type")
+    )
+    if not resource_types:
         return decision
+    resource_type = resource_types[0] if len(resource_types) == 1 else None
 
-    previous = str((decision.get("booking") or {}).get("resource_type") or "").strip()
+    previous_booking = decision.get("booking") or {}
+    previous = previous_booking.get("resource_types") or previous_booking.get("resource_type") or "-"
     booking = dict(decision.get("booking") or {})
     booking["resource_type"] = resource_type
+    booking["resource_types"] = resource_types
     booking["resource_type_source"] = "current_turn"
     booking["resource_type_evidence"] = receipt.get("evidence")
     decision["booking"] = booking
@@ -140379,6 +140399,7 @@ def _canonical_v205_apply_current_turn_resource(
                 continue
             action_booking = dict(action.get("booking") or {})
             action_booking["resource_type"] = resource_type
+            action_booking["resource_types"] = resource_types
             action_booking["resource_type_source"] = "current_turn"
             action_booking["resource_type_evidence"] = receipt.get("evidence")
             action["booking"] = action_booking
@@ -140400,7 +140421,7 @@ def _canonical_v205_apply_current_turn_resource(
 
     print(
         "   🎯 [CANONICAL V205 CURRENT TURN RESOURCE AUTHORITY] "
-        f"{previous or '-'} → {resource_type} evidence={receipt.get('evidence')!r}"
+        f"{previous} → {resource_types} evidence={receipt.get('evidence')!r}"
     )
     return decision
 
@@ -141812,7 +141833,7 @@ Respondé SOLO JSON con esta forma:
     "time_source": "current_turn|canonical_state|none",
     "time_evidence": null,
     "references_previous_time": false,
-    "resource_type": null,
+    "resource_type": null, "resource_types": [],
     "duration_hours": null, "with_quincho": null,
     "quincho": null, "quincho_start": null,
     "quincho_duration_hours": null
@@ -143214,9 +143235,15 @@ async def _canonical_v184_execute_availability(
         "booking_shape": "single",
         "temporal_mode": None,
     }
-    if merged.get("resource_type"):
-        args["resource_type"] = merged["resource_type"]
-        args["resource_types"] = [merged["resource_type"]]
+    merged_resource_types = _canonical_configured_court_types(
+        incoming.get("resource_types")
+        or merged.get("resource_types")
+        or merged.get("resource_type")
+    )
+    if merged_resource_types:
+        args["resource_types"] = merged_resource_types
+        if len(merged_resource_types) == 1:
+            args["resource_type"] = merged_resource_types[0]
 
     print(
         "   🕐 [CANONICAL V186 TEMPORAL] "
@@ -148781,7 +148808,7 @@ async def _canonical_v184_execute_decision(
     )
 
 
-AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-23_school_canonical_tools_v247"
+AGENT_V2_EXACT_SLOT_CONFIRM_BUILD = "2026-10-26_generic_sport_scope_school_edit_v248"
 
 
 if __name__ == "__main__":

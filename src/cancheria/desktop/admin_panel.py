@@ -3276,6 +3276,8 @@ class AdminPanel(tk.Toplevel):
         self._school_snapshot: dict = {}
         self._school_student_rows: dict[str, dict] = {}
         self._school_fee_rows: dict[str, dict] = {}
+        self._school_today_rows: dict[str, dict] = {}
+        self._school_selection_source = ""
         stats = tk.Frame(self.school_tab, bg=self.SURFACE)
         stats.pack(fill="x", padx=14, pady=(14, 8))
         self.school_stat_vars = {
@@ -3300,6 +3302,7 @@ class AdminPanel(tk.Toplevel):
         actions.pack(fill="x", padx=14, pady=(0, 8))
         self._action_button(actions, "+  Nuevo alumno", self._new_school_student_dialog, self.BLUE).pack(side="left", padx=3)
         self._action_button(actions, "+  Nuevo grupo", self._new_school_group_dialog, "#7C3AED").pack(side="left", padx=3)
+        self._action_button(actions, "Editar seleccionado", self._edit_school_selected, self.NAVY).pack(side="left", padx=3)
         self._action_button(actions, "Registrar pago", self._school_payment_dialog, self.GREEN).pack(side="left", padx=3)
         self._action_button(actions, "Tomar asistencia", self._school_attendance_dialog, self.ORANGE).pack(side="left", padx=3)
         tk.Button(actions, text="Inscribir alumno", command=self._school_enroll_dialog,
@@ -3399,7 +3402,27 @@ class AdminPanel(tk.Toplevel):
             right, "Preinscripciones por aprobar", ("child", "phone", "group"),
             ("Alumno", "Teléfono", "Grupo"), (125, 105, 105), 4
         )
+        for source, tree in (
+            ("student", self.school_student_tree),
+            ("group", self.school_group_tree),
+            ("today", self.school_today_tree),
+            ("fee", self.school_fee_tree),
+            ("pre", self.school_pre_tree),
+        ):
+            tree.bind(
+                "<<TreeviewSelect>>",
+                lambda _event, selected_source=source: self._remember_school_selection(selected_source),
+                add="+",
+            )
+            tree.bind(
+                "<Double-1>",
+                lambda _event: self._edit_school_selected(),
+                add="+",
+            )
         self._bind_school_side_mousewheel(right_shell)
+
+    def _remember_school_selection(self, source: str) -> None:
+        self._school_selection_source = str(source or "")
 
     def _scroll_school_side(self, event):
         if getattr(event, "num", None) == 4:
@@ -4721,8 +4744,11 @@ class AdminPanel(tk.Toplevel):
                 row.get("name", ""), row.get("schedule_text", ""),
                 f"{row.get('available', 0)}/{row.get('capacity', 0)}",
             ))
+        self._school_today_rows = {}
         for row in self._school_snapshot.get("today_classes", []):
-            self.school_today_tree.insert("", "end", iid=str(row.get("schedule_id")), values=(
+            schedule_id = str(row.get("schedule_id") or "")
+            self._school_today_rows[schedule_id] = row
+            self.school_today_tree.insert("", "end", iid=schedule_id, values=(
                 row.get("start_time", ""), row.get("group_name", ""), row.get("court", "")
             ))
         self._school_fee_rows = {}
@@ -4872,6 +4898,123 @@ class AdminPanel(tk.Toplevel):
             data["capacity"] = int(data["capacity"])
             self.service.create_school_group(**data, schedules=schedule, teacher_id=teacher_id)
         self._school_modal("Nuevo grupo", fields, submit, size="510x700")
+
+    def _edit_school_selected(self) -> None:
+        """Edit the entity represented by the currently selected school row."""
+        try:
+            source = self._school_selection_source
+            if source == "group":
+                selection = self.school_group_tree.selection()
+                group_id = selection[0] if selection else ""
+                self._edit_school_group_dialog(group_id)
+                return
+            if source == "today":
+                selection = self.school_today_tree.selection()
+                row = self._school_today_rows.get(selection[0], {}) if selection else {}
+                self._edit_school_group_dialog(str(row.get("group_id") or ""))
+                return
+            if source == "fee":
+                selection = self.school_fee_tree.selection()
+                fee = self._school_fee_rows.get(selection[0], {}) if selection else {}
+                self._edit_school_student_dialog(str(fee.get("student_id") or ""))
+                return
+            if source == "student":
+                student = self._selected_school_student()
+                self._edit_school_student_dialog(str(student.get("student_id") or ""))
+                return
+            if source == "pre":
+                raise ValueError(
+                    "Las preinscripciones se aprueban desde ‘Aprobar preinscripción’. "
+                    "Seleccioná un alumno, grupo, clase o cuota para editar sus datos."
+                )
+            raise ValueError("Seleccioná un alumno, grupo, clase o cuota para editar.")
+        except Exception as exc:
+            messagebox.showerror("Editar Escuelita", str(exc), parent=self)
+
+    def _edit_school_student_dialog(self, student_id: str) -> None:
+        student = next(
+            (
+                row for row in self.service.school_students(include_inactive=True)
+                if str(row.get("student_id") or "") == str(student_id or "")
+            ),
+            None,
+        )
+        if not student:
+            raise ValueError("El alumno seleccionado ya no existe.")
+        status_labels = {"active": "Activo", "inactive": "Inactivo"}
+        fields = [
+            ("name", "Alumno", "entry", student.get("name"), ()),
+            ("birth_date", "Nacimiento (AAAA-MM-DD)", "entry", student.get("birth_date"), ()),
+            ("guardian_name", "Responsable", "entry", student.get("guardian_name"), ()),
+            ("guardian_phone", "Teléfono responsable", "entry", student.get("guardian_phone"), ()),
+            ("emergency_phone", "Teléfono de emergencia", "entry", student.get("emergency_phone"), ()),
+            ("medical_notes", "Observaciones médicas", "entry", student.get("medical_notes"), ()),
+            ("status", "Estado", "combo", status_labels.get(str(student.get("status")), "Activo"), tuple(status_labels.values())),
+        ]
+        reverse_status = {label: value for value, label in status_labels.items()}
+        self._school_modal(
+            "Editar alumno",
+            fields,
+            lambda data: self.service.update_school_student(
+                student_id,
+                **{**data, "status": reverse_status[data["status"]]},
+            ),
+            size="500x570",
+        )
+
+    def _edit_school_group_dialog(self, group_id: str) -> None:
+        group = next(
+            (
+                row for row in self.service.school_groups(include_inactive=True)
+                if str(row.get("group_id") or "") == str(group_id or "")
+            ),
+            None,
+        )
+        if not group:
+            raise ValueError("El grupo seleccionado ya no existe.")
+        teachers = self.service.school_teachers(include_inactive=True)
+        teacher_labels = ["Sin profesor", *[str(row["name"]) for row in teachers]]
+        teacher_by_name = {str(row["name"]): str(row["teacher_id"]) for row in teachers}
+        courts = self.service.courts()
+        schedule = (group.get("schedules") or [{}])[0]
+        day_names = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
+        active_label = "Activo" if bool(group.get("active")) else "Inactivo"
+        fields = [
+            ("name", "Nombre del grupo", "entry", group.get("name"), ()),
+            ("sport", "Deporte", "entry", group.get("sport"), ()),
+            ("category", "Categoría", "entry", group.get("category"), ()),
+            ("age_min", "Edad mínima", "entry", group.get("age_min"), ()),
+            ("age_max", "Edad máxima", "entry", group.get("age_max"), ()),
+            ("court", "Cancha", "combo", group.get("court"), courts),
+            ("teacher", "Profesor existente", "combo", group.get("teacher_name") or "Sin profesor", teacher_labels),
+            ("new_teacher", "Nuevo profesor (opcional)", "entry", "", ()),
+            ("capacity", "Cupo", "entry", group.get("capacity"), ()),
+            ("monthly_fee", "Cuota mensual", "entry", group.get("monthly_fee"), ()),
+            ("weekday", "Día", "combo", day_names[int(schedule.get("weekday") or 0)], day_names),
+            ("start_time", "Hora (HH:MM)", "entry", schedule.get("start_time") or "18:00", ()),
+            ("duration", "Duración (minutos)", "entry", schedule.get("duration_minutes") or 60, ()),
+            ("active", "Estado", "combo", active_label, ("Activo", "Inactivo")),
+        ]
+
+        def submit(data):
+            teacher_name, new_teacher = data.pop("teacher"), data.pop("new_teacher")
+            teacher_id = teacher_by_name.get(teacher_name, "")
+            if new_teacher:
+                teacher_id = self.service.create_school_teacher(name=new_teacher)["teacher_id"]
+            schedules = [{
+                "weekday": day_names.index(data.pop("weekday")),
+                "start_time": data.pop("start_time"),
+                "duration_minutes": int(data.pop("duration")),
+            }, *[dict(item) for item in (group.get("schedules") or [])[1:]]]
+            data["age_min"] = int(data["age_min"]) if data["age_min"] else None
+            data["age_max"] = int(data["age_max"]) if data["age_max"] else None
+            data["capacity"] = int(data["capacity"])
+            data["active"] = data["active"] == "Activo"
+            self.service.update_school_group(
+                group_id, **data, schedules=schedules, teacher_id=teacher_id
+            )
+
+        self._school_modal("Editar grupo", fields, submit, size="520x750")
 
     def _school_enroll_dialog(self) -> None:
         try:

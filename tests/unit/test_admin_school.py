@@ -62,6 +62,36 @@ def test_group_persists_and_blocks_real_calendar_slots(tmp_path):
     assert calendar._esta_reservado(today, dt.time(18, 0), "Cancha 1") is True
 
 
+def test_group_and_student_can_be_edited_from_the_admin_contract(tmp_path):
+    school = build_school(tmp_path)
+    group = create_group(school)
+    student = school.create_student(
+        name="Leo", guardian_name="Sebastián", guardian_phone="3511112222"
+    )
+
+    updated_group = school.update_group(
+        group["group_id"],
+        name="Categoría 2016/17",
+        capacity=16,
+        monthly_fee=35000,
+        schedules=[{
+            "weekday": dt.date.today().weekday(),
+            "start_time": "19:00",
+            "duration_minutes": 60,
+        }],
+    )
+    updated_student = school.update_student(
+        student["student_id"], guardian_name="Sebastián B.", medical_notes="Apto"
+    )
+
+    assert updated_group["name"] == "Categoría 2016/17"
+    assert updated_group["capacity"] == 16
+    assert updated_group["monthly_fee"] == 35000
+    assert updated_group["schedules"][0]["start_time"] == "19:00"
+    assert updated_student["guardian_name"] == "Sebastián B."
+    assert updated_student["medical_notes"] == "Apto"
+
+
 def test_group_rejects_school_and_booking_conflicts(tmp_path):
     school = build_school(tmp_path)
     create_group(school)
@@ -167,8 +197,14 @@ def test_school_ui_and_canonical_whatsapp_contract_are_present():
     agent = (root / "legacy/WPSetter_legacy.py").read_text(encoding="utf-8")
 
     assert panel.index('text="Torneos"') < panel.index('text="Escuelita"') < panel.index('text="Turnos Fijos"')
-    for label in ("+  Nuevo alumno", "+  Nuevo grupo", "Registrar pago", "Tomar asistencia"):
+    for label in (
+        "+  Nuevo alumno", "+  Nuevo grupo", "Editar seleccionado",
+        "Registrar pago", "Tomar asistencia",
+    ):
         assert label in panel
+    assert "def _edit_school_group_dialog" in panel
+    assert "def _edit_school_student_dialog" in panel
+    assert '"<Double-1>"' in panel
     assert "self.school_side_canvas" in panel
     assert "self.school_side_scroll" in panel
     assert "tree.configure(yscrollcommand=scroll.set)" in panel
