@@ -92,6 +92,42 @@ def test_group_and_student_can_be_edited_from_the_admin_contract(tmp_path):
     assert updated_student["medical_notes"] == "Apto"
 
 
+def test_group_and_student_can_be_deleted_without_orphans_or_losing_cash_history(tmp_path):
+    school = build_school(tmp_path)
+    group = create_group(school)
+    student = school.create_student(
+        name="Leo", guardian_name="Sebastián", guardian_phone="3511112222"
+    )
+    enrollment = school.enroll_student(student["student_id"], group["group_id"])
+    school.record_attendance(enrollment["enrollment_id"], dt.date.today().isoformat(), "present")
+    fee = school.fees()[0]
+    school.record_payment(fee["fee_id"], amount=10000, method="Efectivo", request_key="delete-1")
+    today = dt.date.today().isoformat()
+    assert len(school.cash_ledger.list_movements(start_date=today, end_date=today)) == 1
+
+    deleted_group = school.delete_group(group["group_id"])
+    assert deleted_group["deleted"] is True
+    assert school.group(group["group_id"]) == {}
+    assert school.students()[0]["student_id"] == student["student_id"]
+    assert school.students()[0]["enrollment_id"] is None
+    assert school.fees() == []
+    assert len(school.cash_ledger.list_movements(start_date=today, end_date=today)) == 1
+
+    group_two = create_group(school, name="Categoría 2016", start="19:00")
+    enrollment_two = school.enroll_student(student["student_id"], group_two["group_id"])
+    assert enrollment_two["student_id"] == student["student_id"]
+    deleted_student = school.delete_student(student["student_id"])
+    assert deleted_student["deleted"] is True
+    assert school.students(include_inactive=True) == []
+    assert school.enrollments(active_only=False) == []
+
+    with school._connect() as connection:
+        actions = [row[0] for row in connection.execute(
+            "SELECT action FROM school_history WHERE action='deleted' ORDER BY created_at"
+        ).fetchall()]
+    assert actions == ["deleted", "deleted"]
+
+
 def test_group_rejects_school_and_booking_conflicts(tmp_path):
     school = build_school(tmp_path)
     create_group(school)
@@ -204,6 +240,9 @@ def test_school_ui_and_canonical_whatsapp_contract_are_present():
         assert label in panel
     assert "def _edit_school_group_dialog" in panel
     assert "def _edit_school_student_dialog" in panel
+    assert "delete_school_student" in panel
+    assert "delete_school_group" in panel
+    assert '"🗑  Borrar"' in panel
     assert '"<Double-1>"' in panel
     assert "self.school_side_canvas" in panel
     assert "self.school_side_scroll" in panel

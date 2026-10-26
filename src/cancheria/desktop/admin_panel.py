@@ -4806,7 +4806,16 @@ class AdminPanel(tk.Toplevel):
             raise ValueError("Seleccioná un alumno de la tabla.")
         return dict(self._school_student_rows.get(selection[0]) or {})
 
-    def _school_modal(self, title: str, fields: list[tuple], submit, *, size="470x520") -> None:
+    def _school_modal(
+        self,
+        title: str,
+        fields: list[tuple],
+        submit,
+        *,
+        size="470x520",
+        delete=None,
+        delete_confirm: str = "",
+    ) -> None:
         dialog = tk.Toplevel(self)
         dialog.title(title)
         dialog.configure(bg="white")
@@ -4840,9 +4849,28 @@ class AdminPanel(tk.Toplevel):
                 self._refresh_cash()
             except Exception as exc:
                 messagebox.showerror(title, str(exc), parent=dialog)
-        self._action_button(form, "Guardar", save, self.BLUE).grid(
-            row=len(fields) + 1, column=0, columnspan=2, sticky="e", pady=(14, 0)
-        )
+        actions = tk.Frame(form, bg="white")
+        actions.grid(row=len(fields) + 1, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+        if delete is not None:
+            def remove():
+                if not messagebox.askyesno(
+                    "Confirmar borrado",
+                    delete_confirm or "¿Querés borrar este registro definitivamente?",
+                    icon="warning",
+                    parent=dialog,
+                ):
+                    return
+                try:
+                    delete()
+                    dialog.destroy()
+                    self._refresh_school()
+                    self._refresh_hours()
+                    self._refresh_cash()
+                except Exception as exc:
+                    messagebox.showerror(title, str(exc), parent=dialog)
+
+            self._action_button(actions, "🗑  Borrar", remove, self.PAST_GRAY).pack(side="left")
+        self._action_button(actions, "Guardar", save, self.BLUE).pack(side="right")
 
     def _new_school_student_dialog(self) -> None:
         groups = self.service.school_groups()
@@ -4960,6 +4988,12 @@ class AdminPanel(tk.Toplevel):
                 **{**data, "status": reverse_status[data["status"]]},
             ),
             size="500x570",
+            delete=lambda: self.service.delete_school_student(student_id),
+            delete_confirm=(
+                f"¿Borrar definitivamente al alumno {student.get('name', '')}?\n\n"
+                "También se borrarán sus inscripciones, asistencias y cuotas de Escuelita. "
+                "Los movimientos ya registrados en Caja se conservarán."
+            ),
         )
 
     def _edit_school_group_dialog(self, group_id: str) -> None:
@@ -5014,7 +5048,18 @@ class AdminPanel(tk.Toplevel):
                 group_id, **data, schedules=schedules, teacher_id=teacher_id
             )
 
-        self._school_modal("Editar grupo", fields, submit, size="520x750")
+        self._school_modal(
+            "Editar grupo",
+            fields,
+            submit,
+            size="520x750",
+            delete=lambda: self.service.delete_school_group(group_id),
+            delete_confirm=(
+                f"¿Borrar definitivamente el grupo {group.get('name', '')}?\n\n"
+                "Se liberarán sus horarios y se borrarán las inscripciones, asistencias y cuotas "
+                "vinculadas. Los alumnos y los movimientos ya registrados en Caja se conservarán."
+            ),
+        )
 
     def _school_enroll_dialog(self) -> None:
         try:

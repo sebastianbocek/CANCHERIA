@@ -1634,11 +1634,17 @@ class DesktopAdminService:
     def update_school_group(self, group_id: str, **payload: Any) -> dict[str, Any]:
         return self.school.update_group(group_id, **payload)
 
+    def delete_school_group(self, group_id: str, **payload: Any) -> dict[str, Any]:
+        return self.school.delete_group(group_id, **payload)
+
     def create_school_student(self, **payload: Any) -> dict[str, Any]:
         return self.school.create_student(**payload)
 
     def update_school_student(self, student_id: str, **payload: Any) -> dict[str, Any]:
         return self.school.update_student(student_id, **payload)
+
+    def delete_school_student(self, student_id: str, **payload: Any) -> dict[str, Any]:
+        return self.school.delete_student(student_id, **payload)
 
     def enroll_school_student(self, student_id: str, group_id: str, **payload: Any) -> dict[str, Any]:
         return self.school.enroll_student(student_id, group_id, **payload)

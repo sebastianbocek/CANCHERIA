@@ -461,6 +461,67 @@ class SchoolService:
         result["schedule_text"] = self._schedule_text(result["schedules"])
         return result
 
+    def delete_group(self, group_id: str, *, responsible: str = "Administrador") -> dict[str, Any]:
+        """Delete a group and its dependent school records without erasing students or cash history."""
+        current = self.group(group_id)
+        if not current:
+            raise ValueError("El grupo ya no existe.")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            enrollment_ids = [
+                str(row[0]) for row in connection.execute(
+                    "SELECT enrollment_id FROM school_enrollments WHERE group_id=?", (group_id,)
+                ).fetchall()
+            ]
+            fee_ids: list[str] = []
+            if enrollment_ids:
+                placeholders = ",".join("?" for _ in enrollment_ids)
+                fee_ids = [
+                    str(row[0]) for row in connection.execute(
+                        f"SELECT fee_id FROM school_fees WHERE enrollment_id IN ({placeholders})",
+                        enrollment_ids,
+                    ).fetchall()
+                ]
+                if fee_ids:
+                    fee_placeholders = ",".join("?" for _ in fee_ids)
+                    connection.execute(
+                        f"DELETE FROM school_payments WHERE fee_id IN ({fee_placeholders})", fee_ids
+                    )
+                connection.execute(
+                    f"DELETE FROM school_fees WHERE enrollment_id IN ({placeholders})", enrollment_ids
+                )
+                connection.execute(
+                    f"DELETE FROM school_attendance WHERE enrollment_id IN ({placeholders})",
+                    enrollment_ids,
+                )
+                connection.execute("DELETE FROM school_enrollments WHERE group_id=?", (group_id,))
+            connection.execute("DELETE FROM school_group_schedules WHERE group_id=?", (group_id,))
+            connection.execute("DELETE FROM school_class_exceptions WHERE group_id=?", (group_id,))
+            # A WhatsApp lead remains useful even if its suggested group is deleted.
+            connection.execute(
+                "UPDATE school_pre_enrollments SET group_id='', updated_at=? WHERE group_id=?",
+                (_now(), group_id),
+            )
+            self._history(
+                connection,
+                "group",
+                group_id,
+                "deleted",
+                {
+                    "name": current.get("name", ""),
+                    "enrollments_removed": len(enrollment_ids),
+                    "fees_removed": len(fee_ids),
+                },
+                responsible,
+            )
+            connection.execute("DELETE FROM school_groups WHERE group_id=?", (group_id,))
+        return {
+            "group_id": group_id,
+            "name": current.get("name", ""),
+            "deleted": True,
+            "enrollments_removed": len(enrollment_ids),
+        }
+
     @staticmethod
     def _schedule_text(schedules: Iterable[dict[str, Any]]) -> str:
         return " · ".join(
@@ -566,6 +627,63 @@ class SchoolService:
             return self._row(connection.execute(
                 "SELECT * FROM school_students WHERE student_id=?", (student_id,)
             ).fetchone())
+
+    def delete_student(self, student_id: str, *, responsible: str = "Administrador") -> dict[str, Any]:
+        """Delete one student and school-only dependants while preserving ledger movements."""
+        with self._connect() as connection:
+            current_row = connection.execute(
+                "SELECT * FROM school_students WHERE student_id=?", (student_id,)
+            ).fetchone()
+            if current_row is None:
+                raise ValueError("El alumno ya no existe.")
+            current = dict(current_row)
+            connection.execute("BEGIN IMMEDIATE")
+            enrollment_ids = [
+                str(row[0]) for row in connection.execute(
+                    "SELECT enrollment_id FROM school_enrollments WHERE student_id=?", (student_id,)
+                ).fetchall()
+            ]
+            fee_ids: list[str] = []
+            if enrollment_ids:
+                placeholders = ",".join("?" for _ in enrollment_ids)
+                fee_ids = [
+                    str(row[0]) for row in connection.execute(
+                        f"SELECT fee_id FROM school_fees WHERE enrollment_id IN ({placeholders})",
+                        enrollment_ids,
+                    ).fetchall()
+                ]
+                if fee_ids:
+                    fee_placeholders = ",".join("?" for _ in fee_ids)
+                    connection.execute(
+                        f"DELETE FROM school_payments WHERE fee_id IN ({fee_placeholders})", fee_ids
+                    )
+                connection.execute(
+                    f"DELETE FROM school_fees WHERE enrollment_id IN ({placeholders})", enrollment_ids
+                )
+                connection.execute(
+                    f"DELETE FROM school_attendance WHERE enrollment_id IN ({placeholders})",
+                    enrollment_ids,
+                )
+                connection.execute("DELETE FROM school_enrollments WHERE student_id=?", (student_id,))
+            self._history(
+                connection,
+                "student",
+                student_id,
+                "deleted",
+                {
+                    "name": current.get("name", ""),
+                    "enrollments_removed": len(enrollment_ids),
+                    "fees_removed": len(fee_ids),
+                },
+                responsible,
+            )
+            connection.execute("DELETE FROM school_students WHERE student_id=?", (student_id,))
+        return {
+            "student_id": student_id,
+            "name": current.get("name", ""),
+            "deleted": True,
+            "enrollments_removed": len(enrollment_ids),
+        }
 
     def enroll_student(
         self,

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.69 - 2026-10-26
+
+- Agrega **Borrar** dentro de los diálogos de **Editar alumno** y **Editar grupo** de Escuelita.
+- Solicita una confirmación descriptiva antes de eliminar y actualiza Escuelita, Horas y Caja inmediatamente.
+- Al borrar un grupo libera sus horarios, elimina sus inscripciones, asistencias y cuotas vinculadas, pero conserva los alumnos y las preinscripciones como contactos sin grupo.
+- Al borrar un alumno elimina sus inscripciones, asistencias, cuotas y pagos internos de Escuelita.
+- Conserva siempre los movimientos históricos ya registrados en Caja y registra el borrado en el historial de auditoría de Escuelita.
+- Agrega pruebas transaccionales para impedir datos huérfanos o pérdida del historial financiero.
+
 ## 0.2.68 - 2026-10-26
 
 - Actualiza automáticamente la pestaña **Horas** cuando un turno pasa de ocupado a **En curso** o a **Recién terminado**, sin exigir el botón Actualizar.
