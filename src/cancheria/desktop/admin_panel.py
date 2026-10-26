@@ -3,7 +3,6 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 import datetime as dt
-import webbrowser
 from pathlib import Path
 from typing import Callable
 
@@ -665,13 +664,16 @@ class AdminPanel(tk.Toplevel):
         service: DesktopAdminService,
         open_configurator: Callable[[], None],
         on_notifications_changed: Callable[[dict[str, int]], None] | None = None,
+        send_whatsapp_message: Callable[[dict, str], str] | None = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
         self.open_configurator_callback = open_configurator
         self.on_notifications_changed = on_notifications_changed or (lambda _counts: None)
+        self.send_whatsapp_message = send_whatsapp_message
         self._notification_poll_id: str | None = None
         self._last_notification_counts: dict[str, int] | None = None
+        self._hours_status_signature: tuple | None = None
         self._initial_notification_tab_selected = False
         self.title("CANCHERIA · Administración")
         screen_width = max(1100, self.winfo_screenwidth())
@@ -3792,6 +3794,17 @@ class AdminPanel(tk.Toplevel):
                 self._refresh_cash()
             if self.notebook.select() == str(self.bar_tab):
                 self._refresh_bar()
+            if self.notebook.select() == str(self.hours_tab):
+                show_all = bool(
+                    hasattr(self, "hours_show_all_var")
+                    and self.hours_show_all_var.get()
+                )
+                schedule = self.service.day_schedule(
+                    self.hours_day_var.get(),
+                    include_all=show_all,
+                )
+                if self._hours_schedule_signature(schedule) != self._hours_status_signature:
+                    self._refresh_hours(schedule)
         except Exception:
             # A transient file write must not interrupt the administrator.
             pass
@@ -4153,21 +4166,41 @@ class AdminPanel(tk.Toplevel):
         self.hours_day_var.set((selected + datetime.timedelta(days=delta)).isoformat())
         self._refresh_hours()
 
-    def _refresh_hours(self) -> None:
+    @staticmethod
+    def _hours_schedule_signature(schedule: dict) -> tuple:
+        return (
+            str(schedule.get("day") or ""),
+            tuple(str(slot) for slot in (schedule.get("slots") or [])),
+            tuple(
+                (
+                    str(cell.get("time") or ""),
+                    str(cell.get("court") or ""),
+                    str(cell.get("status") or ""),
+                    str((cell.get("booking") or {}).get("reservation_id") or ""),
+                    str(cell.get("starts_at") or ""),
+                    str(cell.get("ends_at") or ""),
+                )
+                for cell in (schedule.get("cells") or [])
+            ),
+        )
+
+    def _refresh_hours(self, schedule: dict | None = None) -> None:
         if not hasattr(self, "hours_grid"):
             return
         try:
             show_all = bool(
                 hasattr(self, "hours_show_all_var") and self.hours_show_all_var.get()
             )
-            schedule = (
-                self.service.day_schedule(self.hours_day_var.get(), include_all=True)
-                if show_all else self.service.day_schedule(self.hours_day_var.get())
-            )
+            if schedule is None:
+                schedule = (
+                    self.service.day_schedule(self.hours_day_var.get(), include_all=True)
+                    if show_all else self.service.day_schedule(self.hours_day_var.get())
+                )
         except Exception as exc:
             messagebox.showerror("Horas", str(exc), parent=self)
             return
 
+        self._hours_status_signature = self._hours_schedule_signature(schedule)
         self.hours_day_var.set(schedule["day"])
         for widget in self.hours_grid.winfo_children():
             widget.destroy()
@@ -4424,28 +4457,34 @@ class AdminPanel(tk.Toplevel):
         buttons = tk.Frame(dialog, bg=self.SURFACE)
         buttons.pack(fill="x", padx=18, pady=(0, 16))
 
-        def open_whatsapp() -> None:
+        def send_message() -> None:
             text_value = message.get("1.0", "end").strip()
             if "{}" in text_value:
                 messagebox.showwarning(
                     "Promoción",
-                    "Reemplazá {} por la promoción concreta antes de abrir WhatsApp.",
+                    "Reemplazá {} por la promoción concreta antes de enviar el mensaje.",
                     parent=dialog,
                 )
                 return
             try:
-                link_method = getattr(self.service, "promotion_whatsapp_link")
-                target = link_method(booking, text_value)
-                if not webbrowser.open_new_tab(target):
-                    raise RuntimeError("No se pudo abrir WhatsApp en el navegador.")
+                if not callable(self.send_whatsapp_message):
+                    raise RuntimeError(
+                        "No se pudo conectar el panel con la sesión activa de CANCHERIA."
+                    )
+                result = self.send_whatsapp_message(booking, text_value)
                 dialog.destroy()
+                messagebox.showinfo(
+                    "Mensaje en proceso",
+                    result,
+                    parent=self,
+                )
             except Exception as exc:
                 messagebox.showerror("Promoción por WhatsApp", str(exc), parent=dialog)
 
         self._action_button(
             buttons,
-            "Abrir WhatsApp",
-            open_whatsapp,
+            "Enviar Mensaje",
+            send_message,
             self.GREEN,
         ).pack(side="right")
         self._action_button(

@@ -1105,6 +1105,7 @@ class CancheriaDesktop(tk.Tk):
                 service,
                 self.open_configurator,
                 self._update_admin_notification_badge,
+                self._send_admin_whatsapp_message,
             )
             self.admin_window.protocol(
                 "WM_DELETE_WINDOW",
@@ -1114,6 +1115,25 @@ class CancheriaDesktop(tk.Tk):
         except Exception as exc:
             self.admin_window = None
             messagebox.showerror("CANCHERIA", f"No pude abrir Administración:\n{exc}")
+
+    def _send_admin_whatsapp_message(self, booking: dict, message: str) -> str:
+        """Hand a manual message to the worker that owns the active WA profile."""
+        if self.process is None or self.process.poll() is not None:
+            raise RuntimeError(
+                "CANCHERIA está apagado. Presioná ENCENDER antes de enviar el mensaje."
+            )
+        delivery_id = self._get_admin_service().queue_customer_whatsapp_message(
+            booking,
+            message,
+        )
+        phone = str((booking or {}).get("telefono") or "cliente").strip()
+        self._append_log(
+            f"📤 [MENSAJE MANUAL] encolado para {phone} id={delivery_id}"
+        )
+        return (
+            "El mensaje quedó listo para enviarse desde la sesión de WhatsApp "
+            "que CANCHERIA ya tiene encendida."
+        )
 
     def _get_admin_service(self):
         if self.admin_service is None:

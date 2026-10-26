@@ -12412,6 +12412,45 @@ def _admin_alert_batch_delivered(delivery_ids: List[str]) -> bool:
     return all(delivery_id in sent_registry for delivery_id in delivery_ids)
 
 
+def ingest_desktop_outbox_requests() -> int:
+    """Import atomic desktop requests into the worker-owned durable queue."""
+    request_dir = runtime_file("admin_outbox_requests")
+    try:
+        request_dir.mkdir(parents=True, exist_ok=True)
+        request_paths = sorted(request_dir.glob("customer_message_*.json"))
+    except OSError as exc:
+        print(f"   ⚠️ [MENSAJE MANUAL] no pude leer solicitudes: {exc}")
+        return 0
+
+    imported = 0
+    for request_path in request_paths:
+        item = _json_read(str(request_path), {})
+        if not isinstance(item, dict):
+            continue
+        delivery_id = str(item.get("delivery_id") or request_path.stem).strip()
+        if (
+            not delivery_id.startswith("customer_message_")
+            or str(item.get("category") or "") != "operator_customer_message"
+        ):
+            continue
+        state = _json_read(PROACTIVE_STATE_FILE, {"sent": {}})
+        queue = state.setdefault("admin_alert_queue", {})
+        sent_registry = state.setdefault("admin_alert_sent", {})
+        if delivery_id not in sent_registry:
+            queue.setdefault(delivery_id, item)
+        state["updated_at"] = datetime.datetime.now(TIMEZONE).isoformat()
+        if not _json_write(PROACTIVE_STATE_FILE, state):
+            continue
+        try:
+            request_path.unlink(missing_ok=True)
+        except OSError:
+            continue
+        imported += 1
+    if imported:
+        print(f"   📥 [MENSAJE MANUAL] {imported} solicitud(es) incorporada(s)")
+    return imported
+
+
 async def flush_admin_alert_queue(
     page,
     *,
@@ -12508,7 +12547,12 @@ async def flush_admin_alert_queue(
                 continue
 
         recipient = normalize_phone(item.get("recipient") or "")
-        if not recipient or recipient not in set(_authorized_alert_recipients()):
+        category = str(item.get("category") or "").strip()
+        is_operator_customer_message = category == "operator_customer_message"
+        if not recipient or (
+            not is_operator_customer_message
+            and recipient not in set(_authorized_alert_recipients())
+        ):
             latest_queue.pop(delivery_id, None)
             latest["updated_at"] = datetime.datetime.now(TIMEZONE).isoformat()
             _json_write(PROACTIVE_STATE_FILE, latest)
@@ -15254,6 +15298,7 @@ async def ejecutar_tareas_proactivas(page) -> None:
         recurring_reconciler()
     reconcile_pending_booking_admin_alerts()
     reconcile_pending_event_registration_admin_alerts()
+    ingest_desktop_outbox_requests()
     await flush_admin_alert_queue(page, max_deliveries=20, respect_inbox=True)
     if _reactive_handoff_pending():
         return

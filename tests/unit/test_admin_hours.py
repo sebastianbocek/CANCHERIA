@@ -260,6 +260,30 @@ def test_promotion_link_uses_persisted_whatsapp_link_and_encodes_message(monkeyp
     assert link.startswith("https://wa.me/5493513333333?text=")
 
 
+def test_customer_message_is_queued_for_active_whatsapp_worker(monkeypatch, tmp_path):
+    service = build_service(monkeypatch, [])
+    service.root = tmp_path
+    service.runtime = tmp_path / "runtime"
+    service.runtime.mkdir()
+    delivery_id = service.queue_customer_whatsapp_message(
+        {
+            "reservation_id": "PROMO-1",
+            "telefono": "+54 9 351 333-3333",
+        },
+        "2x1 en bebidas",
+    )
+
+    queued = service_module.JSONStore(
+        service.runtime / "admin_outbox_requests" / f"{delivery_id}.json"
+    ).read({})
+    assert delivery_id.startswith("customer_message_")
+    assert queued["category"] == "operator_customer_message"
+    assert queued["recipient"] == "+5493513333333"
+    assert queued["text"] == "2x1 en bebidas"
+    assert queued["context"]["reservation_id"] == "PROMO-1"
+    assert not (service.runtime / "proactive_state.json").exists()
+
+
 def test_bookings_with_history_keeps_current_first_and_history_newest_first(monkeypatch):
     current_day = future_day()
     service = build_service(monkeypatch, [{
@@ -687,11 +711,30 @@ def test_admin_panel_exposes_hours_tab_and_click_editing():
     assert "def _past_booking_details_dialog" in source
     assert "def _promotion_dialog" in source
     assert '"in_progress", "recently_finished"' in source
-    assert '"Abrir WhatsApp"' in source
+    assert '"Enviar Mensaje"' in source
+    assert "webbrowser.open_new_tab" not in source
+    assert "def _hours_schedule_signature" in source
+    assert "self._refresh_hours(schedule)" in source
     assert "Detalle del turno pasado" in source
     assert "Consulta de solo lectura" in source
     assert "def _toggle_booking_sort" in source
     assert 'indicator = "  ▲" if self._booking_sort_ascending else "  ▼"' in source
+
+
+def test_worker_delivers_operator_messages_through_existing_alert_queue():
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "legacy"
+        / "WPSetter_legacy.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'category == "operator_customer_message"' in source
+    assert "is_operator_customer_message" in source
+    assert "def ingest_desktop_outbox_requests" in source
+    assert "ingest_desktop_outbox_requests()" in source
+    assert "await flush_admin_alert_queue(page" in source
 
 
 def test_admin_operation_date_reuses_visual_calendar_picker():

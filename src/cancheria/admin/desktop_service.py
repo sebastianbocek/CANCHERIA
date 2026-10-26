@@ -1879,6 +1879,56 @@ class DesktopAdminService:
         query["text"] = clean_message
         return urlunsplit((parts.scheme or "https", parts.netloc, parts.path, urlencode(query), parts.fragment))
 
+    def queue_customer_whatsapp_message(
+        self,
+        booking: dict[str, Any],
+        message: str,
+    ) -> str:
+        """Queue an operator-authored message for the active CANCHERIA session.
+
+        The worker drains this item through the same durable delivery queue used
+        by administrative alerts.  The desktop never opens a second browser or
+        creates a competing WhatsApp profile.
+        """
+        clean_message = str(message or "").strip()
+        if not clean_message:
+            raise ValueError("Escribí el mensaje que querés enviar.")
+        phone = str((booking or {}).get("telefono") or "").strip()
+        digits = self._phone_digits(phone)
+        if len(digits) < 8:
+            raise ValueError("La reserva no tiene un teléfono válido asociado.")
+
+        delivery_id = f"customer_message_{uuid.uuid4().hex}"
+        now_iso = dt.datetime.now().astimezone().isoformat()
+        request = {
+            "delivery_id": delivery_id,
+            "batch_key": delivery_id,
+            "category": "operator_customer_message",
+            "recipient": f"+{digits}",
+            "text": clean_message,
+            "attachment_path": "",
+            "attachment_title": "",
+            "context": {
+                "reservation_id": str(
+                    (booking or {}).get("reservation_id") or ""
+                ).strip(),
+                "telefono": f"+{digits}",
+                "source": "admin_hours_promotion",
+            },
+            "text_sent": False,
+            "attachment_title_sent": False,
+            "attempts": 0,
+            "created_at": now_iso,
+            "last_attempt_at": None,
+            "last_error": "",
+        }
+        # One file per request means the desktop and WhatsApp worker never
+        # perform a competing read/modify/write on proactive_state.json.
+        request_dir = self.runtime / "admin_outbox_requests"
+        request_dir.mkdir(parents=True, exist_ok=True)
+        JSONStore(request_dir / f"{delivery_id}.json").write(request)
+        return delivery_id
+
     @staticmethod
     def _phone_digits(value: str) -> str:
         raw = str(value or "").strip()

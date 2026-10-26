@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.68 - 2026-10-26
+
+- Actualiza automáticamente la pestaña **Horas** cuando un turno pasa de ocupado a **En curso** o a **Recién terminado**, sin exigir el botón Actualizar.
+- Compara el estado temporal cada tres segundos y redibuja la grilla únicamente cuando existe un cambio real.
+- Reemplaza **Abrir WhatsApp** por **Enviar Mensaje** y elimina la apertura de otro navegador o perfil.
+- Envía promociones desde la misma sesión de WhatsApp que CANCHERIA tiene encendida, reutilizando la cola durable y el ejecutor de alertas.
+- Separa las solicitudes del panel en archivos atómicos para evitar escrituras simultáneas sobre el estado operativo del agente.
+- Bloquea el envío con una explicación clara cuando CANCHERIA está apagado y agrega regresiones de cola, entrega y actualización automática.
+
 ## 0.2.67 - 2026-10-26
 
 - Corrige la pestaña **Horas** para que relea automáticamente los cambios guardados por el configurador sin reiniciar CANCHERIA.
