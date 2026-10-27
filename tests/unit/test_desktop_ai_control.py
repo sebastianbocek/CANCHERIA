@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 from cancheria.desktop.ai_control import (
     ai_control_path,
@@ -134,3 +135,74 @@ def test_desktop_worker_uses_unbuffered_realtime_log_transport(tmp_path, monkeyp
     assert 'env["PYTHONUNBUFFERED"] = "1"' in source
     assert "reconfigure(line_buffering=True, write_through=True)" in launcher
     assert "while processed < 200" in source
+
+
+def test_stop_process_only_clears_handle_after_confirmed_exit(monkeypatch):
+    from cancheria.desktop import gui
+
+    class FakeProcess:
+        pid = 321
+
+        def __init__(self):
+            self.running = True
+            self.kill_calls = 0
+
+        def poll(self):
+            return None if self.running else 0
+
+        def wait(self, timeout=None):
+            if self.running:
+                raise subprocess.TimeoutExpired("worker", timeout)
+            return 0
+
+        def kill(self):
+            self.kill_calls += 1
+            self.running = False
+
+    process = FakeProcess()
+    desktop = gui.CancheriaDesktop.__new__(gui.CancheriaDesktop)
+    desktop.process = process
+    desktop._append_log = lambda *_args: None
+    monkeypatch.setattr(gui.os, "name", "nt")
+    monkeypatch.setattr(
+        gui.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 1),
+    )
+    monkeypatch.setattr(gui.time, "sleep", lambda *_args: None)
+
+    assert gui.CancheriaDesktop._stop_process(desktop) is True
+    assert process.kill_calls == 1
+    assert desktop.process is None
+
+
+def test_stop_process_keeps_handle_when_worker_survives(monkeypatch):
+    from cancheria.desktop import gui
+
+    class StubbornProcess:
+        pid = 654
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("worker", timeout)
+
+        def kill(self):
+            return None
+
+    process = StubbornProcess()
+    logs: list[str] = []
+    desktop = gui.CancheriaDesktop.__new__(gui.CancheriaDesktop)
+    desktop.process = process
+    desktop._append_log = logs.append
+    monkeypatch.setattr(gui.os, "name", "nt")
+    monkeypatch.setattr(
+        gui.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess([], 1),
+    )
+
+    assert gui.CancheriaDesktop._stop_process(desktop) is False
+    assert desktop.process is process
+    assert any("sigue activo" in line for line in logs)

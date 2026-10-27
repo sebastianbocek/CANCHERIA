@@ -9,6 +9,7 @@ import pytest
 from cancheria.domain.finance.ledger import FinancialLedger, cents_to_pesos
 from cancheria.domain.reservations.calendar import CalendarioLlamadas
 from cancheria.domain.school import SchoolService, school_slot_block
+from cancheria.admin import desktop_service as desktop_service_module
 from cancheria.admin.desktop_service import DesktopAdminService
 from cancheria.desktop.admin_panel import _school_weekly_schedules
 
@@ -96,7 +97,7 @@ def test_group_and_student_can_be_edited_from_the_admin_contract(tmp_path):
 def test_group_can_recur_on_multiple_selected_weekdays(tmp_path):
     school = build_school(tmp_path)
     schedules = _school_weekly_schedules(
-        ["Lunes", "Miércoles", "Viernes"], "18:00", "60"
+        ["Lunes", "Miércoles", "Viernes"], ["18:00", "20:00"], "60"
     )
     group = school.create_group(
         name="Tres veces por semana",
@@ -108,23 +109,23 @@ def test_group_can_recur_on_multiple_selected_weekdays(tmp_path):
         schedules=schedules,
     )
 
-    assert [row["weekday"] for row in group["schedules"]] == [0, 2, 4]
-    assert group["schedule_text"] == (
-        "Lunes 18:00 (60 min) · Miércoles 18:00 (60 min) · "
-        "Viernes 18:00 (60 min)"
-    )
+    assert [(row["weekday"], row["start_time"]) for row in group["schedules"]] == [
+        (0, "18:00"), (0, "20:00"), (2, "18:00"),
+        (2, "20:00"), (4, "18:00"), (4, "20:00"),
+    ]
     monday = dt.date(2030, 1, 7)
     assert school_slot_block(school.path, monday, "18:00", "Cancha 1")
     assert school_slot_block(school.path, monday + dt.timedelta(days=2), "18:00", "Cancha 1")
     assert school_slot_block(school.path, monday + dt.timedelta(days=4), "18:00", "Cancha 1")
+    assert school_slot_block(school.path, monday, "20:00", "Cancha 1")
     assert not school_slot_block(school.path, monday + dt.timedelta(days=1), "18:00", "Cancha 1")
 
     updated = school.update_group(
         group["group_id"],
-        schedules=_school_weekly_schedules(["Martes", "Jueves"], "19:00", 90),
+        schedules=_school_weekly_schedules(["Martes", "Jueves"], ["19:00", "21:00"], 90),
     )
     assert [(row["weekday"], row["start_time"]) for row in updated["schedules"]] == [
-        (1, "19:00"), (3, "19:00")
+        (1, "19:00"), (1, "21:00"), (3, "19:00"), (3, "21:00")
     ]
     assert not school_slot_block(school.path, monday, "18:00", "Cancha 1")
     assert school_slot_block(school.path, monday + dt.timedelta(days=1), "19:00", "Cancha 1")
@@ -133,6 +134,45 @@ def test_group_can_recur_on_multiple_selected_weekdays(tmp_path):
 def test_group_requires_at_least_one_selected_weekday():
     with pytest.raises(ValueError, match="al menos un día"):
         _school_weekly_schedules([], "18:00", "60")
+
+
+def test_group_requires_at_least_one_selected_time():
+    with pytest.raises(ValueError, match="al menos una hora"):
+        _school_weekly_schedules(["Lunes"], [], "60")
+
+
+def test_group_rejects_selected_times_that_overlap_on_the_same_day(tmp_path):
+    school = build_school(tmp_path)
+
+    with pytest.raises(ValueError, match="se superponen entre sí"):
+        school.create_group(
+            name="Horarios superpuestos",
+            sport="Fútbol",
+            category="2016",
+            court="Cancha 1",
+            capacity=12,
+            monthly_fee=20_000,
+            schedules=_school_weekly_schedules(
+                ["Lunes", "Miércoles"], ["18:00", "19:00"], "90"
+            ),
+        )
+
+
+def test_school_time_options_follow_live_business_windows(tmp_path, monkeypatch):
+    service = DesktopAdminService(tmp_path)
+    monkeypatch.setattr(service, "_refresh_runtime_config_if_changed", lambda: None)
+    monkeypatch.setattr(
+        desktop_service_module.cfg,
+        "obtener_franjas_atencion_minutos",
+        lambda: [(5 * 60, 9 * 60), (18 * 60, 21 * 60)],
+    )
+    monkeypatch.setattr(
+        desktop_service_module.cfg, "CALL_SLOT_DURATION_MINUTES", 60
+    )
+
+    assert service.school_time_options() == [
+        "05:00", "06:00", "07:00", "08:00", "18:00", "19:00", "20:00"
+    ]
 
 
 def test_group_and_student_can_be_deleted_without_orphans_or_losing_cash_history(tmp_path):
@@ -308,6 +348,7 @@ def test_school_ui_and_canonical_whatsapp_contract_are_present():
     assert '"🗑  Borrar"' in panel
     assert '"Editar turno"' in panel
     assert '("weekdays", "Días", "multicheck"' in panel
+    assert '("start_times", "Horas", "multicheck"' in panel
     assert "_school_weekly_schedules" in panel
     assert "school_group_id" in panel
     assert '"<Double-1>"' in panel

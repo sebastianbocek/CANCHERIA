@@ -917,41 +917,73 @@ class CancheriaDesktop(tk.Tk):
         if not self._closing:
             self.after(700, self._poll_process)
 
-    def _stop_process(self) -> None:
+    @staticmethod
+    def _wait_for_process_exit(process: subprocess.Popen[str], timeout: float) -> bool:
+        """Return True only when the worker process has actually terminated."""
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return False
+        except Exception:
+            return process.poll() is not None
+        return process.poll() is not None
+
+    def _stop_process(self) -> bool:
         process = self.process
         if not process or process.poll() is not None:
             self.process = None
-            return
+            return True
 
         pid = process.pid
         self._append_log("⏹ Deteniendo automatización y Chrome...")
-        try:
-            if os.name == "nt":
-                subprocess.run(
+        stopped = False
+        if os.name == "nt":
+            try:
+                result = subprocess.run(
                     ["taskkill", "/PID", str(pid), "/T", "/F"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     timeout=12,
                 )
-            else:
+                stopped = self._wait_for_process_exit(process, 5)
+                if result.returncode != 0 and not stopped:
+                    self._append_log(
+                        f"⚠ taskkill no pudo cerrar el proceso {pid} "
+                        f"(código {result.returncode}); aplico cierre directo."
+                    )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                self._append_log(
+                    f"⚠ El cierre del árbol de procesos falló ({exc}); aplico cierre directo."
+                )
+            if not stopped:
                 try:
-                    os.killpg(os.getpgid(pid), signal.SIGTERM)
-                except Exception:
-                    process.terminate()
-                try:
-                    process.wait(timeout=8)
-                except subprocess.TimeoutExpired:
-                    try:
-                        os.killpg(os.getpgid(pid), signal.SIGKILL)
-                    except Exception:
-                        process.kill()
-        finally:
+                    process.kill()
+                except Exception as exc:
+                    self._append_log(f"⚠ No pude forzar el cierre del agente: {exc}")
+                stopped = self._wait_for_process_exit(process, 5)
+        else:
             try:
-                process.wait(timeout=3)
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
             except Exception:
-                pass
+                process.terminate()
+            stopped = self._wait_for_process_exit(process, 8)
+            if not stopped:
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except Exception:
+                    process.kill()
+                stopped = self._wait_for_process_exit(process, 5)
+
+        if stopped:
             self.process = None
             time.sleep(0.5)
+            return True
+
+        self._append_log(
+            "❌ El agente sigue activo: no se marcará como apagado. "
+            "Volvé a presionar APAGAR o cerrá CANCHERIA."
+        )
+        return False
 
     def _refresh_ai_pause_state(self) -> None:
         self.ai_paused = bool(
@@ -976,9 +1008,14 @@ class CancheriaDesktop(tk.Tk):
             self._set_status("Apagado", self.MUTED)
             self._append_log("CANCHERIA ya estaba detenido. La sesión de WhatsApp sigue guardada.")
             return
-        self._stop_process()
-        self._set_status("Apagado", self.MUTED)
-        self._append_log("⏹ Apagado. El perfil wa_profile se conserva; ENCENDER retoma la misma sesión.")
+        if self._stop_process():
+            self._set_status("Apagado", self.MUTED)
+            self._append_log(
+                "⏹ Apagado confirmado. El perfil wa_profile se conserva; "
+                "ENCENDER retoma la misma sesión."
+            )
+        else:
+            self._set_status("Error al apagar", self.RED)
 
     def toggle_ai_pause(self) -> None:
         if not self.process or self.process.poll() is not None:

@@ -292,6 +292,18 @@ class SchoolService:
             normalized.append({"weekday": weekday, "start_time": start, "duration_minutes": duration})
         if not normalized:
             raise ValueError("Agregá al menos un día y horario al grupo.")
+        by_weekday: dict[int, list[tuple[int, int]]] = {}
+        for item in normalized:
+            start_minutes = _minutes(item["start_time"])
+            by_weekday.setdefault(int(item["weekday"]), []).append(
+                (start_minutes, start_minutes + int(item["duration_minutes"]))
+            )
+        for intervals in by_weekday.values():
+            ordered = sorted(intervals)
+            if any(current_start < previous_end for (_, previous_end), (current_start, _) in zip(ordered, ordered[1:])):
+                raise ValueError(
+                    "Los horarios seleccionados se superponen entre sí para el mismo día."
+                )
         return normalized
 
     def _validate_group_conflicts(

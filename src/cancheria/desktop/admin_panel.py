@@ -43,28 +43,29 @@ SCHOOL_DAY_NAMES = (
 
 def _school_weekly_schedules(
     selected_days: list[str] | tuple[str, ...],
-    start_time: str,
+    selected_times: list[str] | tuple[str, ...] | str,
     duration_minutes: str | int,
 ) -> list[dict[str, Any]]:
-    """Build one recurring class schedule for every selected weekday."""
+    """Build every recurring weekday/time combination selected for a group."""
     selected = {str(day or "").strip() for day in selected_days}
     unknown = selected.difference(SCHOOL_DAY_NAMES)
     if unknown:
         raise ValueError("Revisá los días seleccionados.")
     if not selected:
         raise ValueError("Seleccioná al menos un día para el grupo.")
+    raw_times = (selected_times,) if isinstance(selected_times, str) else selected_times
+    times = sorted({str(value or "").strip() for value in raw_times if str(value or "").strip()})
+    if not times:
+        raise ValueError("Seleccioná al menos una hora para el grupo.")
     try:
         duration = int(duration_minutes)
     except (TypeError, ValueError) as exc:
         raise ValueError("Revisá la duración de la clase.") from exc
     return [
-        {
-            "weekday": index,
-            "start_time": str(start_time or "").strip(),
-            "duration_minutes": duration,
-        }
+        {"weekday": index, "start_time": start_time, "duration_minutes": duration}
         for index, name in enumerate(SCHOOL_DAY_NAMES)
         if name in selected
+        for start_time in times
     ]
 
 
@@ -4906,9 +4907,12 @@ class AdminPanel(tk.Toplevel):
                     target=display,
                     variables=day_variables,
                     ordered_options=tuple(str(option) for option in options),
+                    empty_label=(
+                        "Seleccionar horas" if key == "start_times" else "Seleccionar días"
+                    ),
                 ):
                     chosen = [name for name in ordered_options if variables[name].get()]
-                    target.set(", ".join(chosen) if chosen else "Seleccionar días")
+                    target.set(", ".join(chosen) if chosen else empty_label)
 
                 widget = ttk.Menubutton(form, textvariable=display, width=29)
                 menu = tk.Menu(widget, tearoff=False)
@@ -4996,6 +5000,8 @@ class AdminPanel(tk.Toplevel):
         teacher_labels = ["Sin profesor", *[str(row["name"]) for row in teachers]]
         teacher_by_name = {str(row["name"]): str(row["teacher_id"]) for row in teachers}
         courts = self.service.courts()
+        time_options = tuple(self.service.school_time_options())
+        default_time = "18:00" if "18:00" in time_options else (time_options[0] if time_options else "18:00")
         fields = [
             ("name", "Nombre del grupo", "entry", "", ()),
             ("sport", "Deporte", "entry", "Fútbol", ()),
@@ -5008,7 +5014,7 @@ class AdminPanel(tk.Toplevel):
             ("capacity", "Cupo", "entry", "12", ()),
             ("monthly_fee", "Cuota mensual", "entry", "", ()),
             ("weekdays", "Días", "multicheck", ("Lunes",), SCHOOL_DAY_NAMES),
-            ("start_time", "Hora (HH:MM)", "entry", "18:00", ()),
+            ("start_times", "Horas", "multicheck", (default_time,), time_options),
             ("duration", "Duración (minutos)", "entry", "60", ()),
         ]
         def submit(data):
@@ -5017,7 +5023,7 @@ class AdminPanel(tk.Toplevel):
             if new_teacher:
                 teacher_id = self.service.create_school_teacher(name=new_teacher)["teacher_id"]
             schedule = _school_weekly_schedules(
-                data.pop("weekdays"), data.pop("start_time"), data.pop("duration")
+                data.pop("weekdays"), data.pop("start_times"), data.pop("duration")
             )
             data["age_min"] = int(data["age_min"]) if data["age_min"] else None
             data["age_max"] = int(data["age_max"]) if data["age_max"] else None
@@ -5109,6 +5115,14 @@ class AdminPanel(tk.Toplevel):
         teacher_by_name = {str(row["name"]): str(row["teacher_id"]) for row in teachers}
         courts = self.service.courts()
         schedule = (group.get("schedules") or [{}])[0]
+        time_options = list(self.service.school_time_options())
+        selected_times = tuple(
+            sorted({str(item.get("start_time") or "") for item in (group.get("schedules") or [])})
+        )
+        for start_time in selected_times:
+            if start_time and start_time not in time_options:
+                time_options.append(start_time)
+        time_options = tuple(sorted(time_options))
         selected_days = tuple(
             SCHOOL_DAY_NAMES[int(item.get("weekday") or 0)]
             for item in (group.get("schedules") or [])
@@ -5126,7 +5140,7 @@ class AdminPanel(tk.Toplevel):
             ("capacity", "Cupo", "entry", group.get("capacity"), ()),
             ("monthly_fee", "Cuota mensual", "entry", group.get("monthly_fee"), ()),
             ("weekdays", "Días", "multicheck", selected_days, SCHOOL_DAY_NAMES),
-            ("start_time", "Hora (HH:MM)", "entry", schedule.get("start_time") or "18:00", ()),
+            ("start_times", "Horas", "multicheck", selected_times, time_options),
             ("duration", "Duración (minutos)", "entry", schedule.get("duration_minutes") or 60, ()),
             ("active", "Estado", "combo", active_label, ("Activo", "Inactivo")),
         ]
@@ -5137,7 +5151,7 @@ class AdminPanel(tk.Toplevel):
             if new_teacher:
                 teacher_id = self.service.create_school_teacher(name=new_teacher)["teacher_id"]
             schedules = _school_weekly_schedules(
-                data.pop("weekdays"), data.pop("start_time"), data.pop("duration")
+                data.pop("weekdays"), data.pop("start_times"), data.pop("duration")
             )
             data["age_min"] = int(data["age_min"]) if data["age_min"] else None
             data["age_max"] = int(data["age_max"]) if data["age_max"] else None

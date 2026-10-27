@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.72 - 2026-10-27
+
+- Permite seleccionar varias horas dinámicas en **Nuevo grupo** y **Editar grupo** de Escuelita.
+- Obtiene las horas disponibles de la franja de atención vigente y conserva horarios históricos al editar.
+- Combina todos los días y horas elegidos en recurrencias reales que bloquean la cancha.
+- Rechaza horarios del mismo grupo que se superpongan según la duración configurada.
+- Corrige **APAGAR**: sólo confirma el apagado cuando el proceso terminó realmente y conserva su control si la terminación falla.
+- Agrega una segunda terminación directa cuando Windows no logra cerrar el árbol de procesos.
+- Incorpora regresiones para selección múltiple, franjas dinámicas, superposiciones y apagado confirmado.
+
 ## 0.2.71 - 2026-10-27
 
 - Reemplaza el selector de un solo día de **Nuevo grupo** y **Editar grupo** por un selector múltiple semanal.

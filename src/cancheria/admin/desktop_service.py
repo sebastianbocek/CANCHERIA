@@ -1662,6 +1662,20 @@ class DesktopAdminService:
     ) -> dict[str, Any]:
         return self.school.resolve_pre_enrollment(pre_enrollment_id, status, **payload)
 
+    def school_time_options(self) -> list[str]:
+        """Return every selectable class start time from the live business schedule."""
+        self._refresh_runtime_config_if_changed()
+        slot_minutes = max(1, int(getattr(cfg, "CALL_SLOT_DURATION_MINUTES", 60) or 60))
+        options: list[str] = []
+        for start, end in cfg.obtener_franjas_atencion_minutos():
+            current = start
+            while current + slot_minutes <= end:
+                value = self._minutes_to_time(current)
+                if value not in options:
+                    options.append(value)
+                current += slot_minutes
+        return options
+
     def day_schedule(self, day: str, *, include_all: bool = False) -> dict[str, Any]:
         """Build the admin hour grid from the same CSV/config used by WhatsApp."""
         self._refresh_runtime_config_if_changed()
