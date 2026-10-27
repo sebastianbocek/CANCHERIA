@@ -122,6 +122,8 @@ La pestaña **Escuelita** conecta la actividad formativa con la operación real 
 
 El agente puede consultar dinámicamente grupos, edades, días, horarios, profesores, precios y cupos; crear preinscripciones; informar cuotas vinculadas al teléfono del responsable; y registrar avisos de ausencia. La IA elige la herramienta adecuada según cada intención o subintención. Cuando no existe una herramienta o falta información real del negocio, CANCHERIA crea un caso de atención humana en silencio y evita respuestas genéricas o datos inventados.
 
+![Sección de Escuelita del panel de administración](docs/images/cancheria-panel-escuelita.png)
+
 ---
 
 ## Instalación rápida
