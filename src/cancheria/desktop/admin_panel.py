@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 import datetime as dt
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from cancheria.admin.desktop_service import DesktopAdminService
 from cancheria.desktop.date_picker import DatePicker
@@ -34,6 +34,38 @@ agregar admin +549... · bloquear +549... · listar blacklist
 TORNEOS
 listar torneos · configurar torneo ... · editar torneo ... · borrar torneo ...
 """
+
+
+SCHOOL_DAY_NAMES = (
+    "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"
+)
+
+
+def _school_weekly_schedules(
+    selected_days: list[str] | tuple[str, ...],
+    start_time: str,
+    duration_minutes: str | int,
+) -> list[dict[str, Any]]:
+    """Build one recurring class schedule for every selected weekday."""
+    selected = {str(day or "").strip() for day in selected_days}
+    unknown = selected.difference(SCHOOL_DAY_NAMES)
+    if unknown:
+        raise ValueError("Revisá los días seleccionados.")
+    if not selected:
+        raise ValueError("Seleccioná al menos un día para el grupo.")
+    try:
+        duration = int(duration_minutes)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Revisá la duración de la clase.") from exc
+    return [
+        {
+            "weekday": index,
+            "start_time": str(start_time or "").strip(),
+            "duration_minutes": duration,
+        }
+        for index, name in enumerate(SCHOOL_DAY_NAMES)
+        if name in selected
+    ]
 
 
 def _hours_rounded_box(
@@ -4847,7 +4879,7 @@ class AdminPanel(tk.Toplevel):
         dialog.configure(bg="white")
         dialog.geometry(size)
         dialog.transient(self)
-        values: dict[str, tk.Variable] = {}
+        values: dict[str, Any] = {}
         form = tk.Frame(dialog, bg="white")
         form.pack(fill="both", expand=True, padx=20, pady=16)
         tk.Label(form, text=title, bg="white", fg=self.NAVY,
@@ -4857,18 +4889,59 @@ class AdminPanel(tk.Toplevel):
             tk.Label(form, text=label, bg="white", fg=self.NAVY).grid(
                 row=row_index, column=0, sticky="w", padx=(0, 10), pady=5
             )
-            variable = tk.StringVar(value=str(initial or ""))
-            values[key] = variable
+            if kind == "multicheck":
+                initial_values = {
+                    str(item) for item in (
+                        initial if isinstance(initial, (list, tuple, set)) else (initial,)
+                    ) if str(item or "").strip()
+                }
+                day_variables = {
+                    str(option): tk.BooleanVar(value=str(option) in initial_values)
+                    for option in options
+                }
+                values[key] = day_variables
+                display = tk.StringVar()
+
+                def update_display(
+                    target=display,
+                    variables=day_variables,
+                    ordered_options=tuple(str(option) for option in options),
+                ):
+                    chosen = [name for name in ordered_options if variables[name].get()]
+                    target.set(", ".join(chosen) if chosen else "Seleccionar días")
+
+                widget = ttk.Menubutton(form, textvariable=display, width=29)
+                menu = tk.Menu(widget, tearoff=False)
+                for option in options:
+                    option = str(option)
+                    menu.add_checkbutton(
+                        label=option,
+                        variable=day_variables[option],
+                        command=update_display,
+                    )
+                widget.configure(menu=menu)
+                update_display()
+            else:
+                variable = tk.StringVar(value=str(initial or ""))
+                values[key] = variable
             if kind == "combo":
                 widget = ttk.Combobox(form, textvariable=variable, values=options, state="readonly", width=29)
-            else:
+            elif kind != "multicheck":
                 widget = tk.Entry(form, textvariable=variable, width=32)
             widget.grid(row=row_index, column=1, sticky="ew", pady=5)
         form.grid_columnconfigure(1, weight=1)
 
         def save():
             try:
-                submit({key: variable.get().strip() for key, variable in values.items()})
+                payload = {}
+                for key, variable in values.items():
+                    if isinstance(variable, dict):
+                        payload[key] = [
+                            name for name, selected in variable.items() if selected.get()
+                        ]
+                    else:
+                        payload[key] = variable.get().strip()
+                submit(payload)
                 dialog.destroy()
                 self._refresh_school()
                 self._refresh_hours()
@@ -4934,19 +5007,18 @@ class AdminPanel(tk.Toplevel):
             ("new_teacher", "Nuevo profesor (opcional)", "entry", "", ()),
             ("capacity", "Cupo", "entry", "12", ()),
             ("monthly_fee", "Cuota mensual", "entry", "", ()),
-            ("weekday", "Día", "combo", "Lunes", ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")),
+            ("weekdays", "Días", "multicheck", ("Lunes",), SCHOOL_DAY_NAMES),
             ("start_time", "Hora (HH:MM)", "entry", "18:00", ()),
             ("duration", "Duración (minutos)", "entry", "60", ()),
         ]
-        day_index = {name: index for index, name in enumerate(("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"))}
         def submit(data):
             teacher_name, new_teacher = data.pop("teacher"), data.pop("new_teacher")
             teacher_id = teacher_by_name.get(teacher_name, "")
             if new_teacher:
                 teacher_id = self.service.create_school_teacher(name=new_teacher)["teacher_id"]
-            schedule = [{"weekday": day_index[data.pop("weekday")],
-                         "start_time": data.pop("start_time"),
-                         "duration_minutes": int(data.pop("duration"))}]
+            schedule = _school_weekly_schedules(
+                data.pop("weekdays"), data.pop("start_time"), data.pop("duration")
+            )
             data["age_min"] = int(data["age_min"]) if data["age_min"] else None
             data["age_max"] = int(data["age_max"]) if data["age_max"] else None
             data["capacity"] = int(data["capacity"])
@@ -5037,7 +5109,10 @@ class AdminPanel(tk.Toplevel):
         teacher_by_name = {str(row["name"]): str(row["teacher_id"]) for row in teachers}
         courts = self.service.courts()
         schedule = (group.get("schedules") or [{}])[0]
-        day_names = ("Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo")
+        selected_days = tuple(
+            SCHOOL_DAY_NAMES[int(item.get("weekday") or 0)]
+            for item in (group.get("schedules") or [])
+        )
         active_label = "Activo" if bool(group.get("active")) else "Inactivo"
         fields = [
             ("name", "Nombre del grupo", "entry", group.get("name"), ()),
@@ -5050,7 +5125,7 @@ class AdminPanel(tk.Toplevel):
             ("new_teacher", "Nuevo profesor (opcional)", "entry", "", ()),
             ("capacity", "Cupo", "entry", group.get("capacity"), ()),
             ("monthly_fee", "Cuota mensual", "entry", group.get("monthly_fee"), ()),
-            ("weekday", "Día", "combo", day_names[int(schedule.get("weekday") or 0)], day_names),
+            ("weekdays", "Días", "multicheck", selected_days, SCHOOL_DAY_NAMES),
             ("start_time", "Hora (HH:MM)", "entry", schedule.get("start_time") or "18:00", ()),
             ("duration", "Duración (minutos)", "entry", schedule.get("duration_minutes") or 60, ()),
             ("active", "Estado", "combo", active_label, ("Activo", "Inactivo")),
@@ -5061,11 +5136,9 @@ class AdminPanel(tk.Toplevel):
             teacher_id = teacher_by_name.get(teacher_name, "")
             if new_teacher:
                 teacher_id = self.service.create_school_teacher(name=new_teacher)["teacher_id"]
-            schedules = [{
-                "weekday": day_names.index(data.pop("weekday")),
-                "start_time": data.pop("start_time"),
-                "duration_minutes": int(data.pop("duration")),
-            }, *[dict(item) for item in (group.get("schedules") or [])[1:]]]
+            schedules = _school_weekly_schedules(
+                data.pop("weekdays"), data.pop("start_time"), data.pop("duration")
+            )
             data["age_min"] = int(data["age_min"]) if data["age_min"] else None
             data["age_max"] = int(data["age_max"]) if data["age_max"] else None
             data["capacity"] = int(data["capacity"])

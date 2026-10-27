@@ -10,6 +10,7 @@ from cancheria.domain.finance.ledger import FinancialLedger, cents_to_pesos
 from cancheria.domain.reservations.calendar import CalendarioLlamadas
 from cancheria.domain.school import SchoolService, school_slot_block
 from cancheria.admin.desktop_service import DesktopAdminService
+from cancheria.desktop.admin_panel import _school_weekly_schedules
 
 
 def build_school(tmp_path, *, conflicts=None):
@@ -90,6 +91,48 @@ def test_group_and_student_can_be_edited_from_the_admin_contract(tmp_path):
     assert updated_group["schedules"][0]["start_time"] == "19:00"
     assert updated_student["guardian_name"] == "Sebastián B."
     assert updated_student["medical_notes"] == "Apto"
+
+
+def test_group_can_recur_on_multiple_selected_weekdays(tmp_path):
+    school = build_school(tmp_path)
+    schedules = _school_weekly_schedules(
+        ["Lunes", "Miércoles", "Viernes"], "18:00", "60"
+    )
+    group = school.create_group(
+        name="Tres veces por semana",
+        sport="Fútbol",
+        category="2015",
+        court="Cancha 1",
+        capacity=12,
+        monthly_fee=30000,
+        schedules=schedules,
+    )
+
+    assert [row["weekday"] for row in group["schedules"]] == [0, 2, 4]
+    assert group["schedule_text"] == (
+        "Lunes 18:00 (60 min) · Miércoles 18:00 (60 min) · "
+        "Viernes 18:00 (60 min)"
+    )
+    monday = dt.date(2030, 1, 7)
+    assert school_slot_block(school.path, monday, "18:00", "Cancha 1")
+    assert school_slot_block(school.path, monday + dt.timedelta(days=2), "18:00", "Cancha 1")
+    assert school_slot_block(school.path, monday + dt.timedelta(days=4), "18:00", "Cancha 1")
+    assert not school_slot_block(school.path, monday + dt.timedelta(days=1), "18:00", "Cancha 1")
+
+    updated = school.update_group(
+        group["group_id"],
+        schedules=_school_weekly_schedules(["Martes", "Jueves"], "19:00", 90),
+    )
+    assert [(row["weekday"], row["start_time"]) for row in updated["schedules"]] == [
+        (1, "19:00"), (3, "19:00")
+    ]
+    assert not school_slot_block(school.path, monday, "18:00", "Cancha 1")
+    assert school_slot_block(school.path, monday + dt.timedelta(days=1), "19:00", "Cancha 1")
+
+
+def test_group_requires_at_least_one_selected_weekday():
+    with pytest.raises(ValueError, match="al menos un día"):
+        _school_weekly_schedules([], "18:00", "60")
 
 
 def test_group_and_student_can_be_deleted_without_orphans_or_losing_cash_history(tmp_path):
@@ -264,6 +307,8 @@ def test_school_ui_and_canonical_whatsapp_contract_are_present():
     assert "delete_school_group" in panel
     assert '"🗑  Borrar"' in panel
     assert '"Editar turno"' in panel
+    assert '("weekdays", "Días", "multicheck"' in panel
+    assert "_school_weekly_schedules" in panel
     assert "school_group_id" in panel
     assert '"<Double-1>"' in panel
     assert "self.school_side_canvas" in panel

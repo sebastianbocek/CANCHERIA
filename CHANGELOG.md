@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.71 - 2026-10-27
+
+- Reemplaza el selector de un solo día de **Nuevo grupo** y **Editar grupo** por un selector múltiple semanal.
+- Permite elegir combinaciones como lunes, miércoles y viernes conservando una hora y duración comunes.
+- Guarda cada día como una recurrencia real del grupo, bloqueando la cancha y mostrando la clase en Horas y Clases de hoy en cada fecha correspondiente.
+- Al editar, carga marcados todos los días ya configurados y reemplaza la agenda completa para evitar recurrencias ocultas.
+- Impide guardar un grupo sin ningún día seleccionado y conserva compatibilidad con grupos existentes de un solo día.
+- Agrega regresiones para persistencia, visualización y bloqueo de cancha en varios días semanales.
+
 ## 0.2.70 - 2026-10-26
 
 - Corrige las promociones de clases de Escuelita: Horas deja de tratar el identificador interno `SCHOOL:...` como un teléfono.
